@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+
+  /* Gemini-inspired sleek dark surfaces */
+  .dora-dark-bg {
+    background-color: #050507;
+  }
+
+  .dora-sidebar-bg {
+    background-color: #0A0B0E;
+  }
+
+  .dora-pill-card {
+    background-color: #1E1F22;
+  }
+
+  .dora-pill-card:hover {
+    background-color: #282A2F;
+  }
+
+  .dora-composer-pill {
+    background-color: #1A1C20;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .dora-composer-pill:focus-within {
+    border-color: rgba(72, 168, 255, 0.35);
+    box-shadow: 0 0 25px rgba(29, 114, 254, 0.15);
+  }
+}
