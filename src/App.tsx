@@ -870,7 +870,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right: Quick Actions (Screen Vision & History) */}
+          {/* Right: Quick Actions */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Conversation History Toggle if messages exist */}
             {messages.length > 0 && (
@@ -882,22 +882,6 @@ export default function App() {
                 <MessageSquare className="w-4.5 h-4.5" />
               </button>
             )}
-
-            {/* Screen Vision Action Button */}
-            <button
-              id="btn-top-screen-vision"
-              type="button"
-              onClick={handleToggleScreenVision}
-              title={isScreenVisionActive ? "Stop Screen Vision (Active)" : "Start Screen Vision"}
-              aria-label={isScreenVisionActive ? "Stop Screen Vision" : "Start Screen Vision"}
-              className={`p-2 rounded-full transition-all flex items-center justify-center ${
-                isScreenVisionActive
-                  ? "bg-[#1D72FE]/20 text-[#38BDF8] border border-[#1D72FE]/50 shadow-[0_0_12px_rgba(29,114,254,0.35)]"
-                  : "text-white/70 hover:text-white hover:bg-white/[0.08]"
-              }`}
-            >
-              <Monitor className="w-5 h-5" />
-            </button>
           </div>
         </header>
 
