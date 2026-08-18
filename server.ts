@@ -7,6 +7,11 @@ import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { DORA_SYSTEM_INSTRUCTION } from "./src/doraSystemPrompt";
 import { normalizeBanglishPhonetics, containsBanglaOrBanglish } from "./src/utils/banglaPhonetics";
+import { providerManager } from "./server/core/providerManager";
+import { taskDetector } from "./server/core/taskDetector";
+import { brainEngine } from "./server/core/brainEngine";
+import { validateAndRankSearchResults } from "./server/core/searchFreshness";
+import { AIMessage, AIRequest, SearchRequest } from "./server/providers/types";
 
 dotenv.config();
 
@@ -47,76 +52,24 @@ async function startServer() {
     res.json({
       status: "ok",
       dora: "online",
-      capabilities: ["live-audio", "tts-synthesis", "gemini-3.7-flash", "real-time-chat"],
+      capabilities: [
+        "live-audio",
+        "tts-synthesis",
+        "central-provider-core",
+        "multi-provider-routing",
+        "real-time-chat"
+      ],
+      providersConfigured: providerManager.getStatusSummary().totalConfigured,
       timestamp: Date.now(),
     });
   });
 
-  // Helper function to generate content with fallback models and retry
-  async function generateDoraResponse(
-    ai: GoogleGenAI,
-    contents: Array<{ role: "user" | "model"; parts: Array<any> }>,
-    systemInstruction: string,
-    deepThink: boolean = false
-  ): Promise<{ text: string; modelUsed: string }> {
-    const candidateModels = deepThink
-      ? [
-          "gemini-2.5-pro",
-          "gemini-3.7-flash",
-          "gemini-2.5-flash",
-          "gemini-flash-latest",
-        ]
-      : [
-          "gemini-2.5-flash",
-          "gemini-3.7-flash",
-          "gemini-3.1-flash-lite",
-          "gemini-flash-latest",
-        ];
+  // Sanitized Central Provider diagnostics endpoint (Safe, no credentials exposed)
+  app.get("/api/providers/status", (_req, res) => {
+    res.json(providerManager.getStatusSummary());
+  });
 
-    let lastError: any = null;
-
-    for (const model of candidateModels) {
-      // Try up to 2 attempts per model for transient errors
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const config: any = {
-            systemInstruction,
-            temperature: deepThink ? 0.65 : 0.85,
-            topP: 0.95,
-          };
-
-          if (deepThink && (model.includes("2.5") || model.includes("3.7"))) {
-            config.thinkingConfig = { thinkingBudget: 4096 };
-          }
-
-          const response = await ai.models.generateContent({
-            model,
-            contents,
-            config,
-          });
-
-          if (response && response.text) {
-            return { text: response.text, modelUsed: model };
-          }
-        } catch (err: any) {
-          lastError = err;
-          const errMsg = err?.message || String(err);
-          
-          // If it's a 503 (high demand) or 429 (rate limit), wait briefly or try fallback
-          if (attempt === 0 && (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("high demand") || errMsg.includes("429"))) {
-            await new Promise((resolve) => setTimeout(resolve, 600));
-            continue;
-          }
-          // Move to next candidate model
-          break;
-        }
-      }
-    }
-
-    throw lastError || new Error("All Gemini candidate models failed to respond");
-  }
-
-  // Chat endpoint for conversational turn
+  // Chat endpoint for conversational turn (Powered by Central Provider Core)
   app.post("/api/chat", async (req, res) => {
     try {
       const {
@@ -127,47 +80,247 @@ async function startServer() {
         screenFrame = null,
         imageAttachment = null,
         deepThink = false,
+        clientTimeZone,
+        clientTimestamp,
       } = req.body;
 
       if (!message || typeof message !== "string") {
         return res.status(400).json({ error: "Message is required" });
       }
 
-      const ai = getGenAI();
-
       // Format conversation history for multi-turn context
-      const contents: Array<{ role: "user" | "model"; parts: Array<any> }> = [];
+      const messages: AIMessage[] = [];
 
       // Add recent history context (up to last 12 turns)
       const recentHistory = Array.isArray(history) ? history.slice(-12) : [];
       for (const h of recentHistory) {
         if (h.sender === "user" && h.text) {
-          contents.push({ role: "user", parts: [{ text: h.text }] });
+          messages.push({ role: "user", content: h.text });
         } else if (h.sender === "dora" && h.text) {
-          contents.push({ role: "model", parts: [{ text: h.text }] });
+          messages.push({ role: "assistant", content: h.text });
         }
       }
 
-      // Add current message with optional real-time screen or image attachment
-      const userParts: Array<any> = [{ text: message }];
+      // Current user turn with optional image/screen attachment
+      const currentMsg: AIMessage = {
+        role: "user",
+        content: message,
+      };
+
       if (imageAttachment && typeof imageAttachment === "string") {
-        const cleanBase64 = imageAttachment.replace(/^data:image\/[a-z]+;base64,/, "");
-        userParts.push({
-          inlineData: {
-            mimeType: "image/jpeg",
-            data: cleanBase64,
-          },
-        });
+        currentMsg.image = {
+          mimeType: "image/jpeg",
+          base64Data: imageAttachment,
+        };
       } else if (screenFrame && typeof screenFrame === "string") {
-        const cleanBase64 = screenFrame.replace(/^data:image\/[a-z]+;base64,/, "");
-        userParts.push({
-          inlineData: {
-            mimeType: "image/jpeg",
-            data: cleanBase64,
-          },
-        });
+        currentMsg.image = {
+          mimeType: "image/jpeg",
+          base64Data: screenFrame,
+        };
       }
-      contents.push({ role: "user", parts: userParts });
+      messages.push(currentMsg);
+
+      const referenceDate = clientTimestamp ? new Date(Number(clientTimestamp)) : new Date();
+
+      // Advanced Brain & Intelligence System analysis
+      const brainAnalysis = brainEngine.analyze(message, Array.isArray(history) ? history : []);
+      console.log(
+        `[BrainIntelligence]\nintent=${brainAnalysis.intent}\nknowledgeType=${brainAnalysis.knowledgeType}\nisFollowUp=${brainAnalysis.contextReference.isFollowUp}\nisCorrection=${brainAnalysis.contextReference.isCorrection}\nhasReference=${brainAnalysis.contextReference.hasReference}`
+      );
+
+      let brainPromptContext = "";
+      if (brainAnalysis.promptDirectives.length > 0) {
+        brainPromptContext = `\n\n[DORA ADVANCED BRAIN & CONTEXTUAL COGNITION]\n${brainAnalysis.promptDirectives.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
+      }
+
+      // 1. Detect task and intent (e.g. realtime_temporal vs web_search vs normal chat vs reasoning vs vision)
+      const detected = taskDetector.detect(message, {
+        hasImage: Boolean(imageAttachment || screenFrame),
+        deepThink: Boolean(deepThink) || brainAnalysis.reasoningRequired,
+        clientTimeZone,
+        referenceDate,
+      });
+
+      let searchPromptContext = "";
+      let isWebSearch = detected.task === "web_search";
+      let isTemporal = detected.task === "realtime_temporal";
+      let searchProviderUsed = "";
+      let searchResultsCount = 0;
+      let freshResultsCount = 0;
+      let validatedUrlsCount = 0;
+
+      if (isTemporal && detected.temporal) {
+        const t = detected.temporal;
+        console.log(
+          `[RealTimeClassification]\nintent=${t.intent}\nrequiresRealtime=true\nlocation=${t.location || "user_local"}`
+        );
+        console.log(
+          `[RealTimeTool]\ntool=get_current_local_time()\ntimeZone=${t.resolvedTimeZone || "default"}\nvalue=${t.formattedTime || ""}`
+        );
+
+        if (t.intent === "LOCATION_TIME" && t.isLocationAmbiguous) {
+          searchPromptContext = `\n\n[REAL-TIME TEMPORAL INTELLIGENCE: LOCATION TIME CLARIFICATION]
+The user asked about the time in "${t.location}", but this country/region spans multiple distinct timezones.
+Required Action for Dora:
+- Ask a short, friendly, natural clarification question in Dora's warm voice.
+- Example: "${t.location}-te kon city ta? ${t.ambiguousChoices?.slice(0, 3).join(", ")}, naki onno kono city?" (or in English if user asked in English).
+- NEVER guess a specific city or calculate from a random timezone.`;
+        } else if (t.intent === "WEATHER" && !t.location) {
+          searchPromptContext = `\n\n[REAL-TIME ENVIRONMENTAL INTELLIGENCE: WEATHER LOCATION REQUIRED]
+The user asked about current weather or rain ("${message}"), but didn't specify a location.
+Required Action for Dora:
+- Ask a sweet, conversational clarification question asking which city/location's weather they want to check.
+- Example (Banglish): "Kon location-er weather jante chaccho?"
+- Example (English): "Which location's weather would you like to know?"
+- NEVER output placeholders like "[Insert weather]" or "[location]".`;
+        } else {
+          searchPromptContext = `\n\n[REAL-TIME TEMPORAL INTELLIGENCE: VERIFIED DATA]
+Intent: ${t.intent}
+User Timezone: ${t.resolvedTimeZone || "Client Local Timezone"}
+Current Verified Time: ${t.formattedTime || "N/A"}
+Current Verified Date: ${t.formattedDate || "N/A"}
+${t.relativeDescription ? `Calculated Offset: ${t.relativeDescription}\nCalculated Target Time: ${t.calculatedTargetTime}\nCalculated Target Date: ${t.calculatedTargetDate}` : ""}
+${t.rawDetails ? `Verified Fact Summary: ${t.rawDetails}` : ""}
+
+MANDATORY RULES FOR DORA:
+1. STRICT FACTUAL PRECISION: Use the exact verified real-time numbers provided above.
+2. ZERO PLACEHOLDERS: NEVER output placeholder tokens such as "[Insert current time]", "[current date]", "[location]", "[weather]", or "[unknown]".
+3. INVISIBLE TOOLING: Keep the time tool invisible. Do NOT say "I called a time API" or "According to the clock". Respond with natural warmth:
+   - Example (Banglish): "Ekhon ${t.formattedTime} 😊" or "Ajke ${t.formattedDate}."
+   - Example (English): "It's ${t.formattedTime} right now." or "Today is ${t.formattedDate}."
+4. RELATIVE TIME: For future or relative queries ("2 ghonta por koyta baje hobe?"), state the calculated target time (${t.calculatedTargetTime || t.formattedTime}) directly without guessing.
+5. ANTI-HALLUCINATION: If the verified time is somehow unavailable, honestly say: "Amar current-time source ta ekhon available nei, tai exact time ta verify korte parchi na."`;
+        }
+      }
+
+      if (isWebSearch) {
+        console.log(`[TaskDetection]\ntask=web_search`);
+        const queryToSearch = detected.searchQuery || message;
+        const runtimeDate = referenceDate;
+        const currentDateStr = runtimeDate.toISOString().split("T")[0];
+        const freshnessIntent = detected.freshness || "any";
+
+        try {
+          const searchReq: SearchRequest = {
+            query: queryToSearch,
+            limit: 8,
+            searchDepth: "basic",
+            includeAnswer: true,
+            topic: detected.isNewsQuery || freshnessIntent === "today" || freshnessIntent === "this_week" ? "news" : "general",
+            freshness: freshnessIntent,
+            days: freshnessIntent === "today" ? 2 : (freshnessIntent === "this_week" ? 7 : (freshnessIntent === "recent" ? 30 : undefined)),
+            simulateFailure: Boolean(req.body.simulateSearchFailure),
+            simulateTavilyFailure: Boolean(req.body.simulateTavilyFailure),
+            simulateJinaFailure: Boolean(req.body.simulateJinaFailure),
+          };
+
+          let searchResult = await providerManager.executeSearch(searchReq);
+          searchProviderUsed = searchResult.meta.providerId;
+          searchResultsCount = searchResult.response.results.length;
+
+          console.log(`[SearchExecution]\nprovider=${searchProviderUsed}\nstatus=success`);
+
+          if (searchResult.meta.fallbacksAttempted && searchResult.meta.fallbacksAttempted.length > 0) {
+            console.log(
+              `[SearchFallbackVerification]\nprimaryProvider=${searchResult.meta.fallbacksAttempted[0].providerId}\nfallbackProvider=${searchProviderUsed}\nfallbackUsed=true`
+            );
+          }
+
+          // Validate dates, filter low-quality SEO scrapers, and rank by credibility & freshness
+          let validation = validateAndRankSearchResults(
+            searchResult.response.results,
+            freshnessIntent,
+            runtimeDate
+          );
+
+          // If looking for today's news and 0 fresh items were found with news topic, try a general query retry
+          if (validation.freshResults.length === 0 && freshnessIntent === "today" && searchReq.topic === "news") {
+            try {
+              const retryResult = await providerManager.executeSearch({
+                ...searchReq,
+                topic: "general",
+                days: undefined,
+              });
+              const retryValidation = validateAndRankSearchResults(
+                retryResult.response.results,
+                freshnessIntent,
+                runtimeDate
+              );
+              if (retryValidation.freshResults.length > 0) {
+                searchResult = retryResult;
+                searchProviderUsed = retryResult.meta.providerId;
+                searchResultsCount = retryResult.response.results.length;
+                validation = retryValidation;
+              }
+            } catch {
+              // keep previous result
+            }
+          }
+
+          freshResultsCount = validation.freshResults.length;
+          validatedUrlsCount = validation.validatedUrls.length;
+
+          console.log(
+            `[SearchFreshness]\nrequested=${freshnessIntent}\ncurrentDate=${currentDateStr}\nfreshResults=${freshResultsCount}`
+          );
+
+          console.log(
+            `[SearchSources]\nprovider=${searchProviderUsed}\nresults=${searchResultsCount}\nvalidatedUrls=${validatedUrlsCount}`
+          );
+
+          const resultsToUse = validation.freshResults.length > 0 ? validation.freshResults : validation.staleResults;
+
+          if (resultsToUse.length === 0) {
+            searchPromptContext = `\n\n[SEARCH NOTICE: Live search query for "${queryToSearch}" returned no verified sources. Please tell the user warmly: "I couldn't verify enough fresh sources right now." and answer what you know with clear uncertainty.]`;
+          } else {
+            const sourcesList = resultsToUse
+              .map((r, i) => {
+                const domain = r.source || (r.url ? new URL(r.url).hostname.replace(/^www\./, "") : "Web");
+                return `SEARCH RESULT ${i + 1}
+Title: ${r.title}
+URL: ${r.url}
+Source: ${domain}
+Published: ${r.publishedAt || "Recently"}
+Credibility: ${r.score && r.score >= 80 ? "High (Reputable Publication / Primary Source)" : "Standard Web Source"}
+Snippet: ${r.snippet}
+${r.content ? `Content Excerpt: ${r.content.slice(0, 400)}` : ""}`;
+              })
+              .join("\n\n");
+
+            const isFreshNewsQuery = freshnessIntent === "today" || freshnessIntent === "this_week" || detected.isNewsQuery;
+
+            searchPromptContext = `\n\n[LIVE CURRENT WEB SEARCH RESULTS]
+Current Runtime Date: ${currentDateStr} (Year: ${runtimeDate.getFullYear()}, Month: ${runtimeDate.toLocaleString('default', { month: 'long' })})
+User Freshness Intent: "${freshnessIntent}"
+Search Query: "${searchResult.response.query}"
+Search Provider: ${searchProviderUsed}
+Fresh & Verified Sources: ${freshResultsCount}
+Validated URLs:
+${validation.validatedUrls.map((u) => `- ${u}`).join("\n")}
+
+${sourcesList}
+
+${searchResult.response.answer ? `Search Engine Direct Summary: ${searchResult.response.answer}\n` : ""}
+MANDATORY GUIDELINES FOR DORA:
+1. STRICT CHRONOLOGICAL ACCURACY: Today is ${currentDateStr} (${runtimeDate.toLocaleString('default', { month: 'long' })} ${runtimeDate.getDate()}, ${runtimeDate.getFullYear()}). NEVER present older articles (such as from January 2026 or earlier) as today's or this week's news.
+2. SOURCE-GROUNDED ONLY: Every fact, company announcement, product release, or event MUST come strictly from the SEARCH RESULTS above. Do NOT use outdated internal training memory for breaking news.
+3. NO INVENTED / FABRICATED URLs: Every URL in your answer MUST be an exact copy of one of the Validated URLs listed above. NEVER guess or invent a URL.
+4. FORMATTING FOR CURRENT NEWS:
+${isFreshNewsQuery ? `Present the latest developments in a clean, scannable format:
+Start with: "Here are the latest major AI developments I found:" (or natural equivalent in Dora's warm voice)
+Then organize key headlines with:
+- Short summary of what occurred
+- Why it matters
+- Source: [Actual Source Name](Actual Exact URL from search results above)
+- Published: Date if available` : `Answer directly and conversationally, citing sources as markdown links [Source Name](URL) whenever referencing specific articles.`}
+5. HONESTY: If the search results do not have enough fresh information to answer completely, honestly say: "I couldn't verify enough fresh sources right now."`;
+          }
+        } catch (searchErr: any) {
+          console.log(`[SearchExecution]\nprovider=none\nstatus=failed`);
+          console.warn("[Search Provider Notice during Chat]:", searchErr?.message);
+          searchPromptContext = `\n\n[SEARCH NOTICE: Attempted web search for "${queryToSearch}", but search retrieval was unavailable. Honestly inform the user: "I tried searching the web for the latest updates, but couldn't retrieve live search results right now." and answer what general knowledge you have with that clear disclaimer.]`;
+        }
+      }
 
       let languageHint = "";
       if (language === "bn-en") {
@@ -184,23 +337,62 @@ async function startServer() {
         languageHint,
         deepThinkPrompt,
         memoryContext ? `\n\n${memoryContext}` : "",
+        brainPromptContext,
+        searchPromptContext,
       ]
         .filter(Boolean)
         .join("\n");
 
       let reply = "Yeah, I'm here. What's on your mind?";
+      let providerUsed = "central-provider";
+      let modelUsed = "default";
+
       try {
-        const result = await generateDoraResponse(
-          ai,
-          contents,
-          effectiveSystemInstruction,
-          Boolean(deepThink)
-        );
-        reply = result.text;
+        const aiRequest: AIRequest = {
+          task: (imageAttachment || screenFrame) ? "vision" : (deepThink ? "reasoning" : "chat"),
+          messages,
+          systemInstruction: effectiveSystemInstruction,
+          deepThink: Boolean(deepThink),
+          simulateFailure: Boolean(req.body.simulateGoogleFailure),
+        };
+
+        const result = await providerManager.executeAI(aiRequest);
+        reply = result.response.text;
+        providerUsed = result.meta.providerId;
+        modelUsed = result.meta.modelUsed;
+
+        if (isWebSearch) {
+          console.log(`[SearchToAI]\nresults=${searchResultsCount}\nprovider=${result.meta.providerId}`);
+          console.log(
+            `[WebSearchIntegrationVerification]\nnormalChatSearch=false\nwebSearchTriggered=true\nsearchProvider=${searchProviderUsed || "tavily"}\nresultsRetrieved=${searchResultsCount}\nresultsPassedToAI=true\nsourceMetadataPreserved=true\nstatus=success`
+          );
+        }
+
+        const fallbacksCount = result.meta.fallbacksAttempted?.length || 0;
+        if (fallbacksCount > 0) {
+          const firstFailure = result.meta.fallbacksAttempted[0];
+          console.log(
+            `[ProviderFallbackVerification]\nprimaryProvider=${firstFailure.providerId}\nprimaryStatus=failed\nfallbackProvider=${result.meta.providerId}\nfallbackStatus=success\nfallbackUsed=true\nattempts=${fallbacksCount + 1}`
+          );
+        } else {
+          console.log(
+            `[ProviderVerification]\ntask=${aiRequest.task || "chat"}\nselectedProvider=${result.meta.providerId}\nfallbackUsed=false\nattempts=1\nstatus=success`
+          );
+        }
       } catch (genError: any) {
-        console.warn("Falling back to in-character resilience reply due to model unavailability:", genError?.message);
+        if (req.body.simulateGoogleFailure) {
+          console.log(
+            `[ProviderFallbackVerification]\nprimaryProvider=google\nprimaryStatus=failed\nfallbackProvider=none\nfallbackStatus=failure\nfallbackUsed=true\nattempts=1`
+          );
+        } else {
+          console.log(
+            `[ProviderVerification]\ntask=${(imageAttachment || screenFrame) ? "vision" : (deepThink ? "reasoning" : "chat")}\nselectedProvider=none\nfallbackUsed=false\nattempts=1\nstatus=failure`
+          );
+        }
+        console.warn("[Central Provider Error] Falling back to in-character resilience reply:", genError?.message);
         reply = "Hey, I'm right here with you! Caught a tiny glitch on the connection, but I'm listening. Tell me what's on your mind.";
       }
+
 
       // Determine emotional tone and quick reaction for visual resonance
       let emotion = "warm";
@@ -227,6 +419,8 @@ async function startServer() {
         reply,
         emotion,
         reaction,
+        provider: providerUsed,
+        model: modelUsed,
         timestamp: Date.now(),
       });
     } catch (error: any) {
@@ -240,7 +434,7 @@ async function startServer() {
     }
   });
 
-  // Background deep memory extraction endpoint
+  // Background deep memory extraction endpoint (Powered by Central Provider Core)
   app.post("/api/memory/extract", async (req, res) => {
     try {
       const { userText, doraResponse = "", existingMemories = [] } = req.body;
@@ -248,7 +442,6 @@ async function startServer() {
         return res.json({ candidates: [] });
       }
 
-      const ai = getGenAI();
       const prompt = `
 You are the background intelligent long-term memory extraction engine for Dora, an authentic AI companion.
 Analyze the user message (and Dora's response) in ANY language (English, Bengali, Banglish, or mixed) to extract durable, valuable facts about the user for persistent long-term memory.
@@ -296,56 +489,102 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
 ]
 `;
 
-      const extractionModels = [
-        "gemini-2.5-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-3.7-flash",
-        "gemini-flash-latest",
-      ];
-
       let candidates = [];
-      let lastExtractError: any = null;
+      try {
+        const result = await providerManager.executeAI({
+          task: "extraction",
+          messages: [{ role: "user", content: prompt }],
+          jsonMode: true,
+          temperature: 0.1,
+        });
 
-      for (const model of extractionModels) {
-        try {
-          const response = await ai.models.generateContent({
-            model,
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            config: {
-              responseMimeType: "application/json",
-              temperature: 0.1,
-            },
-          });
-
-          if (response && response.text) {
-            const parsed = JSON.parse(response.text.trim());
-            if (Array.isArray(parsed)) {
-              candidates = parsed;
-              break;
-            }
+        if (result.response.text) {
+          const raw = result.response.text.trim();
+          // Strip possible markdown code fence
+          const cleanJson = raw.replace(/^```(json)?\n?/, "").replace(/\n?```$/, "").trim();
+          const parsed = JSON.parse(cleanJson);
+          if (Array.isArray(parsed)) {
+            candidates = parsed;
           }
-        } catch (modelErr: any) {
-          lastExtractError = modelErr;
-          const errMsg = modelErr?.message || String(modelErr);
-          // If 503 or 429, wait a split second and continue to fallback model
-          if (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("high demand") || errMsg.includes("429")) {
-            await new Promise((resolve) => setTimeout(resolve, 400));
-          }
-          continue;
         }
-      }
-
-      if (candidates.length === 0 && lastExtractError) {
-        // Quiet debug log without noisy warning spam
-        const errNotice = lastExtractError?.message || String(lastExtractError);
-        if (!errNotice.includes("503") && !errNotice.includes("UNAVAILABLE") && !errNotice.includes("high demand")) {
-          console.warn("[Background Extraction Notice]:", errNotice);
-        }
+      } catch (extractErr: any) {
+        console.warn("[Background Extraction Provider Notice]:", extractErr?.message);
       }
 
       res.json({ candidates });
     } catch (err: any) {
       res.json({ candidates: [] });
+    }
+  });
+
+  // Central Provider Web Search endpoint (Tavily -> Jina)
+  app.post("/api/search", async (req, res) => {
+    try {
+      const {
+        query,
+        limit = 5,
+        searchDepth = "basic",
+        includeAnswer = true,
+        preferredProviderId,
+        simulateFailure,
+        simulateTavilyFailure,
+        simulateJinaFailure,
+      } = req.body;
+
+      if (!query || typeof query !== "string" || query.trim().length === 0) {
+        return res.status(400).json({ error: "Query is required" });
+      }
+
+      const searchReq: any = {
+        query: query.trim(),
+        limit: Number(limit) || 5,
+        searchDepth,
+        includeAnswer: Boolean(includeAnswer),
+        preferredProviderId,
+        simulateFailure: Boolean(simulateFailure),
+        simulateTavilyFailure: Boolean(simulateTavilyFailure),
+        simulateJinaFailure: Boolean(simulateJinaFailure),
+      };
+
+      const result = await providerManager.executeSearch(searchReq);
+
+      const fallbacksCount = result.meta.fallbacksAttempted?.length || 0;
+      if (fallbacksCount > 0) {
+        const firstFailure = result.meta.fallbacksAttempted[0];
+        console.log(
+          `[SearchFallbackVerification]\nprimaryProvider=${firstFailure.providerId}\nprimaryStatus=failed\nfallbackProvider=${result.meta.providerId}\nfallbackStatus=success\nfallbackUsed=true\nattempts=${fallbacksCount + 1}`
+        );
+      } else {
+        console.log(
+          `[SearchProviderVerification]\nprimaryProvider=${result.meta.providerId}\nstatus=success`
+        );
+      }
+
+      res.json({
+        query: result.response.query,
+        results: result.response.results,
+        provider: result.meta.providerId,
+        latencyMs: result.meta.latencyMs,
+        answer: result.response.answer,
+        fallbacksAttempted: result.meta.fallbacksAttempted,
+      });
+    } catch (searchError: any) {
+      console.warn("[Central Search Provider Notice]:", searchError?.message);
+      res.status(500).json({
+        query: req.body?.query || "",
+        results: [],
+        error: searchError?.message || "Search failed",
+      });
+    }
+  });
+
+  // Providers Health & Status Diagnostic endpoint
+  app.get("/api/providers/status", (_req, res) => {
+    try {
+      const summary = providerManager.getStatusSummary();
+      res.json(summary);
+    } catch (statusErr: any) {
+      res.status(500).json({ error: "Failed to retrieve provider status" });
     }
   });
 

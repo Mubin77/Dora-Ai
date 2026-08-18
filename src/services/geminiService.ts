@@ -43,12 +43,16 @@ export class DoraService {
   public sendScreenFrame(base64Jpeg: string) {
     this.latestScreenFrame = base64Jpeg;
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isWsReady) {
-      this.ws.send(
-        JSON.stringify({
-          type: "screen_frame",
-          frame: base64Jpeg,
-        })
-      );
+      try {
+        this.ws.send(
+          JSON.stringify({
+            type: "screen_frame",
+            frame: base64Jpeg,
+          })
+        );
+      } catch (err) {
+        console.warn("[Dora Live] Error sending screen frame:", err);
+      }
     }
   }
 
@@ -58,7 +62,11 @@ export class DoraService {
   public clearScreenFrame() {
     this.latestScreenFrame = null;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "screen_stop" }));
+      try {
+        this.ws.send(JSON.stringify({ type: "screen_stop" }));
+      } catch (err) {
+        console.warn("[Dora Live] Error sending screen stop:", err);
+      }
     }
   }
 
@@ -86,10 +94,16 @@ export class DoraService {
     const effectiveMemoryContext = memoryContext || MemoryManager.getInstance().buildContext("");
     this.lastMemoryContext = effectiveMemoryContext;
 
+    // If socket is already open and ready, notify callback and return
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       if (this.isWsReady) {
         callbacks.onReady?.();
       }
+      return;
+    }
+
+    // If socket is currently connecting, do not spawn another concurrent connection
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
       return;
     }
 
@@ -98,25 +112,49 @@ export class DoraService {
       this.reconnectTimer = null;
     }
 
+    // Clean up any stale socket listeners before instantiating a new one
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onerror = null;
+      this.ws.onclose = null;
+      try {
+        this.ws.close();
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+      this.isWsReady = false;
+    }
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/live-ws`;
 
     try {
-      this.ws = new WebSocket(wsUrl);
+      const socket = new WebSocket(wsUrl);
+      this.ws = socket;
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
+        if (this.ws !== socket || socket.readyState !== WebSocket.OPEN) {
+          return;
+        }
         console.log("[Dora Live] WebSocket connected, warming up Live session...");
         const contextToSend = this.lastMemoryContext || MemoryManager.getInstance().buildContext("");
-        this.ws?.send(
-          JSON.stringify({
-            type: "start_session",
-            voiceName: this.currentVoiceName,
-            memoryContext: contextToSend,
-          })
-        );
+        try {
+          socket.send(
+            JSON.stringify({
+              type: "start_session",
+              voiceName: this.currentVoiceName,
+              memoryContext: contextToSend,
+            })
+          );
+        } catch (err) {
+          console.warn("[Dora Live] Error sending start_session on open:", err);
+        }
       };
 
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (this.ws !== socket) return;
         try {
           const data = JSON.parse(event.data);
           if (data.type === "session_ready") {
@@ -166,13 +204,15 @@ export class DoraService {
         }
       };
 
-      this.ws.onerror = (err) => {
+      socket.onerror = (err) => {
+        if (this.ws !== socket) return;
         this.isWsReady = false;
         console.warn("[Dora Live] WebSocket error:", err);
         this.wsCallbacks.onError?.(err);
       };
 
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        if (this.ws !== socket) return;
         this.isWsReady = false;
         console.log("[Dora Live] WebSocket closed, auto-reconnecting in 2s...");
         this.reconnectTimer = setTimeout(() => {
@@ -195,7 +235,11 @@ export class DoraService {
 
   public sendLiveAudioChunk(base64Audio: string) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isWsReady) {
-      this.ws.send(JSON.stringify({ type: "audio_input", audio: base64Audio }));
+      try {
+        this.ws.send(JSON.stringify({ type: "audio_input", audio: base64Audio }));
+      } catch (err) {
+        console.warn("[Dora Live] Error sending audio chunk:", err);
+      }
     }
   }
 
@@ -211,16 +255,36 @@ export class DoraService {
 
     const effectiveMemoryContext = memoryContext || MemoryManager.getInstance().buildContext(text);
     this.lastMemoryContext = effectiveMemoryContext;
+    const clientTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Dhaka";
+    const clientTimestamp = Date.now();
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isWsReady) {
-      this.ws.send(JSON.stringify({ type: "text_input", text, language, memoryContext: effectiveMemoryContext, deepThink }));
+      try {
+        this.ws.send(
+          JSON.stringify({
+            type: "text_input",
+            text,
+            language,
+            memoryContext: effectiveMemoryContext,
+            deepThink,
+            clientTimeZone,
+            clientTimestamp,
+          })
+        );
+      } catch (err) {
+        console.warn("[Dora Live] Error sending live text:", err);
+      }
     }
   }
 
   public sendInterruptSignal() {
     this.activeMetrics = null;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "interrupt" }));
+      try {
+        this.ws.send(JSON.stringify({ type: "interrupt" }));
+      } catch (err) {
+        console.warn("[Dora Live] Error sending interrupt signal:", err);
+      }
     }
   }
 
@@ -230,7 +294,15 @@ export class DoraService {
       this.reconnectTimer = null;
     }
     if (this.ws) {
-      this.ws.close();
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onerror = null;
+      this.ws.onclose = null;
+      try {
+        this.ws.close();
+      } catch {
+        // ignore
+      }
       this.ws = null;
       this.isWsReady = false;
     }
@@ -247,6 +319,9 @@ export class DoraService {
     imageAttachment?: string,
     deepThink: boolean = false
   ): Promise<DoraChatResponse> {
+    const clientTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Dhaka";
+    const clientTimestamp = Date.now();
+
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -258,6 +333,8 @@ export class DoraService {
         screenFrame: this.latestScreenFrame || undefined,
         imageAttachment: imageAttachment || undefined,
         deepThink,
+        clientTimeZone,
+        clientTimestamp,
       }),
     });
 

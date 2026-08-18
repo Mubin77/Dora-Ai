@@ -871,18 +871,7 @@ export default function App() {
           </div>
 
           {/* Right: Quick Actions */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Conversation History Toggle if messages exist */}
-            {messages.length > 0 && (
-              <button
-                onClick={() => setShowTranscriptOverlay((prev) => !prev)}
-                title="View full conversation transcript"
-                className="p-2 rounded-full text-white/70 hover:text-white hover:bg-white/[0.08] transition-colors"
-              >
-                <MessageSquare className="w-4.5 h-4.5" />
-              </button>
-            )}
-          </div>
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0" />
         </header>
 
         {/* Screen Sharing Error / Notice Banner */}
