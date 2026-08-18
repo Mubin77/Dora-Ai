@@ -1,15 +1,15 @@
 /**
- * Dora Context Engine Test Suite
+ * Dora Structured Context Engine Test Suite
  * 
- * Verifies all 8 core test scenarios:
- * 1. Topic continuity
- * 2. Entity reference resolution
- * 3. Constraint update (in-place override)
- * 4. Follow-up understanding
- * 5. Topic switch detection
- * 6. Ambiguous reference handling
- * 7. Temporary context isolation
- * 8. Context vs memory separation
+ * Verifies all 8 core test scenarios with real multi-turn state transitions:
+ * 1. Topic continuity & task retention across turns
+ * 2. Entity reference resolution against comparison targets
+ * 3. In-place constraint update without conflicting duplicates
+ * 4. Follow-up understanding linked to active entity/topic
+ * 5. Topic switch detection & isolation of prior constraints
+ * 6. Ambiguous reference handling with explicit candidate state
+ * 7. Temporary context isolation between disparate topics
+ * 8. Context vs permanent long-term memory separation
  */
 
 import { brainEngine } from "./brainEngine";
@@ -28,149 +28,190 @@ export function runAllTests() {
   console.log("RUNNING DORA CONTEXT UNDERSTANDING TEST SUITE");
   console.log("==========================================\n");
 
-  // TEST 1 — Topic continuity
-  console.log("TEST 1 — Topic Continuity:");
+  // TEST 1 — Topic continuity & Task retention
+  console.log("TEST 1 — Topic Continuity & Task Retention:");
   {
-    const history: ConversationTurn[] = [
-      { sender: "user", text: "I need a gaming laptop." },
-      { sender: "dora", text: "Sure! What budget do you have in mind?" },
-    ];
-    const turn2 = "My budget is 80k.";
-    const analysis = brainEngine.analyze(turn2, history);
+    const history: ConversationTurn[] = [];
+
+    // Turn 1
+    const res1 = contextEngine.analyze("I need a gaming laptop.", history, undefined, "test-session-1");
+    history.push({ sender: "user", text: "I need a gaming laptop." });
+    history.push({ sender: "dora", text: "Sure! What budget do you have in mind?" });
+
+    // Turn 2 (feeds context from Turn 1)
+    const res2 = contextEngine.analyze("My budget is 80k.", history, res1.context, "test-session-1");
 
     assert(
-      analysis.activeContext?.activeTopic?.includes("laptop") === true,
-      `Topic remains gaming laptop (got: "${analysis.activeContext?.activeTopic}")`
+      res2.context.activeTopic === "gaming laptop",
+      `Topic remains gaming laptop across turns (got: "${res2.context.activeTopic}")`
     );
     assert(
-      analysis.activeContext?.currentTask === "purchase_research",
-      `Task remains purchase_research (got: "${analysis.activeContext?.currentTask}")`
+      res2.context.currentTask === "purchase_research",
+      `Task remains purchase_research (got: "${res2.context.currentTask}")`
+    );
+    const activeConstraints = res2.context.constraints.filter((c) => !c.isOverridden);
+    const budgetConstraint = activeConstraints.find((c) => c.category === "budget");
+    assert(
+      budgetConstraint?.value === 80000,
+      `Budget constraint set to 80000 (got: ${budgetConstraint?.value})`
     );
   }
 
-  // TEST 2 — Entity reference
+  // TEST 2 — Entity reference resolution against comparison entities
   console.log("\nTEST 2 — Entity Reference Resolution:");
   {
-    const history: ConversationTurn[] = [
-      { sender: "user", text: "I am comparing ASUS and Lenovo." },
-      { sender: "dora", text: "Both ASUS and Lenovo make great machines. Which models or features are you looking at?" },
-    ];
-    const turn2 = "Which one has better battery?";
-    const analysis = brainEngine.analyze(turn2, history);
+    const history: ConversationTurn[] = [];
 
-    const whichOneRef = analysis.activeContext?.recentReferences.find((r) =>
+    // Turn 1
+    const res1 = contextEngine.analyze("Compare ASUS and Lenovo.", history, undefined, "test-session-2");
+    history.push({ sender: "user", text: "Compare ASUS and Lenovo." });
+    history.push({ sender: "dora", text: "Both ASUS and Lenovo make great laptops. What aspects matter most to you?" });
+
+    // Turn 2
+    const res2 = contextEngine.analyze("Which one has better battery?", history, res1.context, "test-session-2");
+
+    const whichOneRef = res2.resolvedReferences.find((r) =>
       /which\s*one/i.test(r.rawToken)
     );
     assert(Boolean(whichOneRef), "Detected 'which one' reference");
     assert(
+      whichOneRef?.status === "resolved",
+      `Reference resolved with status 'resolved' (got: "${whichOneRef?.status}")`
+    );
+    assert(
       whichOneRef?.resolvedTarget?.includes("ASUS") === true &&
       whichOneRef?.resolvedTarget?.includes("Lenovo") === true,
-      `'which one' resolved to comparison entities ASUS vs Lenovo (got: "${whichOneRef?.resolvedTarget}")`
+      `'which one' resolved to comparison targets ASUS vs Lenovo (got: "${whichOneRef?.resolvedTarget}")`
     );
   }
 
-  // TEST 3 — Constraint update
-  console.log("\nTEST 3 — Constraint Update:");
+  // TEST 3 — Constraint in-place update (override without duplicates)
+  console.log("\nTEST 3 — Constraint In-Place Update:");
   {
-    const history: ConversationTurn[] = [
-      { sender: "user", text: "I need a laptop under 80k." },
-      { sender: "dora", text: "Under 80k we have some solid options with RTX 3050 or RTX 4050." },
-    ];
-    const turn2 = "Actually 90k is okay.";
-    const analysis = brainEngine.analyze(turn2, history);
+    const history: ConversationTurn[] = [];
 
-    const activeConstraints = analysis.activeContext?.constraints.filter((c) => !c.isOverridden);
-    const budgetConstraint = activeConstraints?.find((c) => c.category === "budget");
+    // Turn 1
+    const res1 = contextEngine.analyze("Budget is 80k.", history, undefined, "test-session-3");
+    history.push({ sender: "user", text: "Budget is 80k." });
+    history.push({ sender: "dora", text: "Under 80k there are good options like ASUS TUF or Lenovo Ideapad Gaming." });
 
-    assert(Boolean(budgetConstraint), "Found active budget constraint");
+    // Turn 2
+    const res2 = contextEngine.analyze("Actually 90k is okay.", history, res1.context, "test-session-3");
+
+    const activeConstraints = res2.context.constraints.filter((c) => !c.isOverridden);
+    const budgetConstraints = activeConstraints.filter((c) => c.category === "budget");
+
     assert(
-      budgetConstraint?.value === 90000,
-      `Budget constraint successfully updated to 90000 (got: ${budgetConstraint?.value})`
+      budgetConstraints.length === 1,
+      `Exactly one active budget constraint exists without duplicate conflicts (count: ${budgetConstraints.length})`
     );
     assert(
-      activeConstraints?.filter((c) => c.category === "budget").length === 1,
-      "No duplicate conflicting active budget constraints exist"
+      budgetConstraints[0].value === 90000,
+      `Budget constraint successfully updated to 90000 (got: ${budgetConstraints[0].value})`
     );
   }
 
-  // TEST 4 — Follow-up
+  // TEST 4 — Follow-up understanding linked to active context
   console.log("\nTEST 4 — Follow-up Understanding:");
   {
-    const history: ConversationTurn[] = [
-      { sender: "user", text: "Tell me about RTX 4060." },
-      { sender: "dora", text: "The RTX 4060 is great for 1080p and high-fps 1440p gaming with DLSS 3 frame generation." },
-    ];
-    const turn2 = "What about the battery?";
-    const analysis = brainEngine.analyze(turn2, history);
+    const history: ConversationTurn[] = [];
+
+    // Turn 1
+    const res1 = contextEngine.analyze("Tell me about RTX 4060.", history, undefined, "test-session-4");
+    history.push({ sender: "user", text: "Tell me about RTX 4060." });
+    history.push({ sender: "dora", text: "The RTX 4060 offers great 1080p and 1440p gaming performance." });
+
+    // Turn 2
+    const res2 = contextEngine.analyze("What about battery?", history, res1.context, "test-session-4");
 
     assert(
-      analysis.contextReference.isFollowUp === true,
+      res2.isFollowUp === true,
       "Identified as follow-up turn"
     );
     assert(
-      analysis.activeContext?.entities.some((e) => e.name === "RTX 4060") === true,
-      "RTX 4060 entity preserved in active context"
+      res2.context.entities.some((e) => e.name === "RTX 4060" && e.status === "active"),
+      "RTX 4060 entity preserved in active context state"
     );
   }
 
-  // TEST 5 — Topic switch
-  console.log("\nTEST 5 — Topic Switch Detection:");
+  // TEST 5 — Topic switch detection & isolation
+  console.log("\nTEST 5 — Topic Switch Detection & Isolation:");
   {
-    const history: ConversationTurn[] = [
-      { sender: "user", text: "I need a gaming laptop." },
-      { sender: "dora", text: "I can help with that! Any particular budget or brand you like?" },
-    ];
-    const turn2 = "What is the weather tomorrow?";
-    const analysis = brainEngine.analyze(turn2, history);
+    const history: ConversationTurn[] = [];
+
+    // Turn 1
+    const res1 = contextEngine.analyze("Recommend a gaming laptop.", history, undefined, "test-session-5");
+    history.push({ sender: "user", text: "Recommend a gaming laptop." });
+    history.push({ sender: "dora", text: "I can help! Any preferred brand or budget?" });
+
+    // Turn 2
+    const res2 = contextEngine.analyze("What is the weather tomorrow?", history, res1.context, "test-session-5");
 
     assert(
-      analysis.activeContext?.activeTopic?.includes("weather") === true,
-      `Topic switched to weather inquiry (got: "${analysis.activeContext?.activeTopic}")`
+      res2.context.activeTopic === "weather inquiry",
+      `Topic switched to weather inquiry (got: "${res2.context.activeTopic}")`
     );
     assert(
-      analysis.activeContext?.isTopicSwitched === true,
-      "Flagged isTopicSwitched = true"
+      res2.isTopicSwitch === true,
+      "Flagged isTopicSwitch = true"
+    );
+    assert(
+      res2.context.archivedContexts.some((a) => a.topic === "gaming laptop"),
+      "Previous gaming laptop topic archived safely in archivedContexts"
     );
   }
 
-  // TEST 6 — Ambiguous reference
+  // TEST 6 — Ambiguous reference handling with multiple candidate entities
   console.log("\nTEST 6 — Ambiguous Reference Handling:");
   {
-    const history: ConversationTurn[] = [
-      { sender: "user", text: "I am comparing ASUS and Lenovo." },
-      { sender: "dora", text: "Both have great advantages in cooling and build." },
-      { sender: "user", text: "The first one is good." },
-      { sender: "dora", text: "ASUS ROG/TUF has solid build and thermals." },
-    ];
-    const turn3 = "Is it cheaper?";
-    const analysis = brainEngine.analyze(turn3, history);
+    const history: ConversationTurn[] = [];
 
-    // Turn mentions "it" while multiple options exist
-    const hasAmbiguityOrResolved = analysis.activeContext?.recentReferences.some(
-      (r) => r.isAmbiguous || r.resolvedTarget
+    // Turn 1 (User compares 3 brands: ASUS, Lenovo, Dell)
+    const res1 = contextEngine.analyze("Compare ASUS, Lenovo and Dell.", history, undefined, "test-session-6");
+    history.push({ sender: "user", text: "Compare ASUS, Lenovo and Dell." });
+    history.push({ sender: "dora", text: "Here is a comparison of build quality, thermals, and warranty across ASUS, Lenovo, and Dell." });
+
+    // Turn 2 (User asks "Which one is cheaper?" without specifying)
+    const res2 = contextEngine.analyze("Which one is cheaper?", history, res1.context, "test-session-6");
+
+    const whichOneRef = res2.resolvedReferences.find((r) => /which\s*one/i.test(r.rawToken));
+
+    assert(Boolean(whichOneRef), "Found 'which one' reference in analysis");
+    assert(
+      whichOneRef?.status === "ambiguous",
+      `Reference status is explicitly 'ambiguous' (got: "${whichOneRef?.status}")`
     );
-    assert(Boolean(hasAmbiguityOrResolved), "Reference analyzed with safety check");
+    assert(
+      whichOneRef?.isAmbiguous === true,
+      "isAmbiguous flag is true"
+    );
+    assert(
+      whichOneRef?.candidateTargets?.length === 3,
+      `Contains all 3 candidates without arbitrary entity selection (candidates: ${whichOneRef?.candidateTargets?.join(", ")})`
+    );
   }
 
-  // TEST 7 — Temporary context isolation
+  // TEST 7 — Temporary context isolation (Laptop -> Movie)
   console.log("\nTEST 7 — Temporary Context Isolation:");
   {
-    const history: ConversationTurn[] = [
-      { sender: "user", text: "I need a laptop under 80k with RTX GPU." },
-      { sender: "dora", text: "I recommend looking at the Lenovo LOQ or ASUS TUF series." },
-      { sender: "user", text: "Actually 90k is okay, but I don't want HP." },
-      { sender: "dora", text: "Noted! Excluding HP and checking up to 90k." },
-    ];
-    const movieTurn = "Which movie won Best Picture Oscar last year?";
-    const analysis = brainEngine.analyze(movieTurn, history);
+    const history: ConversationTurn[] = [];
+
+    // Turn 1: Laptop discussion with budget & feature constraints
+    const res1 = contextEngine.analyze("I need a laptop under 80k with RTX.", history, undefined, "test-session-7");
+    history.push({ sender: "user", text: "I need a laptop under 80k with RTX." });
+    history.push({ sender: "dora", text: "Under 80k with RTX, Lenovo LOQ or ASUS TUF are top choices." });
+
+    // Turn 2: Unrelated movie discussion
+    const res2 = contextEngine.analyze("Which movie won Best Picture Oscar last year?", history, res1.context, "test-session-7");
 
     assert(
-      analysis.activeContext?.activeTopic?.includes("movie") === true,
-      `Topic switched to movie discussion (got: "${analysis.activeContext?.activeTopic}")`
+      res2.context.activeTopic === "movie & entertainment",
+      `Topic switched to movie & entertainment (got: "${res2.context.activeTopic}")`
     );
+    const activeConstraints = res2.context.constraints.filter((c) => !c.isOverridden);
     assert(
-      analysis.activeContext?.constraints.length === 0,
-      "Prior laptop constraints isolated and not carried into movie topic"
+      activeConstraints.length === 0,
+      `Old laptop constraints are inactive for movie context (active constraints count: ${activeConstraints.length})`
     );
   }
 
@@ -181,7 +222,7 @@ export function runAllTests() {
     const analysis = brainEngine.analyze(userTurn, []);
 
     assert(
-      analysis.activeContext?.activeTopic?.includes("laptop") === true,
+      Boolean(analysis.activeContext?.activeTopic?.includes("laptop")),
       `Identified as active conversation topic/task (got: "${analysis.activeContext?.activeTopic}")`
     );
     assert(
@@ -196,4 +237,3 @@ export function runAllTests() {
 }
 
 runAllTests();
-

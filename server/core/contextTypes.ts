@@ -3,6 +3,9 @@
  * 
  * Defines structured conversation state, entity tracking, constraint tracking,
  * reference resolution, and task state for Dora's Core Intelligence.
+ * 
+ * ConversationContext is the active working memory for the CURRENT task/dialogue.
+ * It is NOT long-term memory.
  */
 
 import { BrainIntent } from "./brainEngine";
@@ -23,6 +26,7 @@ export type EntityType =
   | "project"
   | "file"
   | "concept"
+  | "tech_stack"
   | "other";
 
 export type EntityRole =
@@ -39,6 +43,8 @@ export interface TrackedEntity {
   attributes?: Record<string, string | number | boolean>;
   firstMentionedTurn: number;
   lastMentionedTurn: number;
+  mentionCount: number;
+  status: "active" | "archived" | "superseded";
 }
 
 export type ConstraintCategory =
@@ -59,24 +65,31 @@ export interface ConversationConstraint {
   id: string;
   category: ConstraintCategory;
   key: string;
-  value: string | number;
+  value: string | number | boolean;
   rawText: string;
-  operator?: "<=" | ">=" | "==" | "!=" | "contains";
+  operator?: "<=" | ">=" | "==" | "!=" | "contains" | "within";
   isOverridden?: boolean;
+  overriddenBy?: string;
+  createdAt: number;
+  updatedAt: number;
   updatedAtTurn: number;
 }
 
+export type ReferenceStatus = "resolved" | "ambiguous" | "unresolved";
+
 export interface ResolvedReference {
   rawToken: string;
+  tokenType?: "pronoun" | "deictic" | "ordinal" | "comparative" | "anaphora" | "relative";
+  status: ReferenceStatus;
   resolvedTarget?: string;
   entityId?: string;
+  candidateTargets?: string[];
   confidence: number;
   isAmbiguous: boolean;
-  candidateTargets?: string[];
   reason?: string;
 }
 
-export type ConversationState =
+export type ActiveConversationStatus =
   | "idle"
   | "active"
   | "clarifying"
@@ -84,7 +97,21 @@ export type ConversationState =
   | "concluding"
   | "stale";
 
-export interface ActiveConversationContext {
+export interface InactiveContextSnapshot {
+  topic: string;
+  task: string | null;
+  goal: string | null;
+  entities: TrackedEntity[];
+  constraints: ConversationConstraint[];
+  endedAt: number;
+  endedAtTurn: number;
+}
+
+/**
+ * Structured Active Conversation Context for Dora
+ */
+export interface ConversationContext {
+  id: string;
   activeTopic: string | null;
   currentTask: string | null;
   userGoal: string | null;
@@ -92,18 +119,24 @@ export interface ActiveConversationContext {
   constraints: ConversationConstraint[];
   preferences: string[];
   recentReferences: ResolvedReference[];
-  conversationState: ConversationState;
+  conversationState: ActiveConversationStatus;
   lastMeaningfulUserIntent: BrainIntent | null;
   lastMeaningfulAssistantResponse: string | null;
+  createdAt: number;
+  updatedAt: number;
   contextTimestamp: number;
   turnsCount: number;
   isTopicSwitched: boolean;
   isAmbiguousReference: boolean;
+  archivedContexts: InactiveContextSnapshot[];
   topicHistory: Array<{ topic: string; endedAtTurn: number }>;
 }
 
+// Alias for backward compatibility
+export type ActiveConversationContext = ConversationContext;
+
 export interface ContextAnalysisResult {
-  context: ActiveConversationContext;
+  context: ConversationContext;
   isFollowUp: boolean;
   isTopicSwitch: boolean;
   resolvedReferences: ResolvedReference[];

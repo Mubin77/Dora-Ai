@@ -1,0 +1,138 @@
+/**
+ * Dora Active Conversation Context Store
+ * 
+ * Manages in-memory stateful ConversationContext instances per session.
+ * Provides thread/session persistence, snapshotting, topic archiving,
+ * and clean isolation from long-term memory.
+ */
+
+import { ConversationContext, InactiveContextSnapshot } from "./contextTypes";
+
+export class ContextStore {
+  private static instance: ContextStore;
+  private contexts: Map<string, ConversationContext> = new Map();
+  private readonly TTL_MS = 1000 * 60 * 60 * 4; // 4 hours in-memory session lifetime
+
+  private constructor() {}
+
+  public static getInstance(): ContextStore {
+    if (!ContextStore.instance) {
+      ContextStore.instance = new ContextStore();
+    }
+    return ContextStore.instance;
+  }
+
+  /**
+   * Generates a fresh blank active conversation context
+   */
+  public createBlankContext(sessionId: string = "default"): ConversationContext {
+    const now = Date.now();
+    return {
+      id: sessionId,
+      activeTopic: null,
+      currentTask: null,
+      userGoal: null,
+      entities: [],
+      constraints: [],
+      preferences: [],
+      recentReferences: [],
+      conversationState: "idle",
+      lastMeaningfulUserIntent: null,
+      lastMeaningfulAssistantResponse: null,
+      createdAt: now,
+      updatedAt: now,
+      contextTimestamp: now,
+      turnsCount: 0,
+      isTopicSwitched: false,
+      isAmbiguousReference: false,
+      archivedContexts: [],
+      topicHistory: [],
+    };
+  }
+
+  /**
+   * Retrieves the current context for a session, initializing one if needed
+   */
+  public getOrCreate(sessionId: string = "default"): ConversationContext {
+    const existing = this.contexts.get(sessionId);
+    const now = Date.now();
+
+    if (existing) {
+      // Check freshness TTL
+      if (now - existing.updatedAt < this.TTL_MS) {
+        return existing;
+      }
+    }
+
+    const fresh = this.createBlankContext(sessionId);
+    this.contexts.set(sessionId, fresh);
+    return fresh;
+  }
+
+  /**
+   * Saves or updates an active conversation context for a session
+   */
+  public save(sessionId: string = "default", context: ConversationContext): ConversationContext {
+    const updated: ConversationContext = {
+      ...context,
+      id: sessionId,
+      updatedAt: Date.now(),
+      contextTimestamp: Date.now(),
+    };
+    this.contexts.set(sessionId, updated);
+    return updated;
+  }
+
+  /**
+   * Safely archives the current topic and active constraints into archivedContexts
+   * when a topic switch occurs, isolating them so they do NOT contaminate the new topic.
+   */
+  public archiveCurrentTopic(
+    context: ConversationContext,
+    endedAtTurn: number
+  ): ConversationContext {
+    if (!context.activeTopic) return context;
+
+    const snapshot: InactiveContextSnapshot = {
+      topic: context.activeTopic,
+      task: context.currentTask,
+      goal: context.userGoal,
+      entities: [...context.entities],
+      constraints: [...context.constraints],
+      endedAt: Date.now(),
+      endedAtTurn,
+    };
+
+    const updatedArchived = [snapshot, ...context.archivedContexts].slice(0, 10);
+    const updatedHistory = [
+      { topic: context.activeTopic, endedAtTurn },
+      ...context.topicHistory,
+    ].slice(0, 10);
+
+    return {
+      ...context,
+      activeTopic: null,
+      currentTask: null,
+      userGoal: null,
+      // Archive entities: mark existing entities as archived
+      entities: context.entities.map((e) => ({ ...e, status: "archived" })),
+      // Invalidate current constraints for the new topic
+      constraints: context.constraints.map((c) => ({ ...c, isOverridden: true })),
+      recentReferences: [],
+      isTopicSwitched: true,
+      archivedContexts: updatedArchived,
+      topicHistory: updatedHistory,
+      updatedAt: Date.now(),
+      contextTimestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Clears context for a given session
+   */
+  public clear(sessionId: string = "default"): void {
+    this.contexts.delete(sessionId);
+  }
+}
+
+export const contextStore = ContextStore.getInstance();

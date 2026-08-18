@@ -83,6 +83,7 @@ async function startServer() {
         clientTimeZone,
         clientTimestamp,
         existingContext = undefined,
+        sessionId = "default",
       } = req.body;
 
       if (!message || typeof message !== "string") {
@@ -127,10 +128,11 @@ async function startServer() {
       const brainAnalysis = brainEngine.analyze(
         message,
         Array.isArray(history) ? history : [],
-        existingContext
+        existingContext,
+        sessionId
       );
       console.log(
-        `[BrainIntelligence]\nintent=${brainAnalysis.intent}\nknowledgeType=${brainAnalysis.knowledgeType}\ntopic=${brainAnalysis.activeContext?.activeTopic || "none"}\ntask=${brainAnalysis.activeContext?.currentTask || "none"}\nentities=${brainAnalysis.activeContext?.entities.map((e) => e.name).join(", ") || "none"}\nconstraints=${brainAnalysis.activeContext?.constraints.filter((c) => !c.isOverridden).map((c) => `${c.key}:${c.value}`).join("; ") || "none"}\nisFollowUp=${brainAnalysis.contextReference.isFollowUp}\nisCorrection=${brainAnalysis.contextReference.isCorrection}\nhasReference=${brainAnalysis.contextReference.hasReference}\nisTopicSwitched=${brainAnalysis.activeContext?.isTopicSwitched || false}\nconfidence=${brainAnalysis.confidence}`
+        `[BrainIntelligence]\nintent=${brainAnalysis.intent}\nknowledgeType=${brainAnalysis.knowledgeType}\ntopic=${brainAnalysis.activeContext?.activeTopic || "none"}\ntask=${brainAnalysis.activeContext?.currentTask || "none"}\ngoal=${brainAnalysis.activeContext?.userGoal || "none"}\nentities=${brainAnalysis.activeContext?.entities.map((e) => e.name).join(", ") || "none"}\nconstraints=${brainAnalysis.activeContext?.constraints.filter((c) => !c.isOverridden).map((c) => `${c.key}:${c.value}`).join("; ") || "none"}\nisFollowUp=${brainAnalysis.contextReference.isFollowUp}\nisCorrection=${brainAnalysis.contextReference.isCorrection}\nhasReference=${brainAnalysis.contextReference.hasReference}\nisTopicSwitched=${brainAnalysis.activeContext?.isTopicSwitched || false}\nisAmbiguous=${brainAnalysis.activeContext?.isAmbiguousReference || false}\nconfidence=${brainAnalysis.confidence}`
       );
 
       let brainPromptContext = "";

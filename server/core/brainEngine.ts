@@ -8,13 +8,17 @@
 
 import {
   ActiveConversationContext,
+  ConversationContext,
   ConversationConstraint,
   ResolvedReference,
   TrackedEntity,
+  ConversationTurn,
 } from "./contextTypes";
 import { contextEngine } from "./contextEngine";
+import { contextStore } from "./contextStore";
 
 export * from "./contextTypes";
+export * from "./contextStore";
 
 export type BrainIntent =
   | "INFORMATION"
@@ -56,17 +60,20 @@ export interface BrainAnalysis {
   reasoningRequired: boolean;
   multiStepGoal?: string;
   promptDirectives: string[];
-  activeContext?: ActiveConversationContext;
+  activeContext?: ConversationContext;
+  context?: ConversationContext;
+  contextUpdated?: boolean;
+  topicSwitched?: boolean;
+  resolvedReferences?: ResolvedReference[];
+  ambiguity?: {
+    isAmbiguous: boolean;
+    candidateTargets?: string[];
+  };
   confidenceSignals?: Record<string, number>;
   diagnostics?: {
     signals: Record<string, number>;
     reasoningTrace: string[];
   };
-}
-
-export interface ConversationTurn {
-  sender: "user" | "dora";
-  text: string;
 }
 
 export class BrainEngine {
@@ -107,19 +114,20 @@ export class BrainEngine {
   public analyze(
     message: string,
     history: ConversationTurn[] = [],
-    existingContext?: ActiveConversationContext
+    existingContext?: ConversationContext,
+    sessionId: string = "default"
   ): BrainAnalysis {
-    const trimmed = message.trim();
+    const trimmed = (message || "").trim();
     const lower = trimmed.toLowerCase();
-    const recentHistory = history.slice(-12);
+    const recentHistory = Array.isArray(history) ? history.slice(-12) : [];
 
-    // 1. Run Structured Context Engine (Tracks topics, tasks, entities, constraints, references)
-    const contextResult = contextEngine.updateContext({
-      message: trimmed,
-      history: recentHistory,
+    // 1. Run Structured Active Context Engine
+    const contextResult = contextEngine.analyze(
+      trimmed,
+      recentHistory,
       existingContext,
-      currentTurnIndex: history.length,
-    });
+      sessionId
+    );
 
     const isCorrection = this.correctionRegex.test(trimmed);
     const refMatches = trimmed.match(this.referenceRegex);
@@ -200,7 +208,7 @@ export class BrainEngine {
     // Calculate structured confidence based on signal clarity
     let confidence = 0.85;
     if (isCorrection) confidence = 0.96;
-    else if (isAmbiguous) confidence = 0.55;
+    else if (isAmbiguous) confidence = 0.50; // Ambiguous explicitly lowers confidence rather than pretending certainty
     else if (contextResult.context.activeTopic && contextResult.isFollowUp) confidence = 0.93;
     else if (intent === "QUESTION" || intent === "REASONING") confidence = 0.90;
 
@@ -212,6 +220,14 @@ export class BrainEngine {
       reasoningRequired,
       promptDirectives,
       activeContext: contextResult.context,
+      context: contextResult.context,
+      contextUpdated: true,
+      topicSwitched: contextResult.isTopicSwitch,
+      resolvedReferences: contextResult.resolvedReferences,
+      ambiguity: {
+        isAmbiguous,
+        candidateTargets: candidateTargets.length > 0 ? Array.from(new Set(candidateTargets)) : undefined,
+      },
       confidenceSignals: contextResult.diagnostics.signals,
       diagnostics: contextResult.diagnostics,
     };
@@ -219,4 +235,3 @@ export class BrainEngine {
 }
 
 export const brainEngine = BrainEngine.getInstance();
-

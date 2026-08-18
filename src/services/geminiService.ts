@@ -6,6 +6,7 @@ export interface DoraChatResponse {
   emotion: DoraEmotion;
   reaction?: string;
   audioBase64?: string;
+  context?: any;
 }
 
 export interface LatencyMetrics {
@@ -32,6 +33,8 @@ export class DoraService {
   private lastMemoryContext: string = "";
   private reconnectTimer: any = null;
   private wsCallbacks: LiveStreamCallbacks = {};
+  private sessionId: string = `session-${Date.now()}`;
+  private activeContext: any = null;
 
   // Active turn latency tracking
   private activeMetrics: LatencyMetrics | null = null;
@@ -335,6 +338,8 @@ export class DoraService {
         deepThink,
         clientTimeZone,
         clientTimestamp,
+        sessionId: this.sessionId,
+        existingContext: this.activeContext || undefined,
       }),
     });
 
@@ -344,10 +349,15 @@ export class DoraService {
     }
 
     const data = await res.json();
+    if (data.context) {
+      this.activeContext = data.context;
+    }
+
     return {
       reply: data.reply,
       emotion: data.emotion || "warm",
       reaction: data.reaction,
+      context: data.context,
     };
   }
 
