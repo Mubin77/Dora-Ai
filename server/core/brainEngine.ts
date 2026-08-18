@@ -2,8 +2,8 @@
  * Dora Advanced Brain & Intelligence System
  * 
  * Implements context-aware intent classification, anaphora/pronoun resolution (Bangla/Banglish/English),
- * follow-up conversation linking, correction intelligence, static vs dynamic routing, and
- * multi-step reasoning guidance.
+ * follow-up conversation linking, correction intelligence, static vs dynamic routing, structured reasoning,
+ * and multi-step plan generation.
  */
 
 import {
@@ -16,26 +16,27 @@ import {
 } from "./contextTypes";
 import { contextEngine } from "./contextEngine";
 import { contextStore } from "./contextStore";
+import { intentEngine } from "./intentEngine";
+import { BrainIntent, StructuredIntent, IntentRelationship } from "./intentTypes";
+import { reasoningEngine } from "./reasoningEngine";
+import {
+  ReasoningAnalysis,
+  ReasoningType,
+  ComplexityLevel,
+  ConclusionStrategy,
+  ReasoningSubtask,
+  ComparisonFactor,
+  TradeoffDimension,
+  StructuredReasoningConstraint,
+  ToolRequirement,
+} from "./reasoningTypes";
 
 export * from "./contextTypes";
 export * from "./contextStore";
-
-export type BrainIntent =
-  | "INFORMATION"
-  | "QUESTION"
-  | "REASONING"
-  | "ADVICE"
-  | "OPINION"
-  | "CASUAL_CONVERSATION"
-  | "MEMORY_RECALL"
-  | "MEMORY_UPDATE"
-  | "REAL_TIME_INFORMATION"
-  | "TOOL_ACTION"
-  | "CREATIVE_REQUEST"
-  | "FOLLOW_UP"
-  | "CLARIFICATION"
-  | "EMOTIONAL_SUPPORT"
-  | "CORRECTION";
+export * from "./intentTypes";
+export * from "./reasoningTypes";
+export { intentEngine } from "./intentEngine";
+export { reasoningEngine } from "./reasoningEngine";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
 
@@ -54,10 +55,15 @@ export interface ContextualReference {
 
 export interface BrainAnalysis {
   intent: BrainIntent;
+  structuredIntent: StructuredIntent;
+  reasoningAnalysis: ReasoningAnalysis;
   knowledgeType: KnowledgeType;
   confidence: number;
   contextReference: ContextualReference;
   reasoningRequired: boolean;
+  requiresClarification: boolean;
+  ambiguityReason?: string;
+  clarificationPrompt?: string;
   multiStepGoal?: string;
   promptDirectives: string[];
   activeContext?: ConversationContext;
@@ -92,22 +98,6 @@ export class BrainEngine {
   private referenceRegex =
     /\b(?:eta|eita|oita|oitar|sheta|seta|eigula|oigula|ager\s*ta|ager\s*ti|last\s*one|previous\s*one|same\s*thing|that\s*one|this\s*one|the\s*other\s*one|second\s*one|first\s*one|last\s*thing|which\s*one)\b|[ওইএই][টত]া|[ওইএই]গুলো|[ওইএই]গুলা|আগেরটা/i;
 
-  // User correction markers
-  private correctionRegex =
-    /^(?:na|nah|no|wrong|vul|eta\s*na|eita\s*na|oita\s*na|areh?\s+ami|ami\s+eta\s+boli\s*ni|ami\s+oita\s+bolsi|bujhos\s*nai|bujhte\s*paro\s*ni|that'?s\s+not\s+what\s+i\s+meant|not\s+this|incorrect)\b|না|ভুল|এটা\s*না|ওটা\s*না|বুঝিস\s*নাই|আমি\s*ওটা\s*বলি\s*নাই/i;
-
-  // Emotional support markers
-  private emotionalRegex =
-    /\b(?:sad|depressed|lonely|tired|crying|failed|broken|hurt|angry|stressed|anxious|khub\s*kharap|mon\s*kharap|valo\s*lagtese\s*na|bhalo\s*lagche\s*na|pain|upset|frustrated)\b|মন\s*খারাপ|ভালো\s*লাগছে\s*না|কষ্ট/i;
-
-  // Dynamic knowledge markers
-  private dynamicRegex =
-    /\b(?:today|current|now|latest|price|rate|score|news|weather|time|date|stock|match|flight|status|released|recently|ajke|ekhon|baje|tarik|dam|khoroch)\b/i;
-
-  // Reasoning / calculation / comparison markers
-  private reasoningRegex =
-    /\b(?:calculate|solve|compare|difference|which\s+is\s+better|which\s+one\s+should|why|how\s+to\s+choose|best\s+option|konta\s+bhalo|konta\s+better|konta\s+neoa\s+uchit|pros\s+and\s+cons|logic|math|code\s+error|debug|optimize)\b/i;
-
   /**
    * Performs deep cognitive and contextual analysis of the current turn
    */
@@ -118,7 +108,6 @@ export class BrainEngine {
     sessionId: string = "default"
   ): BrainAnalysis {
     const trimmed = (message || "").trim();
-    const lower = trimmed.toLowerCase();
     const recentHistory = Array.isArray(history) ? history.slice(-12) : [];
 
     // 1. Run Structured Active Context Engine
@@ -129,95 +118,116 @@ export class BrainEngine {
       sessionId
     );
 
-    const isCorrection = this.correctionRegex.test(trimmed);
+    // 2. Run Context-First Structured Intent Engine
+    const structuredIntent = intentEngine.classifyIntent(
+      trimmed,
+      recentHistory,
+      contextResult.context
+    );
+
+    // Handle correction side-effects on context
+    if (structuredIntent.primaryIntent === "CORRECTION" && structuredIntent.targetEntity) {
+      for (const entity of contextResult.context.entities) {
+        if (entity.status === "active" && entity.role === "primary") {
+          entity.status = "superseded";
+        }
+      }
+      contextResult.context.entities.unshift({
+        id: `entity-${Date.now()}`,
+        name: structuredIntent.targetEntity,
+        type: "brand",
+        role: "primary",
+        firstMentionedTurn: recentHistory.length,
+        lastMentionedTurn: recentHistory.length,
+        mentionCount: 1,
+        status: "active",
+      });
+      contextStore.save(sessionId, contextResult.context);
+    }
+
+    // Update last meaningful user intent on active context
+    contextResult.context.lastMeaningfulUserIntent = structuredIntent.primaryIntent;
+
+    // 3. Run Structured Reasoning Engine
+    const reasoningAnalysis = reasoningEngine.analyze(
+      trimmed,
+      structuredIntent,
+      contextResult.context,
+      recentHistory
+    );
+
+    const isCorrection = structuredIntent.primaryIntent === "CORRECTION";
     const refMatches = trimmed.match(this.referenceRegex);
     const hasReference = Boolean(refMatches) || contextResult.resolvedReferences.length > 0;
     const referenceTokens = refMatches ? Array.from(new Set(refMatches.map((m) => m.toLowerCase()))) : [];
 
-    const isAmbiguous = contextResult.context.isAmbiguousReference;
+    const isAmbiguous =
+      contextResult.context.isAmbiguousReference ||
+      structuredIntent.requiresClarification ||
+      reasoningAnalysis.requiresClarification;
     const candidateTargets = contextResult.resolvedReferences.flatMap((r) => r.candidateTargets || []);
+
+    const isFollowUp = structuredIntent.relationship === "FOLLOW_UP" || contextResult.isFollowUp;
 
     const contextRef: ContextualReference = {
       hasReference,
       referenceTokens,
       inferredSubject: contextResult.context.activeTopic || undefined,
       previousTopic: contextResult.context.topicHistory.slice(-1)[0]?.topic || undefined,
-      isFollowUp: contextResult.isFollowUp,
+      isFollowUp,
       isCorrection,
-      correctionDetail: isCorrection
-        ? `User corrected previous turn`
-        : undefined,
+      correctionDetail: isCorrection ? `User corrected previous turn` : undefined,
       isAmbiguous,
       candidateTargets: candidateTargets.length > 0 ? Array.from(new Set(candidateTargets)) : undefined,
       resolvedEntities: contextResult.context.entities,
     };
 
-    let intent: BrainIntent = "CASUAL_CONVERSATION";
+    // Determine Knowledge Type (Static vs Dynamic)
     let knowledgeType: KnowledgeType = "STATIC";
-    let reasoningRequired = false;
-    const promptDirectives: string[] = [];
-
-    // 1. Correction Check (Highest Priority)
-    if (contextRef.isCorrection) {
-      intent = "CORRECTION";
-      promptDirectives.push(
-        "USER CORRECTION: The user is clarifying or correcting a previous turn. NEVER defend your previous response. Acknowledge with genuine warmth and empathy (e.g., 'Ohh, bujhlam 😭 Tui actually...'), pivot immediately to their intended meaning, and answer directly."
-      );
-    }
-    // 2. Follow-Up Linking
-    else if (contextResult.isFollowUp) {
-      intent = "FOLLOW_UP";
-      if (contextResult.context.activeTopic) {
-        promptDirectives.push(
-          `ACTIVE CONVERSATION THREAD: User response is a direct follow-up constraint/answer regarding "${contextResult.context.activeTopic}". Do not ask them to repeat the question; combine with their earlier goal to answer directly.`
-        );
-      }
-    }
-    // 3. Emotional Support
-    else if (this.emotionalRegex.test(lower)) {
-      intent = "EMOTIONAL_SUPPORT";
-      promptDirectives.push(
-        "EMOTIONAL SUPPORT: User is expressing emotional vulnerability or distress. Listen attentively with quiet empathy, comfort them warmly in Dora's soft voice, and avoid prematurely jumping into clinical problem-solving."
-      );
-    }
-    // 4. Reasoning / Calculation / Complex Comparison
-    else if (this.reasoningRegex.test(lower) || (contextResult.context.entities.filter((e) => e.role === "comparison_target").length >= 2 && /better|which|difference|compare/i.test(lower))) {
-      intent = "REASONING";
-      reasoningRequired = true;
-      promptDirectives.push(
-        "REASONING & COMPARISON: Break the problem down logically, check constraints, compare options objectively, and deliver a well-reasoned, clear recommendation in conversational language."
-      );
-    }
-    // 5. Dynamic / Real-Time Information
-    else if (this.dynamicRegex.test(lower) || contextResult.context.currentTask === "realtime_information") {
-      intent = "REAL_TIME_INFORMATION";
+    if (
+      structuredIntent.primaryIntent === "REAL_TIME_INFORMATION" ||
+      contextResult.context.currentTask === "realtime_information" ||
+      reasoningAnalysis.reasoningType === "TOOL_ASSISTED_REASONING" ||
+      reasoningAnalysis.toolRequirements.some(t => t.toolType === "weather" || t.toolType === "search")
+    ) {
       knowledgeType = "DYNAMIC";
     }
-    // 6. Direct Question / Information
-    else if (/[?？]$/.test(trimmed) || /^(?:what|who|where|when|why|how|ki|kobe|kothay|kivabe|keno)\b/i.test(lower)) {
-      intent = "QUESTION";
-    }
 
-    // Merge structured context directives from contextEngine
+    // Combine prompt directives (Intent + Context + Reasoning)
+    const promptDirectives: string[] = [];
+    for (const d of structuredIntent.suggestedDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
     for (const d of contextResult.contextDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
     }
+    for (const d of reasoningAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
 
-    // Calculate structured confidence based on signal clarity
-    let confidence = 0.85;
-    if (isCorrection) confidence = 0.96;
-    else if (isAmbiguous) confidence = 0.50; // Ambiguous explicitly lowers confidence rather than pretending certainty
-    else if (contextResult.context.activeTopic && contextResult.isFollowUp) confidence = 0.93;
-    else if (intent === "QUESTION" || intent === "REASONING") confidence = 0.90;
+    // Unified confidence score
+    let confidence = Math.min(structuredIntent.intentConfidence, reasoningAnalysis.reasoningConfidence);
+    if (isAmbiguous) {
+      confidence = Math.min(confidence, 0.45);
+    }
 
     return {
-      intent,
+      intent: structuredIntent.primaryIntent,
+      structuredIntent,
+      reasoningAnalysis,
       knowledgeType,
       confidence,
       contextReference: contextRef,
-      reasoningRequired,
+      reasoningRequired: reasoningAnalysis.reasoningRequired,
+      requiresClarification: isAmbiguous || structuredIntent.requiresClarification || reasoningAnalysis.requiresClarification,
+      ambiguityReason: structuredIntent.ambiguityReason || (reasoningAnalysis.missingInformation.length > 0 ? `Missing: ${reasoningAnalysis.missingInformation.join(", ")}` : undefined),
+      clarificationPrompt: reasoningAnalysis.clarificationPrompt,
       promptDirectives,
       activeContext: contextResult.context,
       context: contextResult.context,
@@ -228,8 +238,19 @@ export class BrainEngine {
         isAmbiguous,
         candidateTargets: candidateTargets.length > 0 ? Array.from(new Set(candidateTargets)) : undefined,
       },
-      confidenceSignals: contextResult.diagnostics.signals,
-      diagnostics: contextResult.diagnostics,
+      confidenceSignals: {
+        ...contextResult.diagnostics.signals,
+        ...structuredIntent.intentSignals,
+        reasoning_confidence: reasoningAnalysis.reasoningConfidence,
+      },
+      diagnostics: {
+        signals: {
+          ...contextResult.diagnostics.signals,
+          ...structuredIntent.intentSignals,
+          reasoning_confidence: reasoningAnalysis.reasoningConfidence,
+        },
+        reasoningTrace: contextResult.diagnostics.reasoningTrace,
+      },
     };
   }
 }

@@ -8,7 +8,8 @@
  * It is NOT long-term memory.
  */
 
-import { BrainIntent } from "./brainEngine";
+import { BrainIntent } from "./intentTypes";
+export * from "./intentTypes";
 
 export interface ConversationTurn {
   sender: "user" | "dora";
