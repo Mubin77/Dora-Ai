@@ -6,6 +6,16 @@
  * multi-step reasoning guidance.
  */
 
+import {
+  ActiveConversationContext,
+  ConversationConstraint,
+  ResolvedReference,
+  TrackedEntity,
+} from "./contextTypes";
+import { contextEngine } from "./contextEngine";
+
+export * from "./contextTypes";
+
 export type BrainIntent =
   | "INFORMATION"
   | "QUESTION"
@@ -33,6 +43,9 @@ export interface ContextualReference {
   isFollowUp: boolean;
   isCorrection: boolean;
   correctionDetail?: string;
+  isAmbiguous?: boolean;
+  candidateTargets?: string[];
+  resolvedEntities?: TrackedEntity[];
 }
 
 export interface BrainAnalysis {
@@ -43,6 +56,12 @@ export interface BrainAnalysis {
   reasoningRequired: boolean;
   multiStepGoal?: string;
   promptDirectives: string[];
+  activeContext?: ActiveConversationContext;
+  confidenceSignals?: Record<string, number>;
+  diagnostics?: {
+    signals: Record<string, number>;
+    reasoningTrace: string[];
+  };
 }
 
 export interface ConversationTurn {
@@ -64,7 +83,7 @@ export class BrainEngine {
 
   // Deictic pronouns and anaphoric reference markers
   private referenceRegex =
-    /\b(?:eta|eita|oita|sheta|seta|eigula|oigula|ager\s*ta|ager\s*ti|last\s*one|previous\s*one|same\s*thing|that\s*one|this\s*one|the\s*other\s*one|second\s*one|first\s*one|last\s*thing)\b|[ওইএই][টত]া|[ওইএই]গুলো|[ওইএই]গুলা|আগেরটা/i;
+    /\b(?:eta|eita|oita|oitar|sheta|seta|eigula|oigula|ager\s*ta|ager\s*ti|last\s*one|previous\s*one|same\s*thing|that\s*one|this\s*one|the\s*other\s*one|second\s*one|first\s*one|last\s*thing|which\s*one)\b|[ওইএই][টত]া|[ওইএই]গুলো|[ওইএই]গুলা|আগেরটা/i;
 
   // User correction markers
   private correctionRegex =
@@ -85,12 +104,46 @@ export class BrainEngine {
   /**
    * Performs deep cognitive and contextual analysis of the current turn
    */
-  public analyze(message: string, history: ConversationTurn[] = []): BrainAnalysis {
+  public analyze(
+    message: string,
+    history: ConversationTurn[] = [],
+    existingContext?: ActiveConversationContext
+  ): BrainAnalysis {
     const trimmed = message.trim();
     const lower = trimmed.toLowerCase();
-    const recentHistory = history.slice(-6);
+    const recentHistory = history.slice(-12);
 
-    const contextRef = this.resolveContextReferences(trimmed, recentHistory);
+    // 1. Run Structured Context Engine (Tracks topics, tasks, entities, constraints, references)
+    const contextResult = contextEngine.updateContext({
+      message: trimmed,
+      history: recentHistory,
+      existingContext,
+      currentTurnIndex: history.length,
+    });
+
+    const isCorrection = this.correctionRegex.test(trimmed);
+    const refMatches = trimmed.match(this.referenceRegex);
+    const hasReference = Boolean(refMatches) || contextResult.resolvedReferences.length > 0;
+    const referenceTokens = refMatches ? Array.from(new Set(refMatches.map((m) => m.toLowerCase()))) : [];
+
+    const isAmbiguous = contextResult.context.isAmbiguousReference;
+    const candidateTargets = contextResult.resolvedReferences.flatMap((r) => r.candidateTargets || []);
+
+    const contextRef: ContextualReference = {
+      hasReference,
+      referenceTokens,
+      inferredSubject: contextResult.context.activeTopic || undefined,
+      previousTopic: contextResult.context.topicHistory.slice(-1)[0]?.topic || undefined,
+      isFollowUp: contextResult.isFollowUp,
+      isCorrection,
+      correctionDetail: isCorrection
+        ? `User corrected previous turn`
+        : undefined,
+      isAmbiguous,
+      candidateTargets: candidateTargets.length > 0 ? Array.from(new Set(candidateTargets)) : undefined,
+      resolvedEntities: contextResult.context.entities,
+    };
+
     let intent: BrainIntent = "CASUAL_CONVERSATION";
     let knowledgeType: KnowledgeType = "STATIC";
     let reasoningRequired = false;
@@ -104,11 +157,11 @@ export class BrainEngine {
       );
     }
     // 2. Follow-Up Linking
-    else if (contextRef.isFollowUp) {
+    else if (contextResult.isFollowUp) {
       intent = "FOLLOW_UP";
-      if (contextRef.inferredSubject) {
+      if (contextResult.context.activeTopic) {
         promptDirectives.push(
-          `ACTIVE CONVERSATION THREAD: User response is a direct follow-up constraint/answer regarding "${contextRef.inferredSubject}". Do not ask them to repeat the question; combine with their earlier goal to answer directly.`
+          `ACTIVE CONVERSATION THREAD: User response is a direct follow-up constraint/answer regarding "${contextResult.context.activeTopic}". Do not ask them to repeat the question; combine with their earlier goal to answer directly.`
         );
       }
     }
@@ -120,7 +173,7 @@ export class BrainEngine {
       );
     }
     // 4. Reasoning / Calculation / Complex Comparison
-    else if (this.reasoningRegex.test(lower)) {
+    else if (this.reasoningRegex.test(lower) || (contextResult.context.entities.filter((e) => e.role === "comparison_target").length >= 2 && /better|which|difference|compare/i.test(lower))) {
       intent = "REASONING";
       reasoningRequired = true;
       promptDirectives.push(
@@ -128,7 +181,7 @@ export class BrainEngine {
       );
     }
     // 5. Dynamic / Real-Time Information
-    else if (this.dynamicRegex.test(lower)) {
+    else if (this.dynamicRegex.test(lower) || contextResult.context.currentTask === "realtime_information") {
       intent = "REAL_TIME_INFORMATION";
       knowledgeType = "DYNAMIC";
     }
@@ -137,80 +190,33 @@ export class BrainEngine {
       intent = "QUESTION";
     }
 
-    // Reference resolution directive (Anaphora understanding: "eta", "oita", etc.)
-    if (contextRef.hasReference && contextRef.inferredSubject) {
-      promptDirectives.push(
-        `PRONOUN/REFERENCE RESOLUTION: The user's words ('${contextRef.referenceTokens.join(", ")}') refer to the previously discussed subject: "${contextRef.inferredSubject}". Treat 'eta'/'oita' as referring directly to this subject.`
-      );
+    // Merge structured context directives from contextEngine
+    for (const d of contextResult.contextDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
     }
+
+    // Calculate structured confidence based on signal clarity
+    let confidence = 0.85;
+    if (isCorrection) confidence = 0.96;
+    else if (isAmbiguous) confidence = 0.55;
+    else if (contextResult.context.activeTopic && contextResult.isFollowUp) confidence = 0.93;
+    else if (intent === "QUESTION" || intent === "REASONING") confidence = 0.90;
 
     return {
       intent,
       knowledgeType,
-      confidence: 0.94,
+      confidence,
       contextReference: contextRef,
       reasoningRequired,
       promptDirectives,
+      activeContext: contextResult.context,
+      confidenceSignals: contextResult.diagnostics.signals,
+      diagnostics: contextResult.diagnostics,
     };
-  }
-
-  /**
-   * Resolves pronouns, previous subjects, and follow-up turns from conversation history
-   */
-  private resolveContextReferences(message: string, history: ConversationTurn[]): ContextualReference {
-    const trimmed = message.trim();
-    const lower = trimmed.toLowerCase();
-
-    const isCorrection = this.correctionRegex.test(trimmed);
-    const refMatches = trimmed.match(this.referenceRegex);
-    const hasReference = Boolean(refMatches);
-    const referenceTokens = refMatches ? Array.from(new Set(refMatches.map((m) => m.toLowerCase()))) : [];
-
-    // Find the last assistant turn and last user turn
-    const lastDoraTurn = [...history].reverse().find((h) => h.sender === "dora");
-    const lastUserTurn = [...history].reverse().find((h) => h.sender === "user");
-
-    // Check if the current message is a short follow-up (e.g. "20k er moddhe", "blue", "yes", "first one")
-    const isShortTurn = trimmed.split(/\s+/).length <= 6;
-    const isDoraAskedQuestion = lastDoraTurn && /[?？]/.test(lastDoraTurn.text);
-    const isFollowUp = (isShortTurn && Boolean(isDoraAskedQuestion)) || hasReference;
-
-    // Infer subject from history
-    let inferredSubject: string | undefined;
-    if (lastUserTurn?.text) {
-      inferredSubject = this.extractCoreSubject(lastUserTurn.text);
-    }
-    if (!inferredSubject && lastDoraTurn?.text) {
-      inferredSubject = this.extractCoreSubject(lastDoraTurn.text);
-    }
-
-    let correctionDetail: string | undefined;
-    if (isCorrection && lastDoraTurn) {
-      correctionDetail = `User corrected previous response: "${lastDoraTurn.text.slice(0, 80)}..."`;
-    }
-
-    return {
-      hasReference,
-      referenceTokens,
-      inferredSubject,
-      previousTopic: lastUserTurn?.text,
-      isFollowUp,
-      isCorrection,
-      correctionDetail,
-    };
-  }
-
-  /**
-   * Helper to extract the central topic/subject from a prior turn
-   */
-  private extractCoreSubject(text: string): string {
-    // Strip common filler questions
-    const clean = text
-      .replace(/^(?:ekta|suggest|tell me about|what about|konta|which)\s+/i, "")
-      .replace(/[?.,!]+$/, "")
-      .trim();
-    return clean.slice(0, 60);
   }
 }
 
 export const brainEngine = BrainEngine.getInstance();
+

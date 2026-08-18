@@ -82,6 +82,7 @@ async function startServer() {
         deepThink = false,
         clientTimeZone,
         clientTimestamp,
+        existingContext = undefined,
       } = req.body;
 
       if (!message || typeof message !== "string") {
@@ -122,10 +123,14 @@ async function startServer() {
 
       const referenceDate = clientTimestamp ? new Date(Number(clientTimestamp)) : new Date();
 
-      // Advanced Brain & Intelligence System analysis
-      const brainAnalysis = brainEngine.analyze(message, Array.isArray(history) ? history : []);
+      // Advanced Brain & Intelligence System analysis with Structured Active Context
+      const brainAnalysis = brainEngine.analyze(
+        message,
+        Array.isArray(history) ? history : [],
+        existingContext
+      );
       console.log(
-        `[BrainIntelligence]\nintent=${brainAnalysis.intent}\nknowledgeType=${brainAnalysis.knowledgeType}\nisFollowUp=${brainAnalysis.contextReference.isFollowUp}\nisCorrection=${brainAnalysis.contextReference.isCorrection}\nhasReference=${brainAnalysis.contextReference.hasReference}`
+        `[BrainIntelligence]\nintent=${brainAnalysis.intent}\nknowledgeType=${brainAnalysis.knowledgeType}\ntopic=${brainAnalysis.activeContext?.activeTopic || "none"}\ntask=${brainAnalysis.activeContext?.currentTask || "none"}\nentities=${brainAnalysis.activeContext?.entities.map((e) => e.name).join(", ") || "none"}\nconstraints=${brainAnalysis.activeContext?.constraints.filter((c) => !c.isOverridden).map((c) => `${c.key}:${c.value}`).join("; ") || "none"}\nisFollowUp=${brainAnalysis.contextReference.isFollowUp}\nisCorrection=${brainAnalysis.contextReference.isCorrection}\nhasReference=${brainAnalysis.contextReference.hasReference}\nisTopicSwitched=${brainAnalysis.activeContext?.isTopicSwitched || false}\nconfidence=${brainAnalysis.confidence}`
       );
 
       let brainPromptContext = "";
@@ -421,6 +426,7 @@ Then organize key headlines with:
         reaction,
         provider: providerUsed,
         model: modelUsed,
+        context: brainAnalysis.activeContext,
         timestamp: Date.now(),
       });
     } catch (error: any) {
@@ -448,6 +454,7 @@ Analyze the user message (and Dora's response) in ANY language (English, Bengali
 
 SELECTIVE IMPORTANCE & FILTERING DIRECTIVES:
 DO NOT STORE:
+- Temporary conversation context or active task items ("I'm buying a laptop today", "I need a phone under 30k", "What's the weather today?", "Ami laptop kinbo ajke")
 - Ordinary temporary states ("Ami ekhon pani khacchi", "Ami ajke tired", "I am eating pizza right now", "Ami ekhon YouTube dekhchi", "I am going outside")
 - Transient conversational pleasantries ("hello", "thanks", "kemon acho", "bhalo")
 - Uncertain / speculative statements ("Maybe ami next year abroad jabo", "Perhaps I might try that")
