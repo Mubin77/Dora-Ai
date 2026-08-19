@@ -53,6 +53,14 @@ import {
   EvidenceAssessment,
   ConstraintCompliance,
 } from "./verificationTypes";
+import { memoryDecisionEngine } from "./memoryDecisionEngine";
+import {
+  MemoryDecision,
+  MemoryRecord,
+  MemoryType,
+  MemorySource,
+  MemoryStatus as MemoryRecordStatus,
+} from "./memoryTypes";
 
 export * from "./contextTypes";
 export * from "./contextStore";
@@ -60,10 +68,12 @@ export * from "./intentTypes";
 export * from "./reasoningTypes";
 export * from "./planningTypes";
 export * from "./verificationTypes";
+export * from "./memoryTypes";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
 export { planningEngine } from "./planningEngine";
 export { verificationEngine } from "./verificationEngine";
+export { memoryDecisionEngine } from "./memoryDecisionEngine";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
 
@@ -86,6 +96,7 @@ export interface BrainAnalysis {
   reasoningAnalysis: ReasoningAnalysis;
   planningAnalysis: PlanningAnalysis;
   verificationAnalysis?: VerificationAnalysis;
+  memoryDecision?: MemoryDecision;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -276,6 +287,18 @@ export class BrainEngine {
       }
     }
 
+    // Step 6 / Phase 2: Memory Decision Engine Evaluation (Non-intrusive to Context)
+    const memoryDecision = memoryDecisionEngine.evaluate({
+      message,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+    });
+
+    if (memoryDecision.directive && !promptDirectives.includes(memoryDecision.directive)) {
+      promptDirectives.push(memoryDecision.directive);
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -285,6 +308,7 @@ export class BrainEngine {
       reasoningAnalysis,
       planningAnalysis,
       verificationAnalysis,
+      memoryDecision,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,
