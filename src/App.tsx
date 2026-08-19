@@ -1,52 +1,75 @@
-/**
- * Dora — Modern Premium AI Assistant
- * Gemini-inspired minimal, spacious, dark mobile and desktop experience.
- * Powered by Gemini Live bidirectional streaming, audio engines, autonomous memory, and screen vision.
- */
-
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Menu,
+  ChevronDown,
+  Check,
+  AlertCircle,
+  X,
+  MessageSquare,
+  Sparkles,
+  Mic,
+  MicOff,
+  Hand,
+  Radio,
+  Tv,
+  Settings,
+} from "lucide-react";
 import {
   ChatMessage,
   ConversationState,
   DoraEmotion,
   DoraMemoryItem,
-  VoiceSettings,
   PendingAttachment,
+  VoiceSettings,
+  ConversationSession,
 } from "./types";
-import { AudioEngine, playNaturalBrowserSpeech } from "./utils/audioUtils";
 import { doraService } from "./services/geminiService";
+import { AudioEngine, playNaturalBrowserSpeech } from "./utils/audioUtils";
+import { SpeechRecognizer } from "./utils/speechRecognizer";
+import { memoryManager } from "./memory/MemoryManager";
+import { screenVisionService } from "./services/screenVisionService";
+
+import { Composer } from "./components/Composer";
+import { Sidebar } from "./components/Sidebar";
+import { VoiceModeView } from "./components/VoiceModeView";
 import { VoiceSettingsModal } from "./components/VoiceSettingsModal";
 import { ConversationMemoryModal } from "./components/ConversationMemoryModal";
 import { SkillsModal } from "./components/SkillsModal";
-import { DoraSparkle } from "./components/DoraSparkle";
-import { Sidebar } from "./components/Sidebar";
-import { Composer } from "./components/Composer";
-import { memoryManager } from "./memory/MemoryManager";
-import { screenVisionService } from "./services/screenVisionService";
-import {
-  Menu,
-  ChevronDown,
-  Sparkles,
-  MessageSquare,
-  X,
-  Monitor,
-  Check,
-  AlertCircle,
-} from "lucide-react";
+
+const SESSIONS_STORAGE_KEY = "dora_conversations_v1";
+const ACTIVE_SESSION_KEY = "dora_active_session_id";
 
 export default function App() {
-  // Conversational State
+  // -------------------------------------------------------------
+  // Interaction Mode ("chat" | "voice") & Unified Conversation State
+  // -------------------------------------------------------------
+  const [activeMode, setActiveMode] = useState<"chat" | "voice">("chat");
+  const [isCallActive, setIsCallActive] = useState<boolean>(false);
   const [state, setState] = useState<ConversationState>("idle");
   const [emotion, setEmotion] = useState<DoraEmotion>("warm");
-  const [isCallActive, setIsCallActive] = useState<boolean>(false);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [isScreenVisionActive, setIsScreenVisionActive] = useState<boolean>(false);
-  const [callDuration, setCallDuration] = useState<number>(0);
   const [volumeLevel, setVolumeLevel] = useState<number>(0);
-
-  // Messages & Spoken Text
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [callDuration, setCallDuration] = useState<number>(0);
   const [currentSpokenText, setCurrentSpokenText] = useState<string>("");
+  const [isScreenVisionActive, setIsScreenVisionActive] = useState<boolean>(false);
+
+  // Sessions and Active Conversation Messages
+  const [sessions, setSessions] = useState<ConversationSession[]>(() => {
+    try {
+      const saved = localStorage.getItem(SESSIONS_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
+    return `session-${Date.now()}`;
+  });
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  // Active Memory Items
   const [memories, setMemories] = useState<DoraMemoryItem[]>([
     {
       id: "mem-init",
@@ -84,6 +107,32 @@ export default function App() {
   // User identity name (from memory or fallback to Mubin)
   const [userName, setUserName] = useState<string>("Abdul Mubin");
 
+  // Settings
+  const [settings, setSettings] = useState<VoiceSettings>({
+    voiceName: "Aoede",
+    speakingRate: 0.96,
+    pitch: 1.05,
+    continuousListening: true,
+    pauseThresholdMs: 1300,
+    interruptSensitivity: "high",
+    language: "auto",
+    engine: "gemini-live",
+  });
+
+  // Audio Engine & Turn Tracking Refs
+  const audioEngineRef = useRef<AudioEngine | null>(null);
+  const speechRecognizerRef = useRef<SpeechRecognizer | null>(null);
+  const callTimerRef = useRef<any>(null);
+  const isProcessingTurnRef = useRef<boolean>(false);
+  const currentUserVoiceMessageIdRef = useRef<string | null>(null);
+  const currentDoraMessageIdRef = useRef<string | null>(null);
+  const lastUserPromptRef = useRef<string>("");
+  const lastHandledMemoryCommandTurnRef = useRef<string>("");
+  const messagesRef = useRef<ChatMessage[]>([]);
+  messagesRef.current = messages;
+  const isCallActiveRef = useRef<boolean>(isCallActive);
+  isCallActiveRef.current = isCallActive;
+
   // Sync user name from memory store if present
   useEffect(() => {
     const checkUserName = () => {
@@ -102,29 +151,46 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Settings
-  const [settings, setSettings] = useState<VoiceSettings>({
-    voiceName: "Aoede",
-    speakingRate: 0.96,
-    pitch: 1.05,
-    continuousListening: true,
-    pauseThresholdMs: 1300,
-    interruptSensitivity: "high",
-    language: "auto",
-    engine: "gemini-live",
-  });
+  // Save conversation turns to Session and localStorage whenever messages change
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId);
+      if (messages.length > 0) {
+        const firstUserText = messages.find((m) => m.sender === "user")?.text || "New Conversation";
+        const title = firstUserText.length > 30 ? `${firstUserText.slice(0, 30)}...` : firstUserText;
+        const hasVoice = messages.some((m) => m.inputMode === "voice");
 
-  // Audio Engine & Speech Recognition Refs
-  const audioEngineRef = useRef<AudioEngine | null>(null);
-  const callTimerRef = useRef<any>(null);
-  const isProcessingTurnRef = useRef<boolean>(false);
-  const currentDoraMessageIdRef = useRef<string | null>(null);
-  const lastUserPromptRef = useRef<string>("");
-  const lastHandledMemoryCommandTurnRef = useRef<string>("");
-  const messagesRef = useRef<ChatMessage[]>([]);
-  messagesRef.current = messages;
-  const isCallActiveRef = useRef<boolean>(isCallActive);
-  isCallActiveRef.current = isCallActive;
+        setSessions((prevSessions) => {
+          const existingIdx = prevSessions.findIndex((s) => s.id === activeSessionId);
+          let updated: ConversationSession[];
+          if (existingIdx > -1) {
+            updated = [...prevSessions];
+            updated[existingIdx] = {
+              ...updated[existingIdx],
+              title,
+              updatedAt: Date.now(),
+              messages,
+              hasVoice: hasVoice || updated[existingIdx].hasVoice,
+            };
+          } else {
+            const newSession: ConversationSession = {
+              id: activeSessionId,
+              title,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messages,
+              hasVoice,
+            };
+            updated = [newSession, ...prevSessions];
+          }
+          localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.warn("Error saving session:", e);
+    }
+  }, [messages, activeSessionId]);
 
   // Auto-scroll conversation to bottom
   useEffect(() => {
@@ -133,7 +199,38 @@ export default function App() {
     }
   }, [messages, currentSpokenText]);
 
-  // Setup Live Stream connection callbacks
+  // Format recent chat history to provide immediate context when switching Chat -> Voice
+  const getRecentHistoryContext = useCallback(() => {
+    const recent = messagesRef.current.slice(-10);
+    if (recent.length === 0) return "";
+    return recent
+      .map((m) => `${m.sender === "user" ? "User" : "Dora"}: ${m.text}`)
+      .join("\n");
+  }, []);
+
+  // Stop / Interrupt Dora playback
+  const interruptDora = useCallback(() => {
+    if (audioEngineRef.current) {
+      audioEngineRef.current.interruptPlayback();
+    }
+    doraService.sendInterruptSignal();
+    setCurrentSpokenText("");
+    isProcessingTurnRef.current = false;
+
+    if (currentDoraMessageIdRef.current) {
+      const activeId = currentDoraMessageIdRef.current;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === activeId ? { ...m, isInterrupted: true, isStreaming: false, isFinal: true } : m
+        )
+      );
+      currentDoraMessageIdRef.current = null;
+    }
+
+    setState((curr) => (curr === "speaking" ? (isCallActiveRef.current ? "listening" : "idle") : curr));
+  }, []);
+
+  // Setup Live Stream connection callbacks (guarantees NO DUPLICATES for speech/responses)
   const setupLiveCallbacks = useCallback(() => {
     return {
       onUserTranscript: (userText: string, isFinal: boolean) => {
@@ -142,31 +239,44 @@ export default function App() {
 
         lastUserPromptRef.current = cleanText;
 
+        // Update existing speech bubble or create single streaming message
         setMessages((prev) => {
-          const lastMsg = prev[prev.length - 1];
-          if (lastMsg && lastMsg.sender === "user" && lastMsg.id.startsWith("user-live-")) {
-            const updated = [...prev];
-            updated[updated.length - 1] = {
-              ...lastMsg,
-              text: cleanText,
-            };
-            return updated;
+          const currentId = currentUserVoiceMessageIdRef.current;
+          if (currentId) {
+            const exists = prev.some((m) => m.id === currentId);
+            if (exists) {
+              return prev.map((m) =>
+                m.id === currentId
+                  ? {
+                      ...m,
+                      text: cleanText,
+                      isStreaming: !isFinal,
+                      isFinal: isFinal,
+                    }
+                  : m
+              );
+            }
           }
-          if (lastMsg && lastMsg.sender === "user" && lastMsg.text === cleanText) {
-            return prev;
-          }
+
+          // If no active streaming turn ID, create a new turn
+          const newId = `user-voice-${Date.now()}`;
+          currentUserVoiceMessageIdRef.current = newId;
           return [
             ...prev,
             {
-              id: `user-live-${Date.now()}`,
+              id: newId,
               sender: "user",
               text: cleanText,
               timestamp: Date.now(),
+              inputMode: "voice",
+              isStreaming: !isFinal,
+              isFinal: isFinal,
             },
           ];
         });
 
         if (isFinal) {
+          currentUserVoiceMessageIdRef.current = null;
           const memCmd = memoryManager.checkAndHandleMemoryCommand(cleanText);
           if (memCmd.isCommand) {
             lastHandledMemoryCommandTurnRef.current = cleanText;
@@ -174,6 +284,7 @@ export default function App() {
           }
         }
       },
+
       onAudio: (base64Chunk: string) => {
         if (audioEngineRef.current) {
           audioEngineRef.current.playAudioChunk(base64Chunk, 24000);
@@ -182,25 +293,24 @@ export default function App() {
         }
 
         if (!currentDoraMessageIdRef.current) {
-          const doraMsgId = `dora-${Date.now()}`;
+          const doraMsgId = `dora-voice-${Date.now()}`;
           currentDoraMessageIdRef.current = doraMsgId;
-          setMessages((prev) => {
-            if (prev.length > 0 && prev[prev.length - 1].sender === "dora" && !prev[prev.length - 1].text) {
-              return prev;
-            }
-            return [
-              ...prev,
-              {
-                id: doraMsgId,
-                sender: "dora",
-                text: "",
-                timestamp: Date.now(),
-                emotion: "warm",
-              },
-            ];
-          });
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: doraMsgId,
+              sender: "dora",
+              text: "",
+              timestamp: Date.now(),
+              emotion: "warm",
+              inputMode: "voice",
+              isStreaming: true,
+              isFinal: false,
+            },
+          ]);
         }
       },
+
       onTranscript: (chunk: string, isFinal: boolean) => {
         if (chunk) {
           setCurrentSpokenText((prev) => {
@@ -209,7 +319,7 @@ export default function App() {
           });
 
           if (!currentDoraMessageIdRef.current) {
-            const doraMsgId = `dora-${Date.now()}`;
+            const doraMsgId = `dora-voice-${Date.now()}`;
             currentDoraMessageIdRef.current = doraMsgId;
             setMessages((prev) => [
               ...prev,
@@ -219,24 +329,29 @@ export default function App() {
                 text: chunk,
                 timestamp: Date.now(),
                 emotion: "warm",
+                inputMode: "voice",
+                isStreaming: !isFinal,
+                isFinal: false,
               },
             ]);
           } else {
             const activeId = currentDoraMessageIdRef.current;
-            setMessages((prev) => {
-              const idx = prev.findIndex((m) => m.id === activeId);
-              if (idx > -1) {
-                const updated = [...prev];
-                updated[idx] = {
-                  ...updated[idx],
-                  text: updated[idx].text ? updated[idx].text + chunk : chunk,
-                };
-                return updated;
-              }
-              return prev;
-            });
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id === activeId) {
+                  return {
+                    ...m,
+                    text: m.text ? `${m.text} ${chunk}` : chunk,
+                    isStreaming: !isFinal,
+                    isFinal: isFinal,
+                  };
+                }
+                return m;
+              })
+            );
           }
 
+          // Emotion tone tracking
           const lower = chunk.toLowerCase();
           if (lower.includes("haha") || lower.includes("fun") || lower.includes("yay") || lower.includes("cool")) {
             setEmotion("playful");
@@ -259,7 +374,11 @@ export default function App() {
             if (msg && msg.text) {
               replyText = msg.text;
             }
+            setMessages((prev) =>
+              prev.map((m) => (m.id === activeId ? { ...m, isStreaming: false, isFinal: true } : m))
+            );
           }
+
           const userPrompt = lastUserPromptRef.current;
           if (userPrompt) {
             if (lastHandledMemoryCommandTurnRef.current !== userPrompt) {
@@ -275,25 +394,37 @@ export default function App() {
           currentDoraMessageIdRef.current = null;
         }
       },
+
       onInterrupted: () => {
         if (audioEngineRef.current) {
           audioEngineRef.current.interruptPlayback();
         }
         setCurrentSpokenText("");
         isProcessingTurnRef.current = false;
-        currentDoraMessageIdRef.current = null;
+        if (currentDoraMessageIdRef.current) {
+          const activeId = currentDoraMessageIdRef.current;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === activeId ? { ...m, isInterrupted: true, isStreaming: false, isFinal: true } : m
+            )
+          );
+          currentDoraMessageIdRef.current = null;
+        }
+        currentUserVoiceMessageIdRef.current = null;
         setState((curr) => (curr === "speaking" ? (isCallActiveRef.current ? "listening" : "idle") : curr));
       },
+
       onError: (err: any) => {
         console.warn("[Dora Live] Stream notice:", err);
       },
+
       onReady: () => {
         console.log("[Dora Live] Ready for instant voice and text interactions");
       },
     };
   }, []);
 
-  // Initialize AudioEngine & proactive Live connection on mount
+  // Initialize AudioEngine, SpeechRecognizer & proactive Live connection on mount
   useEffect(() => {
     const engine = new AudioEngine();
     audioEngineRef.current = engine;
@@ -310,6 +441,9 @@ export default function App() {
       setCurrentSpokenText("");
       setState(isCallActiveRef.current ? "listening" : "idle");
       isProcessingTurnRef.current = false;
+      if (isCallActiveRef.current && !isMuted) {
+        speechRecognizerRef.current?.resumeAfterPlayback();
+      }
     };
 
     engine.onSpeechStart = () => {
@@ -325,23 +459,114 @@ export default function App() {
     };
 
     const initialMemoryContext = memoryManager.buildContext();
-    doraService.connectLiveStream(setupLiveCallbacks(), settings.voiceName, initialMemoryContext);
+    doraService.connectLiveStream(
+      setupLiveCallbacks(),
+      settings.voiceName,
+      initialMemoryContext,
+      getRecentHistoryContext()
+    );
+
+    // Initialize continuous browser speech recognition
+    const recognizer = new SpeechRecognizer({
+      language: settings.language,
+      pauseThresholdMs: settings.pauseThresholdMs,
+      onSpeechStart: () => {
+        if (engine.getIsSpeaking() || state === "speaking") {
+          interruptDora();
+        }
+        setState("listening");
+      },
+      onInterimResult: (interimText) => {
+        const cleanText = interimText.trim();
+        if (!cleanText) return;
+        lastUserPromptRef.current = cleanText;
+
+        setMessages((prev) => {
+          const currentId = currentUserVoiceMessageIdRef.current;
+          if (currentId && prev.some((m) => m.id === currentId)) {
+            return prev.map((m) =>
+              m.id === currentId
+                ? { ...m, text: cleanText, isStreaming: true, isFinal: false }
+                : m
+            );
+          }
+          const newId = `user-voice-${Date.now()}`;
+          currentUserVoiceMessageIdRef.current = newId;
+          return [
+            ...prev,
+            {
+              id: newId,
+              sender: "user",
+              text: cleanText,
+              timestamp: Date.now(),
+              inputMode: "voice",
+              isStreaming: true,
+              isFinal: false,
+            },
+          ];
+        });
+      },
+      onFinalResult: (finalText) => {
+        const cleanText = finalText.trim();
+        if (!cleanText) return;
+
+        const currentId = currentUserVoiceMessageIdRef.current;
+        if (currentId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === currentId
+                ? { ...m, text: cleanText, isStreaming: false, isFinal: true }
+                : m
+            )
+          );
+        }
+        currentUserVoiceMessageIdRef.current = null;
+
+        recognizer.pauseForPlayback();
+        setState("thinking");
+
+        // Transcribed voice message is passed straight into Dora's turn pipeline
+        handleSendMessage(cleanText, undefined, true);
+      },
+      onError: (err) => {
+        if (err.isPermissionDenied) {
+          setScreenSharingNotice("Microphone permission was denied. Please allow microphone access to talk with Dora.");
+          setIsCallActive(false);
+          setState("error");
+          setTimeout(() => {
+            setState((curr) => (curr === "error" ? "idle" : curr));
+            setScreenSharingNotice((prev) =>
+              prev?.includes("Microphone") ? null : prev
+            );
+          }, 5000);
+        }
+      },
+    });
+
+    speechRecognizerRef.current = recognizer;
 
     return () => {
       screenVisionService.stopCapture();
       doraService.clearScreenFrame();
+      recognizer.stop();
       engine.stopMicrophone();
       engine.interruptPlayback();
       doraService.disconnectLiveStream();
     };
-  }, [setupLiveCallbacks, settings.voiceName]);
+  }, [setupLiveCallbacks, settings.voiceName, getRecentHistoryContext, state, interruptDora, isMuted, settings.language, settings.pauseThresholdMs]);
 
-  // Sync silence threshold with settings
+  // Sync silence threshold and language with settings
   useEffect(() => {
     if (audioEngineRef.current) {
       audioEngineRef.current.setPauseThreshold(settings.pauseThresholdMs);
     }
-  }, [settings.pauseThresholdMs]);
+    if (speechRecognizerRef.current) {
+      speechRecognizerRef.current.setOptions({
+        language: settings.language,
+        pauseThresholdMs: settings.pauseThresholdMs,
+      });
+    }
+  }, [settings.pauseThresholdMs, settings.language]);
 
   // Call duration timer
   useEffect(() => {
@@ -356,34 +581,9 @@ export default function App() {
     return () => clearInterval(callTimerRef.current);
   }, [isCallActive]);
 
-  // Stop / Interrupt Dora playback
-  const interruptDora = useCallback(() => {
-    if (audioEngineRef.current) {
-      audioEngineRef.current.interruptPlayback();
-    }
-    doraService.sendInterruptSignal();
-    setCurrentSpokenText("");
-    isProcessingTurnRef.current = false;
-    currentDoraMessageIdRef.current = null;
-
-    setMessages((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1].sender === "dora") {
-        const updated = [...prev];
-        updated[updated.length - 1] = {
-          ...updated[updated.length - 1],
-          isInterrupted: true,
-        };
-        return updated;
-      }
-      return prev;
-    });
-
-    setState((curr) => (curr === "speaking" ? (isCallActiveRef.current ? "listening" : "idle") : curr));
-  }, []);
-
-  // Send message to Dora and stream voice response
+  // Send message to Dora (unified: works identically in Chat and Voice modes)
   const handleSendMessage = useCallback(
-    async (userText: string, imageAttachment?: string) => {
+    async (userText: string, imageAttachment?: string, isVoiceTurn: boolean = false) => {
       const cleanText = userText.trim();
       if (!cleanText || isProcessingTurnRef.current) return;
 
@@ -394,11 +594,15 @@ export default function App() {
       isProcessingTurnRef.current = true;
       lastUserPromptRef.current = cleanText;
 
+      const shouldSpeakReply = isVoiceTurn || isCallActiveRef.current || settings.engine === "gemini-tts";
+      const inputMode = isVoiceTurn || isCallActiveRef.current ? "voice" : "text";
+
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}`,
         sender: "user",
         text: cleanText,
         timestamp: Date.now(),
+        inputMode,
       };
 
       // Explicit memory privacy/query command handler
@@ -412,13 +616,14 @@ export default function App() {
           timestamp: Date.now(),
           emotion: "warm",
           reaction: "Memory",
+          inputMode,
         };
 
         setMessages((prev) => [...prev, userMessage, doraMessage]);
         setCurrentSpokenText(memoryCommand.replyText);
         setEmotion("warm");
 
-        if (settings.engine === "gemini-tts") {
+        if (shouldSpeakReply) {
           doraService
             .generateSpeech(memoryCommand.replyText, settings.voiceName, settings.language)
             .then((audio) => {
@@ -434,6 +639,9 @@ export default function App() {
                     setCurrentSpokenText("");
                     setState(isCallActiveRef.current ? "listening" : "idle");
                     isProcessingTurnRef.current = false;
+                    if (isCallActiveRef.current && !isMuted) {
+                      speechRecognizerRef.current?.resumeAfterPlayback();
+                    }
                   },
                 });
               }
@@ -447,20 +655,15 @@ export default function App() {
                   setCurrentSpokenText("");
                   setState(isCallActiveRef.current ? "listening" : "idle");
                   isProcessingTurnRef.current = false;
+                  if (isCallActiveRef.current && !isMuted) {
+                    speechRecognizerRef.current?.resumeAfterPlayback();
+                  }
                 },
               });
             });
         } else {
-          playNaturalBrowserSpeech(memoryCommand.replyText, {
-            rate: settings.speakingRate,
-            pitch: settings.pitch,
-            voiceName: settings.voiceName,
-            onEnd: () => {
-              setCurrentSpokenText("");
-              setState(isCallActiveRef.current ? "listening" : "idle");
-              isProcessingTurnRef.current = false;
-            },
-          });
+          isProcessingTurnRef.current = false;
+          setState("idle");
         }
         return;
       }
@@ -468,6 +671,14 @@ export default function App() {
       setMessages((prev) => [...prev, userMessage]);
       setState("thinking");
 
+      // If in Voice Mode and Live WebSocket is active, send live text for streaming voice reply
+      if (isCallActiveRef.current && doraService.isLiveReady() && !imageAttachment) {
+        const memoryContext = memoryManager.buildContext(cleanText);
+        doraService.sendLiveText(cleanText, settings.language, memoryContext, isDeepThinkActive);
+        return;
+      }
+
+      // REST Turn (and fallback with spoken voice if in Voice Mode)
       try {
         const doraMsgId = `dora-${Date.now()}`;
         currentDoraMessageIdRef.current = doraMsgId;
@@ -481,6 +692,8 @@ export default function App() {
             text: "",
             timestamp: Date.now(),
             emotion: "warm",
+            inputMode,
+            isStreaming: true,
           },
         ]);
 
@@ -498,26 +711,26 @@ export default function App() {
         setCurrentSpokenText(replyText);
         setEmotion(response.emotion);
 
-        setMessages((prev) => {
-          const idx = prev.findIndex((m) => m.id === doraMsgId);
-          if (idx > -1) {
-            const updated = [...prev];
-            updated[idx] = {
-              ...updated[idx],
-              text: replyText,
-              reaction: response.reaction,
-            };
-            return updated;
-          }
-          return prev;
-        });
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === doraMsgId
+              ? {
+                  ...m,
+                  text: replyText,
+                  reaction: response.reaction,
+                  isStreaming: false,
+                  isFinal: true,
+                }
+              : m
+          )
+        );
 
         // Memory extraction in background
         memoryManager.processTurnBackground(cleanText, replyText);
 
-        // Natural spoken speech output
-        if (replyText) {
-          if (settings.engine === "gemini-tts") {
+        // Spoken speech output if in Voice Mode or gemini-tts enabled
+        if (replyText && shouldSpeakReply) {
+          try {
             const audioData = await doraService.generateSpeech(
               replyText,
               settings.voiceName,
@@ -535,11 +748,13 @@ export default function App() {
                   setCurrentSpokenText("");
                   setState(isCallActiveRef.current ? "listening" : "idle");
                   isProcessingTurnRef.current = false;
+                  if (isCallActiveRef.current && !isMuted) {
+                    speechRecognizerRef.current?.resumeAfterPlayback();
+                  }
                 },
               });
             }
-          } else {
-            // High-speed browser neural voice fallback for instant responsiveness
+          } catch {
             playNaturalBrowserSpeech(replyText, {
               rate: settings.speakingRate,
               pitch: settings.pitch,
@@ -548,6 +763,9 @@ export default function App() {
                 setCurrentSpokenText("");
                 setState(isCallActiveRef.current ? "listening" : "idle");
                 isProcessingTurnRef.current = false;
+                if (isCallActiveRef.current && !isMuted) {
+                  speechRecognizerRef.current?.resumeAfterPlayback();
+                }
               },
             });
           }
@@ -559,14 +777,18 @@ export default function App() {
         console.error("[Dora Error]", error);
         setState(isCallActiveRef.current ? "listening" : "idle");
         isProcessingTurnRef.current = false;
+        if (isCallActiveRef.current && !isMuted) {
+          speechRecognizerRef.current?.resumeAfterPlayback();
+        }
       }
     },
-    [interruptDora, settings, state]
+    [interruptDora, settings, state, isDeepThinkActive, isMuted]
   );
 
-  // Toggle Live Conversational Audio Call
+  // Toggle Live Conversational Voice Mode (NEVER clears messages)
   const handleToggleCall = async () => {
     if (isCallActive) {
+      speechRecognizerRef.current?.stop();
       if (audioEngineRef.current) {
         audioEngineRef.current.stopMicrophone();
         audioEngineRef.current.interruptPlayback();
@@ -574,23 +796,68 @@ export default function App() {
       setIsCallActive(false);
       setState("idle");
       setCurrentSpokenText("");
+      currentUserVoiceMessageIdRef.current = null;
+      currentDoraMessageIdRef.current = null;
     } else {
       try {
+        setState("requesting_permission");
         if (!audioEngineRef.current) {
           audioEngineRef.current = new AudioEngine();
         }
+
+        // Request microphone permission and initialize audio analyzer for waveforms
         await audioEngineRef.current.startMicrophone();
+
+        // Start continuous speech recognizer
+        await speechRecognizerRef.current?.start();
+
         setIsCallActive(true);
         setIsMuted(false);
         setState("listening");
+        setActiveMode("voice");
+        setSelectedModel("Dora Live");
 
-        if (!doraService.isLiveReady()) {
-          const context = memoryManager.buildContext();
-          doraService.connectLiveStream(setupLiveCallbacks(), settings.voiceName, context);
-        }
-      } catch (err) {
+        // Pass recent conversation history context so Dora seamlessly continues from chat
+        const historyContext = getRecentHistoryContext();
+        const memoryContext = memoryManager.buildContext();
+        doraService.connectLiveStream(
+          setupLiveCallbacks(),
+          settings.voiceName,
+          memoryContext,
+          historyContext
+        );
+      } catch (err: any) {
         console.error("Failed to start voice stream:", err);
+        speechRecognizerRef.current?.stop();
+        if (audioEngineRef.current) {
+          audioEngineRef.current.stopMicrophone();
+          audioEngineRef.current.interruptPlayback();
+        }
+        setIsCallActive(false);
+        setState("error");
+        setScreenSharingNotice(
+          err?.name === "NotAllowedError" || err?.message?.includes("Permission")
+            ? "Microphone permission was denied. Please allow microphone access to talk with Dora."
+            : "Microphone unavailable. Please verify your audio input devices."
+        );
+        setTimeout(() => {
+          setState((curr) => (curr === "error" ? "idle" : curr));
+          setScreenSharingNotice((prev) => (prev?.includes("Microphone") ? null : prev));
+        }, 5000);
       }
+    }
+  };
+
+  // Switch between Chat and Voice mode views seamlessly
+  const handleSwitchMode = (mode: "chat" | "voice") => {
+    setActiveMode(mode);
+    if (mode === "voice") {
+      setSelectedModel("Dora Live");
+      if (!isCallActive) {
+        handleToggleCall();
+      }
+    } else {
+      setSelectedModel("Dora Flash");
     }
   };
 
@@ -758,14 +1025,49 @@ export default function App() {
     }
   };
 
+  // Start fresh new conversation (only New Chat resets messages, Memory stays preserved)
   const handleNewChat = () => {
     if (isCallActive) {
-      handleToggleCall();
+      if (audioEngineRef.current) {
+        audioEngineRef.current.stopMicrophone();
+        audioEngineRef.current.interruptPlayback();
+      }
+      setIsCallActive(false);
+      setState("idle");
     }
+    const newId = `session-${Date.now()}`;
+    setActiveSessionId(newId);
     setMessages([]);
     setCurrentSpokenText("");
     setPendingAttachment(null);
     setInputText("");
+    currentUserVoiceMessageIdRef.current = null;
+    currentDoraMessageIdRef.current = null;
+    setActiveMode("chat");
+    setSelectedModel("Dora Flash");
+  };
+
+  // Switch to a previous saved session
+  const handleSelectSession = (sessionId: string) => {
+    if (sessionId === activeSessionId) return;
+    const session = sessions.find((s) => s.id === sessionId);
+    if (session) {
+      setActiveSessionId(session.id);
+      setMessages(session.messages || []);
+      setCurrentSpokenText("");
+      setPendingAttachment(null);
+      setInputText("");
+    }
+  };
+
+  // Delete a session
+  const handleDeleteSession = (sessionId: string) => {
+    const filtered = sessions.filter((s) => s.id !== sessionId);
+    setSessions(filtered);
+    localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(filtered));
+    if (sessionId === activeSessionId) {
+      handleNewChat();
+    }
   };
 
   return (
@@ -773,9 +1075,12 @@ export default function App() {
       id="dora-app-root"
       className="min-h-screen h-[100dvh] dora-dark-bg text-[#E3E3E3] flex flex-row font-sans selection:bg-[#1D72FE]/30 overflow-hidden relative"
     >
-      {/* Background Soft Blue Ambient Bottom Glow (Matches reference) */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute -bottom-32 left-1/2 -translate-x-1/2 w-[700px] sm:w-[900px] h-[350px] bg-[#1D72FE]/[0.09] rounded-full blur-[140px]" />
+      {/* Background Cinematic Deep-Blue Ambient Bottom Glow (70-80% AMOLED Black / 20-30% Visible Ambient Glow) */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden select-none z-0">
+        {/* Deep navy base layer for smooth falloff into AMOLED black */}
+        <div className="absolute -bottom-48 left-1/2 -translate-x-1/2 w-[900px] sm:w-[1200px] h-[450px] sm:h-[520px] bg-[#0E358A]/[0.28] rounded-full blur-[160px]" />
+        {/* Core lower deep-blue atmospheric bloom */}
+        <div className="absolute -bottom-36 left-1/2 -translate-x-1/2 w-[720px] sm:w-[900px] h-[360px] sm:h-[420px] bg-[#1A56DB]/[0.22] rounded-full blur-[120px]" />
       </div>
 
       {/* Left Modern AI Sidebar (Desktop & Mobile Drawer) */}
@@ -790,341 +1095,298 @@ export default function App() {
         onOpenSkills={() => setIsSkillsOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         messages={messages}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={handleSelectSession}
+        onDeleteSession={handleDeleteSession}
       />
 
       {/* Main Content Workspace */}
       <div className="relative z-10 flex-1 flex flex-col h-full overflow-hidden">
-        {/* ============================================================ */}
-        {/* TOP BAR (Ultra-Minimal Header matching reference)            */}
-        {/* ============================================================ */}
-        <header
-          id="dora-top-bar"
-          className="w-full px-4 sm:px-6 py-3 flex items-center justify-between z-30 shrink-0"
-        >
-          {/* Left: Hamburger Menu & Model Dropdown */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <button
-              id="btn-mobile-menu"
-              type="button"
-              onClick={() => {
-                if (window.innerWidth >= 1024) {
-                  setIsDesktopSidebarCollapsed((prev) => !prev);
+        {activeMode === "voice" ? (
+          <VoiceModeView
+            state={state}
+            emotion={emotion}
+            volumeLevel={volumeLevel}
+            isMuted={isMuted}
+            callDuration={callDuration}
+            currentSpokenText={currentSpokenText}
+            messages={messages}
+            userName={userName}
+            isScreenVisionActive={isScreenVisionActive}
+            screenSharingNotice={screenSharingNotice}
+            onDismissScreenNotice={() => setScreenSharingNotice(null)}
+            onToggleScreenVision={handleToggleScreenVision}
+            onToggleMute={() => {
+              setIsMuted((prev) => {
+                const next = !prev;
+                if (next) {
+                  speechRecognizerRef.current?.pauseForPlayback();
                 } else {
-                  setIsMobileDrawerOpen(true);
+                  if (state !== "speaking") {
+                    speechRecognizerRef.current?.resumeAfterPlayback();
+                  }
                 }
-              }}
-              aria-label="Open Navigation"
-              className="p-2 rounded-full text-white/70 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center justify-center shrink-0"
+                return next;
+              });
+            }}
+            onInterrupt={interruptDora}
+            onEndVoice={() => {
+              if (isCallActive) handleToggleCall();
+              setActiveMode("chat");
+              setSelectedModel("Dora Flash");
+            }}
+            onOpenSidebar={() => {
+              if (window.innerWidth >= 1024) {
+                setIsDesktopSidebarCollapsed(false);
+              }
+              setIsMobileDrawerOpen(true);
+            }}
+            onOpenMemory={() => setIsMemoryOpen(true)}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onSwitchToChat={() => {
+              setActiveMode("chat");
+              setSelectedModel("Dora Flash");
+            }}
+            onSendTextMessage={(text) => handleSendMessage(text)}
+            onSelectCamera={handleSelectCamera}
+            onSelectPhotos={handleSelectPhotos}
+          />
+        ) : (
+          <>
+            {/* ============================================================ */}
+            {/* TOP BAR (Header matching Immersive Voice style)             */}
+            {/* ============================================================ */}
+            <header
+              id="dora-top-bar"
+              className="w-full px-5 sm:px-8 pt-5 pb-3 flex items-center justify-between z-30 shrink-0 border-b border-white/[0.04]"
             >
-              <Menu className="w-5 h-5" />
-            </button>
-
-            {/* Model Dropdown Trigger */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setIsModelDropdownOpen((prev) => !prev)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full hover:bg-white/[0.06] text-white/90 font-medium text-sm sm:text-base tracking-tight transition-colors"
-              >
-                <span>{selectedModel}</span>
-                <ChevronDown className={`w-4 h-4 text-white/50 transition-transform duration-150 ${isModelDropdownOpen ? "rotate-180" : ""}`} />
-              </button>
-
-              {/* Model Selector Dropdown Popover */}
-              {isModelDropdownOpen && (
-                <div
-                  className="absolute left-0 top-full mt-1.5 w-48 rounded-2xl bg-[#1E1F22] border border-white/10 shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-sm"
-                  onBlur={() => setIsModelDropdownOpen(false)}
-                >
-                  <button
-                    onClick={() => {
-                      setSelectedModel("Dora Flash");
-                      setIsModelDropdownOpen(false);
-                    }}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left transition-colors ${
-                      selectedModel === "Dora Flash"
-                        ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
-                        : "text-white/80 hover:bg-white/[0.08] hover:text-white"
-                    }`}
-                  >
-                    <span>Dora Flash</span>
-                    {selectedModel === "Dora Flash" && <Check className="w-4 h-4 text-[#38BDF8]" />}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setSelectedModel("Dora Live");
-                      setIsModelDropdownOpen(false);
-                    }}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left transition-colors ${
-                      selectedModel === "Dora Live"
-                        ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
-                        : "text-white/80 hover:bg-white/[0.08] hover:text-white"
-                    }`}
-                  >
-                    <span>Dora Live</span>
-                    {selectedModel === "Dora Live" && <Check className="w-4 h-4 text-[#38BDF8]" />}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right: Quick Actions */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0" />
-        </header>
-
-        {/* Screen Sharing Error / Notice Banner */}
-        {screenSharingNotice && (
-          <div
-            id="screen-sharing-notice"
-            role="alert"
-            className="mx-auto my-1 px-4 py-1.5 rounded-full bg-[#1E1F22] border border-white/10 flex items-center gap-2 text-xs text-white/90 shadow-lg backdrop-blur-md z-30 animate-fade-in"
-          >
-            <AlertCircle className="w-4 h-4 text-[#38BDF8] shrink-0" />
-            <span>{screenSharingNotice}</span>
-            <button
-              onClick={() => setScreenSharingNotice(null)}
-              className="ml-1 p-0.5 rounded-full text-white/50 hover:text-white"
-              aria-label="Dismiss message"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        )}
-
-        {/* ============================================================ */}
-        {/* MAIN STAGE (Spacious Negative Space & Clean Visuals)         */}
-        {/* ============================================================ */}
-        <main
-          id="dora-main-stage"
-          className="flex-1 flex flex-col justify-between overflow-y-auto custom-scrollbar relative z-10 w-full"
-        >
-          {/* Conversation History Transcript Overlay if toggled */}
-          {showTranscriptOverlay && (
-            <div className="absolute inset-x-4 sm:inset-x-8 top-2 bottom-20 z-40 bg-[#1E1F22]/95 border border-white/10 backdrop-blur-2xl rounded-3xl p-5 shadow-2xl flex flex-col max-w-3xl mx-auto">
-              <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-[#38BDF8]" />
-                  <h3 className="text-sm font-semibold text-white">Conversation History</h3>
-                </div>
+              {/* Left: Hamburger Menu & Model Dropdown */}
+              <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setShowTranscriptOverlay(false)}
-                  className="p-1 rounded-full text-white/50 hover:text-white hover:bg-white/10"
+                  id="btn-mobile-menu"
+                  type="button"
+                  onClick={() => {
+                    if (window.innerWidth >= 1024) {
+                      setIsDesktopSidebarCollapsed((prev) => !prev);
+                    } else {
+                      setIsMobileDrawerOpen(true);
+                    }
+                  }}
+                  aria-label="Open Navigation Menu"
+                  className="p-2.5 rounded-full text-white/80 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center justify-center shrink-0"
                 >
-                  <X className="w-4 h-4" />
+                  <div className="flex flex-col gap-1 w-5">
+                    <span className="w-5 h-0.5 bg-white/90 rounded-full" />
+                    <span className="w-3.5 h-0.5 bg-white/90 rounded-full" />
+                  </div>
+                </button>
+
+                {/* Model Dropdown Trigger */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsModelDropdownOpen((prev) => !prev)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:bg-white/[0.06] text-white/90 hover:text-white font-medium text-base tracking-tight transition-colors"
+                  >
+                    <span>{selectedModel}</span>
+                    <span className="text-white/40 text-xs">▾</span>
+                  </button>
+
+                  {/* Model Selector Dropdown Popover */}
+                  {isModelDropdownOpen && (
+                    <div
+                      className="absolute left-0 top-full mt-2 w-48 rounded-2xl bg-[#18191E] border border-white/10 shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-sm"
+                      onBlur={() => setIsModelDropdownOpen(false)}
+                    >
+                      <button
+                        onClick={() => {
+                          setSelectedModel("Dora Flash");
+                          setActiveMode("chat");
+                          setIsModelDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left transition-colors ${
+                          selectedModel === "Dora Flash"
+                            ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
+                            : "text-white/80 hover:bg-white/[0.08] hover:text-white"
+                        }`}
+                      >
+                        <span>Dora Flash</span>
+                        {selectedModel === "Dora Flash" && <Check className="w-4 h-4 text-[#38BDF8]" />}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          handleSwitchMode("voice");
+                          setIsModelDropdownOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left transition-colors ${
+                          selectedModel === "Dora Live"
+                            ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
+                            : "text-white/80 hover:bg-white/[0.08] hover:text-white"
+                        }`}
+                      >
+                        <span>Dora Live</span>
+                        {selectedModel === "Dora Live" && <Check className="w-4 h-4 text-[#38BDF8]" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right: Quick Action Controls */}
+              <div className="flex items-center gap-2 shrink-0">
+                {isScreenVisionActive && (
+                  <button
+                    onClick={handleToggleScreenVision}
+                    title="Screen Vision Active"
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-medium"
+                  >
+                    <Tv className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Vision Active</span>
+                  </button>
+                )}
+              </div>
+            </header>
+
+            {/* Screen Sharing Error / Notice Banner */}
+            {screenSharingNotice && (
+              <div
+                id="screen-sharing-notice"
+                role="alert"
+                className="mx-auto my-2 px-4 py-1.5 rounded-full bg-[#18191E] border border-white/10 flex items-center gap-2 text-xs text-white/90 shadow-lg backdrop-blur-md z-30 animate-fade-in"
+              >
+                <AlertCircle className="w-4 h-4 text-[#38BDF8] shrink-0" />
+                <span>{screenSharingNotice}</span>
+                <button
+                  onClick={() => setScreenSharingNotice(null)}
+                  className="ml-1 p-0.5 rounded-full text-white/50 hover:text-white"
+                  aria-label="Dismiss message"
+                >
+                  <X className="w-3 h-3" />
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-2">
-                {messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`flex flex-col ${
-                      m.sender === "user" ? "items-end" : "items-start"
-                    }`}
-                  >
-                    <span className="text-[10px] text-white/40 mb-0.5">
-                      {m.sender === "user" ? userName : "Dora"}
-                    </span>
+            )}
+
+            {/* Main Chat Stage */}
+            <main
+              id="dora-main-stage"
+              className="flex-1 flex flex-col justify-between overflow-y-auto custom-scrollbar relative z-10 w-full"
+            >
+              {messages.length === 0 ? (
+                /* Clean Empty State - No center star, no greeting text, pure AMOLED canvas */
+                <div className="flex-1" />
+              ) : (
+                /* Active Message Stream */
+                <div className="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-7 overflow-y-auto custom-scrollbar">
+                  {/* Subtle Voice Status Banner if Voice Call is active during Chat view */}
+                  {isCallActive && (
+                    <div className="w-full flex justify-center py-1.5 sticky top-0 z-20">
+                      <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-[#18191E]/95 border border-[#1D72FE]/40 shadow-lg text-sm text-white/90 backdrop-blur-md">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full ${
+                            state === "speaking"
+                              ? "bg-[#38BDF8] animate-ping"
+                              : state === "thinking"
+                              ? "bg-purple-400 animate-pulse"
+                              : "bg-[#1D72FE] animate-pulse"
+                          }`}
+                        />
+                        <span className="text-xs sm:text-sm font-medium text-white/90">
+                          {state === "speaking"
+                            ? "Dora speaking…"
+                            : state === "thinking"
+                            ? "Thinking…"
+                            : "Live Voice Active (Listening…)"}
+                        </span>
+                        <button
+                          onClick={handleToggleCall}
+                          className="ml-1 text-xs text-red-400 hover:text-red-300 font-medium px-1.5 py-0.5 rounded-md hover:bg-white/5"
+                        >
+                          End
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Message List */}
+                  {messages.map((m) => (
                     <div
-                      className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-xs sm:text-sm ${
-                        m.sender === "user"
-                          ? "bg-[#1D72FE]/20 border border-[#1D72FE]/40 text-white"
-                          : "bg-white/[0.04] border border-white/10 text-white/90"
+                      key={m.id}
+                      className={`flex items-start gap-3.5 ${
+                        m.sender === "user" ? "justify-end" : "justify-start"
                       }`}
                     >
-                      {m.text}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+                      {/* Message Content Bubble */}
+                      <div
+                        className={`group relative rounded-2xl px-5 py-3.5 text-base sm:text-[17px] leading-relaxed max-w-[88%] sm:max-w-[85%] ${
+                          m.sender === "user"
+                            ? "bg-[#18191E] text-white/95 border border-white/[0.08] shadow-sm"
+                            : "bg-transparent text-[#EDEDED]"
+                        }`}
+                      >
+                        {/* Subtle Badge for Voice turns */}
+                        {m.inputMode === "voice" && (
+                          <div className="flex items-center gap-1.5 mb-1.5 text-xs text-sky-400/90 font-mono">
+                            <Radio className="w-3 h-3" />
+                            <span>Voice turn</span>
+                          </div>
+                        )}
 
-          {/* Unified Gemini-inspired Center Stage */}
-          {messages.length === 0 ? (
-            <div className="my-auto flex flex-col items-center justify-center text-center px-4 py-10 max-w-xl mx-auto select-none">
-              {/* Centered Dora Sparkle with subtle voice-reactive animations */}
-              <div
-                className={`mb-6 transition-transform duration-300 ${
-                  isCallActive ? "cursor-pointer" : "hover:scale-105"
-                }`}
-                onClick={isCallActive ? interruptDora : undefined}
-                title={isCallActive ? "Tap to interrupt Dora" : undefined}
-              >
-                <DoraSparkle
-                  size={isCallActive ? 60 : 52}
-                  state={isCallActive ? state : "idle"}
+                        {m.text ? (
+                          <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                        ) : (
+                          <div className="flex items-center gap-2 py-1.5 text-white/50">
+                            <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce" />
+                            <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce [animation-delay:0.2s]" />
+                            <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce [animation-delay:0.4s]" />
+                          </div>
+                        )}
+
+                        {/* Interrupted notice */}
+                        {m.isInterrupted && (
+                          <span className="mt-1.5 text-xs text-amber-300/80 block font-mono">
+                            (Interrupted)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
+
+              {/* Floating Pill Composer (in Chat Mode) */}
+              <div className="pt-2 pb-6 sm:pb-8 shrink-0 w-full">
+                <Composer
+                  inputText={inputText}
+                  setInputText={setInputText}
+                  isDeepThinkActive={isDeepThinkActive}
+                  onToggleDeepThink={handleToggleDeepThink}
+                  pendingAttachment={pendingAttachment}
+                  onRemoveAttachment={handleRemoveAttachment}
+                  onSubmit={handleInputSubmit}
                   isCallActive={isCallActive}
-                  volumeLevel={volumeLevel}
+                  onToggleCall={handleToggleCall}
+                  isMuted={isMuted}
+                  state={state}
+                  isActionMenuOpen={isActionMenuOpen}
+                  setIsActionMenuOpen={setIsActionMenuOpen}
+                  onSelectCamera={handleSelectCamera}
+                  onSelectPhotos={handleSelectPhotos}
+                  onSelectFiles={handleSelectFiles}
+                  isScreenVisionActive={isScreenVisionActive}
+                  onToggleScreenVision={handleToggleScreenVision}
+                  cameraInputRef={cameraInputRef}
+                  photoInputRef={photoInputRef}
+                  docInputRef={docInputRef}
+                  handleImageFileSelected={handleImageFileSelected}
+                  handleDocFileSelected={handleDocFileSelected}
                 />
               </div>
-
-              {/* Minimal Headline */}
-              <h1 className="text-3xl sm:text-4xl lg:text-5xl font-normal tracking-tight text-white mb-2 font-sans">
-                Where should we start?
-              </h1>
-
-              {/* Subtle Voice Status / Subtitle Indicator when Live Call is Active */}
-              {isCallActive && (
-                <div className="mt-2 flex flex-col items-center justify-center min-h-[28px] animate-fade-in">
-                  <div className="flex items-center gap-2 text-xs sm:text-sm text-white/50 font-light tracking-wide">
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        state === "speaking"
-                          ? "bg-[#38BDF8] animate-ping"
-                          : state === "thinking"
-                          ? "bg-purple-400 animate-pulse"
-                          : "bg-[#1D72FE] animate-pulse"
-                      }`}
-                    />
-                    <span>
-                      {state === "speaking"
-                        ? "Speaking…"
-                        : state === "thinking"
-                        ? "Thinking…"
-                        : state === "listening"
-                        ? "Listening…"
-                        : "Ready"}
-                    </span>
-                  </div>
-
-                  {/* Clean live spoken text subtitle */}
-                  {currentSpokenText && (
-                    <p className="mt-2 max-w-md text-xs sm:text-sm text-white/80 font-light italic leading-relaxed line-clamp-2">
-                      "{currentSpokenText}"
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Subtle suggestions / prompt chips */}
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-2 max-w-lg">
-                {[
-                  "Start voice conversation",
-                  "Brainstorm creative ideas",
-                  "Analyze an uploaded document",
-                  "Help me write clean code",
-                ].map((promptText, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      if (promptText === "Start voice conversation") {
-                        handleToggleCall();
-                      } else {
-                        handleSendMessage(promptText);
-                      }
-                    }}
-                    className="px-3.5 py-2 rounded-full bg-[#1E1F22] hover:bg-[#282A2F] active:bg-[#32343B] border border-white/5 text-xs sm:text-sm text-white/80 hover:text-white transition-all shadow-sm"
-                  >
-                    {promptText}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            /* Active Conversation Stream */
-            <div className="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5 overflow-y-auto custom-scrollbar">
-              {/* Subtle Voice Status Pill when Voice Mode is active during chat */}
-              {isCallActive && (
-                <div className="w-full flex justify-center py-1">
-                  <div className="inline-flex items-center gap-2.5 px-3.5 py-1 rounded-full bg-[#1E1F22]/90 border border-white/10 shadow-sm text-xs text-white/80">
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        state === "speaking"
-                          ? "bg-[#38BDF8] animate-ping"
-                          : state === "thinking"
-                          ? "bg-purple-400 animate-pulse"
-                          : "bg-[#1D72FE] animate-pulse"
-                      }`}
-                    />
-                    <span className="text-[11px] font-normal text-white/70">
-                      {state === "speaking"
-                        ? "Dora speaking…"
-                        : state === "thinking"
-                        ? "Thinking…"
-                        : "Listening…"}
-                    </span>
-                    <button
-                      onClick={handleToggleCall}
-                      className="ml-1 text-[11px] text-red-400 hover:text-red-300 font-medium"
-                    >
-                      End
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Message List */}
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex items-start gap-3 ${
-                    m.sender === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  {/* Dora Sparkle Avatar for AI messages */}
-                  {m.sender === "dora" && (
-                    <div className="shrink-0 pt-0.5">
-                      <DoraSparkle size={24} />
-                    </div>
-                  )}
-
-                  {/* Message Content Bubble */}
-                  <div
-                    className={`rounded-2xl px-4 py-3 text-sm sm:text-base leading-relaxed max-w-[85%] ${
-                      m.sender === "user"
-                        ? "bg-[#1E1F22] text-white/90 border border-white/5"
-                        : "bg-transparent text-white/95"
-                    }`}
-                  >
-                    {m.text ? (
-                      <p className="whitespace-pre-wrap">{m.text}</p>
-                    ) : (
-                      <div className="flex items-center gap-1.5 py-1 text-white/50">
-                        <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce" />
-                        <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce [animation-delay:0.2s]" />
-                        <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce [animation-delay:0.4s]" />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-
-          {/* ============================================================ */}
-          {/* FLOATING PILL COMPOSER (Positioned at bottom center)         */}
-          {/* ============================================================ */}
-          <div className="pt-2 pb-4 sm:pb-6 shrink-0 w-full">
-            <Composer
-              inputText={inputText}
-              setInputText={setInputText}
-              isDeepThinkActive={isDeepThinkActive}
-              onToggleDeepThink={handleToggleDeepThink}
-              pendingAttachment={pendingAttachment}
-              onRemoveAttachment={handleRemoveAttachment}
-              onSubmit={handleInputSubmit}
-              isCallActive={isCallActive}
-              onToggleCall={handleToggleCall}
-              isMuted={isMuted}
-              state={state}
-              isActionMenuOpen={isActionMenuOpen}
-              setIsActionMenuOpen={setIsActionMenuOpen}
-              onSelectCamera={handleSelectCamera}
-              onSelectPhotos={handleSelectPhotos}
-              onSelectFiles={handleSelectFiles}
-              isScreenVisionActive={isScreenVisionActive}
-              onToggleScreenVision={handleToggleScreenVision}
-              cameraInputRef={cameraInputRef}
-              photoInputRef={photoInputRef}
-              docInputRef={docInputRef}
-              handleImageFileSelected={handleImageFileSelected}
-              handleDocFileSelected={handleDocFileSelected}
-            />
-          </div>
-        </main>
+            </main>
+          </>
+        )}
       </div>
 
       {/* ============================================================ */}

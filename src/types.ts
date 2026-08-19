@@ -10,12 +10,14 @@ export type DoraEmotion =
 
 export type ConversationState = 
   | 'idle'
+  | 'requesting_permission'
   | 'connecting'
   | 'listening'
   | 'thinking'
   | 'speaking'
   | 'interrupted'
-  | 'paused';
+  | 'paused'
+  | 'error';
 
 export interface ChatMessage {
   id: string;

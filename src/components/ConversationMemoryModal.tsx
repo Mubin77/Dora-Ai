@@ -15,7 +15,6 @@ import {
   Shield,
   Clock,
   Download,
-  AlertCircle,
   ChevronLeft,
   ChevronRight,
   MoreVertical,
@@ -25,8 +24,6 @@ import {
   Zap,
   Users,
   Calendar,
-  Layers,
-  Sliders,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { DoraSparkle } from "./DoraSparkle";
@@ -62,7 +59,6 @@ export const ConversationMemoryModal: React.FC<ConversationMemoryModalProps> = (
   onClose,
   memories: sessionNotes,
   currentEmotion,
-  onClearMemories,
 }) => {
   const [activeTab, setActiveTab] = useState<"long_term" | "active_session">("long_term");
   const [isMemoryEnabled, setIsMemoryEnabled] = useState<boolean>(true);
@@ -248,71 +244,61 @@ export const ConversationMemoryModal: React.FC<ConversationMemoryModalProps> = (
     return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
   };
 
-  const getCategoryLabel = (cat: MemoryCategory | "all") => {
-    return CATEGORIES.find((c) => c.id === cat)?.label || cat;
+  const getCategoryLabel = (cat: MemoryCategory) => {
+    const found = CATEGORIES.find((c) => c.id === cat);
+    return found ? found.label : cat;
   };
 
   return (
     <AnimatePresence>
       <div
         id="dora-memory-overlay"
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm text-[#E3E3E3] font-sans select-none"
       >
         {/* ================================================================ */}
-        {/* MOBILE FULL-SCREEN SETTINGS PAGE (< lg)                          */}
+        {/* MOBILE VIEW (< lg)                                               */}
         {/* ================================================================ */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 20 }}
-          className="lg:hidden w-full h-full bg-[#131314] flex flex-col overflow-hidden text-white"
+          exit={{ opacity: 0, y: 15 }}
+          transition={{ duration: 0.18 }}
+          className="lg:hidden w-full h-full bg-[#000000] flex flex-col overflow-hidden"
         >
-          {/* Mobile Top Header Bar */}
-          <div className="px-4 py-3.5 border-b border-white/5 flex items-center justify-between shrink-0 bg-[#131314]">
+          {/* Mobile Top Bar */}
+          <div className="px-4 py-3.5 border-b border-white/[0.04] flex items-center justify-between shrink-0 bg-[#000000]">
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex items-center gap-1 text-sm text-white/80 hover:text-white -ml-1 p-1 rounded-lg"
-              >
-                <ChevronLeft className="w-5 h-5" />
-                <span>Back</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-1">
-              <span className="text-sm font-medium text-white">Memory</span>
+              <DoraSparkle size={18} />
+              <span className="text-sm font-semibold text-white">Memory Store</span>
             </div>
 
             <div className="flex items-center gap-1">
               <button
                 type="button"
                 onClick={() => setIsOverflowMenuOpen((prev) => !prev)}
-                className="p-2 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-                title="Options"
+                className="p-1.5 rounded-full text-white/50 hover:text-white transition-colors"
               >
                 <MoreVertical className="w-4 h-4" />
               </button>
               <button
-                id="btn-close-memory-mobile"
                 type="button"
                 onClick={onClose}
-                className="p-2 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                className="p-1.5 rounded-full text-white/50 hover:text-white transition-colors"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          {/* Mobile Overflow Menu Dropdown */}
+          {/* Overflow Menu */}
           {isOverflowMenuOpen && (
-            <div className="absolute right-4 top-14 z-30 w-52 rounded-2xl bg-[#1E1F22] border border-white/10 shadow-2xl p-1.5 space-y-1 animate-fade-in">
+            <div className="absolute right-4 top-12 z-30 w-52 rounded-2xl bg-[#05070B] border border-white/[0.08] shadow-[0_16px_40px_rgba(0,0,0,0.95)] p-1.5 space-y-0.5 animate-fade-in">
               <button
                 type="button"
                 onClick={handleExportJSON}
-                className="w-full px-3 py-2 rounded-xl text-left text-xs text-white/80 hover:text-white hover:bg-white/5 flex items-center gap-2"
+                className="w-full px-3 py-2.5 rounded-xl text-left text-xs text-white/80 hover:text-white hover:bg-white/[0.06] flex items-center gap-2"
               >
-                <Download className="w-3.5 h-3.5 text-white/60" />
+                <Download className="w-4 h-4 text-white/60" />
                 <span>Export memories (JSON)</span>
               </button>
               <button
@@ -321,393 +307,156 @@ export const ConversationMemoryModal: React.FC<ConversationMemoryModalProps> = (
                   setIsOverflowMenuOpen(false);
                   setConfirmClearAll(true);
                 }}
-                className="w-full px-3 py-2 rounded-xl text-left text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 flex items-center gap-2"
+                className="w-full px-3 py-2.5 rounded-xl text-left text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 flex items-center gap-2"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash2 className="w-4 h-4" />
                 <span>Clear all memories</span>
               </button>
             </div>
           )}
 
-          {/* Mobile Tab Switcher */}
-          <div className="px-4 pt-3 shrink-0">
-            <div className="flex items-center p-1 rounded-2xl bg-[#1E1F22] border border-white/5">
-              <button
-                type="button"
-                onClick={() => setActiveTab("long_term")}
-                className={`flex-1 py-1.5 text-xs rounded-xl font-medium transition-all text-center ${
-                  activeTab === "long_term"
-                    ? "bg-[#282A2F] text-white shadow-sm"
-                    : "text-white/50 hover:text-white"
-                }`}
-              >
-                Long-term ({totalMemoryCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("active_session")}
-                className={`flex-1 py-1.5 text-xs rounded-xl font-medium transition-all text-center ${
-                  activeTab === "active_session"
-                    ? "bg-[#282A2F] text-white shadow-sm"
-                    : "text-white/50 hover:text-white"
-                }`}
-              >
-                Session ({sessionNotes.length})
-              </button>
+          {/* Search & Filter Header */}
+          <div className="p-4 space-y-3 border-b border-white/[0.04] bg-[#000000]">
+            <div className="relative">
+              <Search className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search remembered facts…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white/[0.04] border border-white/[0.06] rounded-xl pl-9 pr-9 py-2 text-xs text-white placeholder:text-white/35 focus:outline-none focus:border-[#1D72FE]/40 transition-all"
+              />
+            </div>
+
+            {/* Categories Horizontal Scroller */}
+            <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar -mx-4 px-4">
+              {CATEGORIES.map((cat) => {
+                const isSelected = selectedCategory === cat.id;
+                const count = categoryCounts[cat.id] || 0;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-medium shrink-0 transition-colors flex items-center gap-1.5 ${
+                      isSelected
+                        ? "bg-[#0C1938] text-[#38BDF8]"
+                        : "text-white/60 hover:text-white hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    <span>{cat.label}</span>
+                    <span className="text-[10px] font-mono text-white/30">{count}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Mobile Main Body */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
-            {activeTab === "long_term" ? (
-              <>
-                {/* Section: Header Title */}
-                <div>
-                  <h2 className="text-xl font-normal text-white">Memory</h2>
-                  <p className="text-xs text-white/50 mt-1">
-                    Manage what Dora remembers about you across conversations.
-                  </p>
-                </div>
-
-                {/* Section: Master Memory Toggle */}
-                <div className="p-4 rounded-2xl bg-[#1E1F22] border border-white/5 flex items-center justify-between">
-                  <div className="space-y-0.5 pr-3">
-                    <span className="text-sm font-medium text-white block">Memory</span>
-                    <span className="text-xs text-white/50 block">
-                      Dora can remember useful information from your conversations.
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleToggleMemory}
-                    className={`w-11 h-6 rounded-full transition-colors relative shrink-0 p-0.5 ${
-                      isMemoryEnabled ? "bg-[#1D72FE]" : "bg-white/10"
-                    }`}
-                  >
-                    <div
-                      className={`w-5 h-5 rounded-full bg-white transition-transform ${
-                        isMemoryEnabled ? "translate-x-5" : "translate-x-0"
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {/* Section: Search & Add Bar */}
-                <div className="space-y-3">
-                  <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
-                    <input
-                      type="text"
-                      placeholder="Search memories..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full bg-[#1E1F22] border border-white/5 rounded-2xl pl-10 pr-9 py-2.5 text-xs text-white placeholder:text-white/35 focus:outline-none focus:border-white/20 transition-all"
-                    />
-                    {searchQuery && (
-                      <button
-                        type="button"
-                        onClick={() => setSearchQuery("")}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white p-1"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-medium text-white/80 block">Your memories</span>
-                      <span className="text-[11px] text-white/40">
-                        {storedMemories.length === 0
-                          ? "No saved memories"
-                          : `${storedMemories.length} ${
-                              storedMemories.length === 1 ? "memory" : "memories"
-                            }`}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleOpenAdd}
-                      className="px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-white flex items-center gap-1.5 transition-all"
-                    >
-                      <Plus className="w-3.5 h-3.5 text-[#38BDF8]" />
-                      <span>Add memory</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Section: Categories Selector */}
-                <div className="space-y-2">
-                  <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar -mx-4 px-4">
-                    {CATEGORIES.map((cat) => {
-                      const isSelected = selectedCategory === cat.id;
-                      const count = categoryCounts[cat.id] || 0;
-                      return (
-                        <button
-                          key={cat.id}
-                          type="button"
-                          onClick={() => setSelectedCategory(cat.id)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-medium shrink-0 transition-all flex items-center gap-1.5 ${
-                            isSelected
-                              ? "bg-white text-black font-semibold shadow-sm"
-                              : "bg-[#1E1F22] text-white/60 hover:text-white border border-white/5"
-                          }`}
-                        >
-                          <span>{cat.label}</span>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                              isSelected ? "bg-black/15 text-black" : "bg-white/5 text-white/40"
-                            }`}
-                          >
-                            {count}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Section: Memories List */}
-                <div className="space-y-2">
-                  {storedMemories.length === 0 ? (
-                    <div className="py-12 px-4 text-center rounded-2xl bg-[#1E1F22]/50 border border-white/5 space-y-3">
-                      <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center mx-auto text-white/30">
-                        <Brain className="w-5 h-5" />
-                      </div>
-                      <div className="space-y-1">
-                        <span className="text-sm font-medium text-white/80 block">
-                          No saved memories yet
-                        </span>
-                        <p className="text-xs text-white/40 max-w-xs mx-auto leading-relaxed">
-                          Dora will remember useful details from your conversations.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleOpenAdd}
-                        className="px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-white transition-all inline-flex items-center gap-1.5"
-                      >
-                        <Plus className="w-3.5 h-3.5 text-[#38BDF8]" />
-                        <span>Add memory</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl bg-[#1E1F22] border border-white/5 overflow-hidden divide-y divide-white/5">
-                      {storedMemories.map((item) => (
-                        <div
-                          key={item.id}
-                          onClick={() => setSelectedDetailMemory(item)}
-                          className="p-4 hover:bg-[#282A2F] transition-colors cursor-pointer flex items-start justify-between gap-3 text-left"
-                        >
-                          <div className="space-y-1.5 flex-1 min-w-0">
-                            <p className="text-sm text-white/95 leading-relaxed break-words">
-                              {item.value}
-                            </p>
-                            <div className="flex items-center gap-2 flex-wrap text-[11px] text-white/40">
-                              <span className="px-2 py-0.5 rounded-md bg-white/5 text-white/70 font-medium capitalize">
-                                {getCategoryLabel(item.category)}
-                              </span>
-                              <span>•</span>
-                              <span>{item.key}</span>
-                              <span>•</span>
-                              <span>{formatTimestamp(item.updatedAt || item.timestamp)}</span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenEdit(item);
-                              }}
-                              className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-                              title="Edit"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setConfirmDeleteId(item.id);
-                              }}
-                              className="p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
+          {/* Mobile Memories List */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
+            {storedMemories.length === 0 ? (
+              <div className="py-12 text-center space-y-2">
+                <Brain className="w-6 h-6 text-white/20 mx-auto" />
+                <p className="text-xs text-white/40">No saved memories found</p>
+              </div>
             ) : (
-              /* Active Session View */
-              <div className="space-y-4">
-                <div>
-                  <h2 className="text-xl font-normal text-white">Active Session</h2>
-                  <p className="text-xs text-white/50 mt-1">
-                    Temporary conversational context held in memory during the current call.
-                  </p>
-                </div>
-
-                {/* Emotion Badge */}
-                <div className="p-4 rounded-2xl bg-[#1E1F22] border border-white/5 flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <Heart className="w-4 h-4 text-[#38BDF8]" />
-                    <div>
-                      <span className="text-xs text-white/50 block">Current Emotion State</span>
-                      <span className="text-sm font-medium text-white capitalize">
-                        {currentEmotion}
-                      </span>
+              <div className="divide-y divide-white/[0.04]">
+                {storedMemories.map((item) => (
+                  <div
+                    key={item.id}
+                    className="py-3 px-1 flex items-start justify-between gap-3 text-left group"
+                  >
+                    <div className="space-y-1 flex-1 min-w-0">
+                      <p className="text-xs sm:text-sm text-white/90 leading-relaxed break-words">
+                        {item.value}
+                      </p>
+                      <div className="flex items-center gap-2 text-[10px] text-white/40">
+                        <span className="capitalize">{getCategoryLabel(item.category)}</span>
+                        <span>•</span>
+                        <span>{formatTimestamp(item.updatedAt || item.timestamp)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEdit(item)}
+                        className="p-1 rounded-lg text-white/40 hover:text-white hover:bg-white/10"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(item.id)}
+                        className="p-1 rounded-lg text-white/40 hover:text-red-400 hover:bg-white/10"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
-                  {onClearMemories && (
-                    <button
-                      type="button"
-                      onClick={onClearMemories}
-                      className="text-xs text-white/50 hover:text-red-400 p-1"
-                    >
-                      Clear session
-                    </button>
-                  )}
-                </div>
-
-                {/* Session Notes List */}
-                <div className="space-y-2">
-                  {sessionNotes.length === 0 ? (
-                    <div className="py-12 px-4 text-center rounded-2xl bg-[#1E1F22]/50 border border-white/5">
-                      <p className="text-xs text-white/40">No active session notes</p>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl bg-[#1E1F22] border border-white/5 overflow-hidden divide-y divide-white/5">
-                      {sessionNotes.map((mem) => (
-                        <div key={mem.id} className="p-4 space-y-1">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-medium text-white">{mem.topic}</span>
-                            <span className="text-white/40 text-[11px]">
-                              {new Date(mem.timestamp).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-                          <p className="text-xs text-white/70 leading-relaxed">{mem.detail}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                ))}
               </div>
             )}
-
-            {/* Privacy Footnote */}
-            <div className="pt-4 border-t border-white/5 flex items-center gap-2 text-xs text-white/40">
-              <Shield className="w-4 h-4 text-[#38BDF8] shrink-0" />
-              <span>Encrypted browser storage with user ownership.</span>
-            </div>
           </div>
         </motion.div>
 
         {/* ================================================================ */}
-        {/* DESKTOP RESPONSIVE SETTINGS-STYLE MODAL (>= lg)                   */}
+        {/* DESKTOP VIEW (>= lg)                                             */}
         {/* ================================================================ */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.96 }}
+          initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.96 }}
-          className="hidden lg:flex w-full max-w-4xl h-[85vh] max-h-[760px] bg-[#131314] rounded-3xl border border-white/10 shadow-2xl overflow-hidden text-white"
+          exit={{ opacity: 0, scale: 0.98 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+          className="hidden lg:flex w-full max-w-4xl h-[78vh] max-h-[680px] bg-[#05070B] rounded-3xl border border-white/[0.06] shadow-[0_24px_64px_rgba(0,0,0,0.95)] overflow-hidden"
         >
           {/* Left Navigation Sidebar */}
-          <aside className="w-72 shrink-0 bg-[#18191C]/80 border-r border-white/5 p-5 flex flex-col justify-between">
-            <div className="space-y-6">
+          <aside className="w-64 shrink-0 bg-[#000000] border-r border-white/[0.04] p-4 flex flex-col justify-between">
+            <div className="space-y-4">
               {/* Header */}
-              <div className="flex items-center gap-2.5 px-2">
-                <DoraSparkle size={24} />
+              <div className="flex items-center gap-2.5 px-2 pt-1">
+                <DoraSparkle size={20} />
                 <div>
-                  <h2 className="text-lg font-medium text-white tracking-tight">Memory</h2>
+                  <h2 className="text-base font-semibold text-white tracking-tight">Memory Store</h2>
                   <span className="text-[11px] text-white/40 font-mono">
-                    {totalMemoryCount} {totalMemoryCount === 1 ? "fact" : "facts"} saved
+                    {totalMemoryCount} facts remembered
                   </span>
                 </div>
               </div>
 
-              {/* View Switcher: Long-term vs Active Session */}
-              <div className="p-1 rounded-xl bg-[#1E1F22] border border-white/5 flex items-center">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("long_term")}
-                  className={`flex-1 py-1.5 text-xs rounded-lg font-medium transition-all text-center ${
-                    activeTab === "long_term"
-                      ? "bg-[#282A2F] text-white shadow-sm"
-                      : "text-white/50 hover:text-white"
-                  }`}
-                >
-                  Long-term
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("active_session")}
-                  className={`flex-1 py-1.5 text-xs rounded-lg font-medium transition-all text-center ${
-                    activeTab === "active_session"
-                      ? "bg-[#282A2F] text-white shadow-sm"
-                      : "text-white/50 hover:text-white"
-                  }`}
-                >
-                  Session ({sessionNotes.length})
-                </button>
+              {/* Categories */}
+              <div className="space-y-0.5 pt-2">
+                <span className="text-[11px] font-semibold tracking-wider text-white/35 uppercase px-3 block mb-1">
+                  Categories
+                </span>
+                {CATEGORIES.map((cat) => {
+                  const Icon = cat.icon;
+                  const isSelected = selectedCategory === cat.id;
+                  const count = categoryCounts[cat.id] || 0;
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setSelectedCategory(cat.id)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition-colors text-left ${
+                        isSelected
+                          ? "bg-[#0C1938] text-[#38BDF8] font-medium"
+                          : "text-white/60 hover:text-white hover:bg-white/[0.04]"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Icon className="w-4 h-4 shrink-0" />
+                        <span>{cat.label}</span>
+                      </div>
+                      <span className="text-xs font-mono text-white/30">{count}</span>
+                    </button>
+                  );
+                })}
               </div>
-
-              {/* Categories Navigation (When long-term is active) */}
-              {activeTab === "long_term" && (
-                <div className="space-y-1">
-                  <span className="text-[11px] font-semibold tracking-wider text-white/40 uppercase px-3 block mb-1">
-                    Categories
-                  </span>
-                  <nav className="space-y-0.5">
-                    {CATEGORIES.map((cat) => {
-                      const Icon = cat.icon;
-                      const isSelected = selectedCategory === cat.id;
-                      const count = categoryCounts[cat.id] || 0;
-                      return (
-                        <button
-                          key={cat.id}
-                          type="button"
-                          onClick={() => setSelectedCategory(cat.id)}
-                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all text-left ${
-                            isSelected
-                              ? "bg-[#1E1F22] text-white shadow-sm border border-white/5"
-                              : "text-white/60 hover:text-white hover:bg-white/[0.04]"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <Icon
-                              className={`w-3.5 h-3.5 ${
-                                isSelected ? "text-[#38BDF8]" : "text-white/40"
-                              }`}
-                            />
-                            <span>{cat.label}</span>
-                          </div>
-                          <span
-                            className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${
-                              isSelected ? "bg-white/10 text-white" : "text-white/30"
-                            }`}
-                          >
-                            {count}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </nav>
-                </div>
-              )}
             </div>
 
-            {/* Bottom Actions & Privacy */}
-            <div className="space-y-3 pt-4 border-t border-white/5">
-              <div className="flex items-center justify-between px-2">
+            {/* Bottom Actions */}
+            <div className="space-y-2 pt-3 border-t border-white/[0.04]">
+              <div className="flex items-center justify-between px-1">
                 <button
                   type="button"
                   onClick={handleExportJSON}
@@ -725,247 +474,99 @@ export const ConversationMemoryModal: React.FC<ConversationMemoryModalProps> = (
                   <span>Clear all</span>
                 </button>
               </div>
-
-              <div className="px-2 py-2 rounded-xl bg-white/[0.02] border border-white/5 flex items-center gap-2 text-[11px] text-white/40">
-                <Shield className="w-3.5 h-3.5 text-[#38BDF8] shrink-0" />
-                <span>Encrypted browser storage</span>
-              </div>
             </div>
           </aside>
 
-          {/* Right Detail / Content Pane */}
-          <main className="flex-1 bg-[#131314] flex flex-col overflow-hidden">
-            {/* Top Bar with Breadcrumbs & Close Button */}
-            <div className="px-8 py-4 border-b border-white/5 flex items-center justify-between shrink-0">
-              <div className="text-xs text-white/40 uppercase tracking-wider font-mono">
-                Settings / Memory {selectedCategory !== "all" && ` / ${getCategoryLabel(selectedCategory)}`}
+          {/* Right Detail Pane */}
+          <main className="flex-1 bg-[#05070B] flex flex-col overflow-hidden">
+            {/* Top Bar */}
+            <div className="px-7 py-3.5 border-b border-white/[0.04] flex items-center justify-between shrink-0">
+              <div className="relative w-72">
+                <Search className="w-4 h-4 text-white/40 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search facts…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-white/[0.04] border border-white/[0.06] rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder:text-white/35 focus:outline-none focus:border-[#1D72FE]/40 transition-all"
+                />
               </div>
-              <button
-                id="btn-close-memory-desktop"
-                type="button"
-                onClick={onClose}
-                className="p-1.5 rounded-full text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-                title="Close (Esc)"
-              >
-                <X className="w-5 h-5" />
-              </button>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleOpenAdd}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/10 text-white text-xs font-medium transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5 text-[#38BDF8]" />
+                  <span>Add memory</span>
+                </button>
+
+                <button
+                  id="btn-close-memory-desktop"
+                  type="button"
+                  onClick={onClose}
+                  className="p-1.5 rounded-full text-white/40 hover:text-white hover:bg-white/[0.08] transition-colors"
+                  title="Close (Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Content Body */}
-            <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-              <div className="max-w-2xl space-y-6">
-                {activeTab === "long_term" ? (
-                  <>
-                    {/* Header Title */}
-                    <div>
-                      <h3 className="text-xl font-normal text-white mb-1">Memory</h3>
-                      <p className="text-sm text-white/50">
-                        Manage what Dora remembers about you across voice and chat sessions.
-                      </p>
-                    </div>
-
-                    {/* Master Memory Enabled Row */}
-                    <div className="p-4 rounded-2xl bg-[#1E1F22] border border-white/5 flex items-center justify-between">
-                      <div className="space-y-0.5 pr-4">
-                        <span className="text-sm font-medium text-white block">Memory</span>
-                        <span className="text-xs text-white/50 block">
-                          Dora can remember useful information from your conversations.
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleToggleMemory}
-                        className={`w-11 h-6 rounded-full transition-colors relative shrink-0 p-0.5 ${
-                          isMemoryEnabled ? "bg-[#1D72FE]" : "bg-white/10"
-                        }`}
+            <div className="flex-1 p-7 overflow-y-auto custom-scrollbar">
+              <div className="max-w-xl space-y-4">
+                {storedMemories.length === 0 ? (
+                  <div className="py-16 text-center space-y-2">
+                    <Brain className="w-8 h-8 text-white/20 mx-auto" />
+                    <p className="text-sm font-medium text-white/60">No memories found</p>
+                    <p className="text-xs text-white/35">
+                      Dora continuously updates this store from your conversations.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/[0.04]">
+                    {storedMemories.map((item) => (
+                      <div
+                        key={item.id}
+                        className="py-3 px-1 flex items-start justify-between gap-3 text-left group"
                       >
-                        <div
-                          className={`w-5 h-5 rounded-full bg-white transition-transform ${
-                            isMemoryEnabled ? "translate-x-5" : "translate-x-0"
-                          }`}
-                        />
-                      </button>
-                    </div>
-
-                    {/* Search Bar & Add Button */}
-                    <div className="space-y-3 pt-2">
-                      <div className="flex items-center gap-3">
-                        <div className="relative flex-1">
-                          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
-                          <input
-                            type="text"
-                            placeholder="Search memories..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-[#1E1F22] border border-white/5 rounded-2xl pl-10 pr-9 py-2 text-xs text-white placeholder:text-white/35 focus:outline-none focus:border-white/20 transition-all"
-                          />
-                          {searchQuery && (
-                            <button
-                              type="button"
-                              onClick={() => setSearchQuery("")}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white p-1"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                        <div className="space-y-1 flex-1 min-w-0 pr-3">
+                          <p className="text-sm text-white/90 leading-relaxed break-words">
+                            {item.value}
+                          </p>
+                          <div className="flex items-center gap-2 text-xs text-white/40">
+                            <span className="capitalize text-white/60">
+                              {getCategoryLabel(item.category)}
+                            </span>
+                            <span>•</span>
+                            <span>{item.key}</span>
+                            <span>•</span>
+                            <span>{formatTimestamp(item.updatedAt || item.timestamp)}</span>
+                          </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={handleOpenAdd}
-                          className="px-4 py-2 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-white flex items-center gap-1.5 transition-all shrink-0"
-                        >
-                          <Plus className="w-3.5 h-3.5 text-[#38BDF8]" />
-                          <span>Add memory</span>
-                        </button>
-                      </div>
-
-                      {/* Summary text */}
-                      <div className="flex items-center justify-between text-xs text-white/40 px-1">
-                        <span>
-                          {selectedCategory === "all" ? "All memories" : getCategoryLabel(selectedCategory)}
-                        </span>
-                        <span>
-                          {storedMemories.length === 0
-                            ? "No saved memories"
-                            : `${storedMemories.length} ${
-                                storedMemories.length === 1 ? "memory" : "memories"
-                              }`}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Memories List */}
-                    <div className="space-y-2">
-                      {storedMemories.length === 0 ? (
-                        <div className="py-16 px-6 text-center rounded-2xl bg-[#1E1F22]/40 border border-white/5 space-y-3">
-                          <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mx-auto text-white/30">
-                            <Brain className="w-6 h-6" />
-                          </div>
-                          <div className="space-y-1">
-                            <h4 className="text-sm font-medium text-white/80">
-                              No saved memories yet
-                            </h4>
-                            <p className="text-xs text-white/40 max-w-sm mx-auto leading-relaxed">
-                              Dora will remember useful details from your conversations.
-                            </p>
-                          </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pt-0.5">
                           <button
                             type="button"
-                            onClick={handleOpenAdd}
-                            className="px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-white transition-all inline-flex items-center gap-1.5 mt-2"
+                            onClick={() => handleOpenEdit(item)}
+                            className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/[0.08] transition-colors"
+                            title="Edit"
                           >
-                            <Plus className="w-3.5 h-3.5 text-[#38BDF8]" />
-                            <span>Add memory</span>
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(item.id)}
+                            className="p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                      ) : (
-                        <div className="rounded-2xl bg-[#1E1F22] border border-white/5 overflow-hidden divide-y divide-white/5">
-                          {storedMemories.map((item) => (
-                            <div
-                              key={item.id}
-                              onClick={() => setSelectedDetailMemory(item)}
-                              className="p-4 hover:bg-[#282A2F] transition-colors cursor-pointer flex items-start justify-between gap-4 text-left group"
-                            >
-                              <div className="space-y-1.5 flex-1 min-w-0">
-                                <p className="text-sm text-white/95 leading-relaxed break-words font-normal">
-                                  {item.value}
-                                </p>
-                                <div className="flex items-center gap-2 flex-wrap text-[11px] text-white/40">
-                                  <span className="px-2 py-0.5 rounded-md bg-white/5 text-white/70 font-medium capitalize">
-                                    {getCategoryLabel(item.category)}
-                                  </span>
-                                  <span>•</span>
-                                  <span>{item.key}</span>
-                                  <span>•</span>
-                                  <span>{formatTimestamp(item.updatedAt || item.timestamp)}</span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1 shrink-0 pt-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenEdit(item);
-                                  }}
-                                  className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-                                  title="Edit memory"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setConfirmDeleteId(item.id);
-                                  }}
-                                  className="p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                                  title="Delete memory"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  /* Desktop Active Session Tab */
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-xl font-normal text-white mb-1">Active Session Context</h3>
-                      <p className="text-sm text-white/50">
-                        Temporary context and notes extracted during the active conversation.
-                      </p>
-                    </div>
-
-                    <div className="p-4 rounded-2xl bg-[#1E1F22] border border-white/5 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Heart className="w-4 h-4 text-[#38BDF8]" />
-                        <div>
-                          <span className="text-xs text-white/50 block">Current Emotion State</span>
-                          <span className="text-sm font-medium text-white capitalize">
-                            {currentEmotion}
-                          </span>
-                        </div>
                       </div>
-                      {onClearMemories && (
-                        <button
-                          type="button"
-                          onClick={onClearMemories}
-                          className="text-xs text-white/50 hover:text-red-400 transition-colors"
-                        >
-                          Clear session notes
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      {sessionNotes.length === 0 ? (
-                        <div className="py-16 px-6 text-center rounded-2xl bg-[#1E1F22]/40 border border-white/5">
-                          <p className="text-xs text-white/40">No active session notes recorded yet</p>
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl bg-[#1E1F22] border border-white/5 overflow-hidden divide-y divide-white/5">
-                          {sessionNotes.map((mem) => (
-                            <div key={mem.id} className="p-4 space-y-1">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="font-medium text-white">{mem.topic}</span>
-                                <span className="text-white/40 text-[11px]">
-                                  {new Date(mem.timestamp).toLocaleTimeString([], {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  })}
-                                </span>
-                              </div>
-                              <p className="text-xs text-white/70 leading-relaxed">{mem.detail}</p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -973,369 +574,155 @@ export const ConversationMemoryModal: React.FC<ConversationMemoryModalProps> = (
           </main>
         </motion.div>
 
-        {/* ================================================================ */}
-        {/* ADD MEMORY MODAL / SHEET                                         */}
-        {/* ================================================================ */}
-        {isAddingNew && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+        {/* Modal: Add or Edit Memory */}
+        {(isAddingNew || editingMemory) && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="w-full max-w-md bg-[#18191C] border border-white/10 rounded-2xl p-6 shadow-2xl space-y-5 text-white"
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              className="w-full max-w-md bg-[#05070B] border border-white/[0.08] rounded-3xl p-5 sm:p-6 shadow-[0_24px_64px_rgba(0,0,0,0.95)] text-white space-y-4"
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Plus className="w-4 h-4 text-[#38BDF8]" />
-                  <h3 className="text-base font-medium text-white">Add memory</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingNew(false)}
-                  className="p-1 rounded-full text-white/40 hover:text-white hover:bg-white/10"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleAddNew} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs text-white/60 font-medium">Category</label>
-                  <select
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value as MemoryCategory)}
-                    className="w-full bg-[#1E1F22] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-white/25"
-                  >
-                    {CATEGORIES.filter((c) => c.id !== "all").map((c) => (
-                      <option key={c.id} value={c.id} className="bg-neutral-900 text-white">
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs text-white/60 font-medium">Topic / Key</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Favorite Language"
-                    value={formKey}
-                    onChange={(e) => setFormKey(e.target.value)}
-                    className="w-full bg-[#1E1F22] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/25"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs text-white/60 font-medium">Detail / Value</label>
-                  <textarea
-                    placeholder="e.g. TypeScript, Next.js, and Python"
-                    value={formValue}
-                    onChange={(e) => setFormValue(e.target.value)}
-                    rows={3}
-                    className="w-full bg-[#1E1F22] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/25 resize-none"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-white/60">
-                    <span>Importance</span>
-                    <span className="font-mono text-white/80">{formImportance}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="20"
-                    max="100"
-                    value={formImportance}
-                    onChange={(e) => setFormImportance(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
-                  />
-                </div>
-
-                <div className="pt-2 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingNew(false)}
-                    className="px-4 py-2 rounded-xl text-xs text-white/60 hover:text-white hover:bg-white/5 transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 rounded-xl bg-[#1D72FE] hover:bg-[#1D72FE]/90 text-xs font-medium text-white transition-all shadow-sm"
-                  >
-                    Save memory
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {/* ================================================================ */}
-        {/* EDIT MEMORY MODAL / SHEET                                        */}
-        {/* ================================================================ */}
-        {editingMemory && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="w-full max-w-md bg-[#18191C] border border-white/10 rounded-2xl p-6 shadow-2xl space-y-5 text-white"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Edit2 className="w-4 h-4 text-[#38BDF8]" />
-                  <h3 className="text-base font-medium text-white">Edit memory</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEditingMemory(null)}
-                  className="p-1 rounded-full text-white/40 hover:text-white hover:bg-white/10"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form onSubmit={handleSaveEdit} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs text-white/60 font-medium">Category</label>
-                  <select
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value as MemoryCategory)}
-                    className="w-full bg-[#1E1F22] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-white/25"
-                  >
-                    {CATEGORIES.filter((c) => c.id !== "all").map((c) => (
-                      <option key={c.id} value={c.id} className="bg-neutral-900 text-white">
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs text-white/60 font-medium">Topic / Key</label>
-                  <input
-                    type="text"
-                    value={formKey}
-                    onChange={(e) => setFormKey(e.target.value)}
-                    className="w-full bg-[#1E1F22] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/25"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs text-white/60 font-medium">Detail / Value</label>
-                  <textarea
-                    value={formValue}
-                    onChange={(e) => setFormValue(e.target.value)}
-                    rows={3}
-                    className="w-full bg-[#1E1F22] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/25 resize-none"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs text-white/60">
-                    <span>Importance</span>
-                    <span className="font-mono text-white/80">{formImportance}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="20"
-                    max="100"
-                    value={formImportance}
-                    onChange={(e) => setFormImportance(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
-                  />
-                </div>
-
-                <div className="pt-2 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditingMemory(null)}
-                    className="px-4 py-2 rounded-xl text-xs text-white/60 hover:text-white hover:bg-white/5 transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 rounded-xl bg-[#1D72FE] hover:bg-[#1D72FE]/90 text-xs font-medium text-white transition-all shadow-sm"
-                  >
-                    Save changes
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {/* ================================================================ */}
-        {/* VIEW MEMORY DETAIL MODAL                                         */}
-        {/* ================================================================ */}
-        {selectedDetailMemory && !editingMemory && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="w-full max-w-md bg-[#18191C] border border-white/10 rounded-2xl p-6 shadow-2xl space-y-6 text-white"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs uppercase tracking-wider font-mono text-white/40">
-                  Memory Detail
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedDetailMemory(null)}
-                  className="p-1 rounded-full text-white/40 hover:text-white hover:bg-white/10"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl bg-[#1E1F22] border border-white/5">
-                  <p className="text-sm text-white leading-relaxed break-words font-normal">
-                    {selectedDetailMemory.value}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                    <span className="text-white/40 block mb-0.5">Category</span>
-                    <span className="text-white capitalize font-medium">
-                      {getCategoryLabel(selectedDetailMemory.category)}
-                    </span>
-                  </div>
-                  <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                    <span className="text-white/40 block mb-0.5">Topic / Key</span>
-                    <span className="text-white font-medium break-all">
-                      {selectedDetailMemory.key}
-                    </span>
-                  </div>
-                  <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                    <span className="text-white/40 block mb-0.5">Importance</span>
-                    <span className="text-white font-medium">
-                      {selectedDetailMemory.importance || 80}%
-                    </span>
-                  </div>
-                  <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                    <span className="text-white/40 block mb-0.5">Last Updated</span>
-                    <span className="text-white font-medium">
-                      {formatTimestamp(selectedDetailMemory.updatedAt || selectedDetailMemory.timestamp)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-2 flex items-center justify-between border-t border-white/5">
+              <div className="flex items-center justify-between border-b border-white/[0.04] pb-3">
+                <h3 className="text-base font-semibold text-white">
+                  {editingMemory ? "Edit Memory" : "Add Memory"}
+                </h3>
                 <button
                   type="button"
                   onClick={() => {
-                    setConfirmDeleteId(selectedDetailMemory.id);
+                    setIsAddingNew(false);
+                    setEditingMemory(null);
                   }}
-                  className="px-3 py-1.5 rounded-xl text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 flex items-center gap-1.5 transition-colors"
+                  className="p-1.5 rounded-full text-white/40 hover:text-white"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Delete</span>
+                  <X className="w-4 h-4" />
                 </button>
-                <div className="flex items-center gap-2">
+              </div>
+
+              <form onSubmit={editingMemory ? handleSaveEdit : handleAddNew} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs text-white/50 block">Category</label>
+                  <select
+                    value={formCategory}
+                    onChange={(e) => setFormCategory(e.target.value as MemoryCategory)}
+                    className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-[#1D72FE]/60"
+                  >
+                    {CATEGORIES.filter((c) => c.id !== "all").map((cat) => (
+                      <option key={cat.id} value={cat.id} className="bg-[#05070B] text-white">
+                        {cat.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs text-white/50 block">Topic / Key</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Favorite food, Job title"
+                    value={formKey}
+                    onChange={(e) => setFormKey(e.target.value)}
+                    className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#1D72FE]/60"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs text-white/50 block">Memory detail</label>
+                  <textarea
+                    required
+                    rows={3}
+                    placeholder="What should Dora remember?"
+                    value={formValue}
+                    onChange={(e) => setFormValue(e.target.value)}
+                    className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#1D72FE]/60 resize-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/[0.04]">
                   <button
                     type="button"
-                    onClick={() => setSelectedDetailMemory(null)}
-                    className="px-4 py-2 rounded-xl text-xs text-white/60 hover:text-white hover:bg-white/5"
+                    onClick={() => {
+                      setIsAddingNew(false);
+                      setEditingMemory(null);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs text-white/60 hover:text-white hover:bg-white/[0.05]"
                   >
-                    Close
+                    Cancel
                   </button>
                   <button
-                    type="button"
-                    onClick={() => handleOpenEdit(selectedDetailMemory)}
-                    className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-medium text-white flex items-center gap-1.5 transition-colors"
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-[#1D72FE] hover:bg-[#1A64DE] text-white text-xs font-medium shadow-sm transition-all"
                   >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    <span>Edit</span>
+                    Save Memory
                   </button>
                 </div>
-              </div>
+              </form>
             </motion.div>
           </div>
         )}
 
-        {/* ================================================================ */}
-        {/* DELETE CONFIRMATION MODAL                                        */}
-        {/* ================================================================ */}
-        {confirmDeleteId && (
-          <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-sm bg-[#18191C] border border-white/10 rounded-2xl p-6 shadow-2xl space-y-4 text-white text-center"
-            >
-              <div className="w-10 h-10 rounded-full bg-red-500/10 text-red-400 flex items-center justify-center mx-auto">
-                <Trash2 className="w-5 h-5" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="text-sm font-medium text-white">Delete this memory?</h4>
-                <p className="text-xs text-white/50">
-                  Dora will forget this detail and won't use it in future conversations.
-                </p>
-              </div>
-              <div className="pt-2 flex items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDeleteId(null)}
-                  className="px-4 py-2 rounded-xl text-xs text-white/60 hover:text-white hover:bg-white/5 transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(confirmDeleteId)}
-                  className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-medium text-white transition-all shadow-sm"
-                >
-                  Delete
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
-        {/* ================================================================ */}
-        {/* CLEAR ALL CONFIRMATION MODAL                                     */}
-        {/* ================================================================ */}
+        {/* Modal: Confirm Clear All */}
         {confirmClearAll && (
-          <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
+              initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-sm bg-[#18191C] border border-white/10 rounded-2xl p-6 shadow-2xl space-y-4 text-white text-center"
+              exit={{ opacity: 0, scale: 0.96 }}
+              className="w-full max-w-sm bg-[#05070B] border border-white/[0.08] rounded-3xl p-5 shadow-[0_24px_64px_rgba(0,0,0,0.95)] text-white space-y-3"
             >
-              <div className="w-10 h-10 rounded-full bg-red-500/10 text-red-400 flex items-center justify-center mx-auto">
-                <AlertCircle className="w-5 h-5" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="text-sm font-medium text-white">Clear all memories?</h4>
-                <p className="text-xs text-white/50 leading-relaxed">
-                  This will permanently delete all {totalMemoryCount} saved memories. This action cannot be undone.
-                </p>
-              </div>
-              <div className="pt-2 flex items-center justify-center gap-2">
+              <h3 className="text-base font-semibold text-white">Clear All Memories?</h3>
+              <p className="text-xs text-white/50 leading-relaxed">
+                This will permanently delete all stored facts. Dora will lose long-term context
+                about your preferences.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setConfirmClearAll(false)}
-                  className="px-4 py-2 rounded-xl text-xs text-white/60 hover:text-white hover:bg-white/5 transition-all"
+                  className="px-3.5 py-1.5 rounded-xl text-xs text-white/60 hover:text-white"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleClearAllConfirm}
-                  className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-medium text-white transition-all shadow-sm"
+                  className="px-3.5 py-1.5 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/40 text-xs font-medium transition-all"
                 >
-                  Clear all
+                  Delete All
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Modal: Confirm Delete Single */}
+        {confirmDeleteId && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              className="w-full max-w-sm bg-[#05070B] border border-white/[0.08] rounded-3xl p-5 shadow-[0_24px_64px_rgba(0,0,0,0.95)] text-white space-y-3"
+            >
+              <h3 className="text-base font-semibold text-white">Delete Fact?</h3>
+              <p className="text-xs text-white/50 leading-relaxed">
+                Are you sure you want to remove this fact from Dora's memory?
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteId(null)}
+                  className="px-3.5 py-1.5 rounded-xl text-xs text-white/60 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(confirmDeleteId)}
+                  className="px-3.5 py-1.5 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/40 text-xs font-medium transition-all"
+                >
+                  Delete
                 </button>
               </div>
             </motion.div>

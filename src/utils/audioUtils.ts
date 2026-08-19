@@ -46,19 +46,33 @@ export class AudioEngine {
     this.silenceThresholdMs = Math.max(600, Math.min(3000, ms));
   }
 
+  private getOrCreateInputContext(): AudioContext {
+    if (!this.inputAudioCtx || this.inputAudioCtx.state === "closed") {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) {
+        throw new Error("Web Audio API is not supported in this browser");
+      }
+      try {
+        this.inputAudioCtx = new AudioContextClass({ sampleRate: 16000 });
+      } catch {
+        try {
+          this.inputAudioCtx = new AudioContextClass();
+        } catch (e: any) {
+          throw new Error("Failed to initialize AudioContext: " + (e?.message || "unsupported"));
+        }
+      }
+    }
+    return this.inputAudioCtx;
+  }
+
   /**
-   * Initializes microphone stream and 16kHz audio processor
+   * Initializes microphone stream and audio processor
    */
   public async startMicrophone(): Promise<boolean> {
     try {
       if (this.isListening) return true;
 
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.inputAudioCtx = new AudioContextClass({ sampleRate: 16000 });
-      if (this.inputAudioCtx.state === "suspended") {
-        await this.inputAudioCtx.resume();
-      }
-
+      // 1. Request microphone access
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -67,17 +81,24 @@ export class AudioEngine {
         },
       });
 
-      this.sourceNode = this.inputAudioCtx.createMediaStreamSource(this.micStream);
-      this.inputAnalyser = this.inputAudioCtx.createAnalyser();
+      // 2. Ensure AudioContext is ready and active
+      const ctx = this.getOrCreateInputContext();
+      if (ctx.state === "suspended") {
+        await ctx.resume().catch(() => {});
+      }
+
+      // 3. Connect MediaStreamSource and Analyser
+      this.sourceNode = ctx.createMediaStreamSource(this.micStream);
+      this.inputAnalyser = ctx.createAnalyser();
       this.inputAnalyser.fftSize = 256;
       this.inputAnalyser.smoothingTimeConstant = 0.8;
 
-      // Script processor for 16kHz PCM streaming (buffer size 4096 gives ~256ms packets)
-      this.processorNode = this.inputAudioCtx.createScriptProcessor(4096, 1, 1);
+      // Script processor for audio streaming (buffer size 4096 gives ~256ms packets)
+      this.processorNode = ctx.createScriptProcessor(4096, 1, 1);
 
       this.sourceNode.connect(this.inputAnalyser);
       this.inputAnalyser.connect(this.processorNode);
-      this.processorNode.connect(this.inputAudioCtx.destination);
+      this.processorNode.connect(ctx.destination);
 
       this.processorNode.onaudioprocess = (e) => {
         if (!this.isListening) return;
@@ -122,13 +143,8 @@ export class AudioEngine {
           }
         }
 
-        // Convert float32 array to 16-bit PCM little-endian
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-
+        // Convert audio buffer to 16-bit PCM little-endian at 16kHz
+        const pcm16 = this.downsampleTo16k(inputData, ctx.sampleRate);
         const base64Audio = this.arrayBufferToBase64(pcm16.buffer);
         if (this.onAudioChunk) {
           this.onAudioChunk(base64Audio);
@@ -137,10 +153,59 @@ export class AudioEngine {
 
       this.isListening = true;
       return true;
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to start microphone:", err);
-      return false;
+      this.isListening = false;
+      if (this.micStream) {
+        this.micStream.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch (_) {}
+        });
+        this.micStream = null;
+      }
+      if (this.inputAudioCtx && this.inputAudioCtx.state !== "closed") {
+        try {
+          this.inputAudioCtx.close();
+        } catch {
+          // ignore
+        }
+        this.inputAudioCtx = null;
+      }
+      throw err;
     }
+  }
+
+  private downsampleTo16k(inputData: Float32Array, inputSampleRate: number): Int16Array {
+    if (inputSampleRate === 16000) {
+      const pcm16 = new Int16Array(inputData.length);
+      for (let i = 0; i < inputData.length; i++) {
+        const s = Math.max(-1, Math.min(1, inputData[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      return pcm16;
+    }
+
+    const sampleRateRatio = inputSampleRate / 16000;
+    const newLength = Math.round(inputData.length / sampleRateRatio);
+    const result = new Int16Array(newLength);
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+
+    while (offsetResult < result.length) {
+      const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+      let accum = 0;
+      let count = 0;
+      for (let i = offsetBuffer; i < nextOffsetBuffer && i < inputData.length; i++) {
+        accum += inputData[i];
+        count++;
+      }
+      const s = count > 0 ? Math.max(-1, Math.min(1, accum / count)) : 0;
+      result[offsetResult] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      offsetResult++;
+      offsetBuffer = nextOffsetBuffer;
+    }
+    return result;
   }
 
   /**
@@ -149,14 +214,21 @@ export class AudioEngine {
   public ensureOutputContext(): AudioContext {
     if (!this.outputAudioCtx || this.outputAudioCtx.state === "closed") {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.outputAudioCtx = new AudioContextClass({ sampleRate: 24000 });
+      if (!AudioContextClass) {
+        throw new Error("Web Audio API is not supported in this browser");
+      }
+      try {
+        this.outputAudioCtx = new AudioContextClass({ sampleRate: 24000 });
+      } catch {
+        this.outputAudioCtx = new AudioContextClass();
+      }
       this.outputAnalyser = this.outputAudioCtx.createAnalyser();
       this.outputAnalyser.fftSize = 256;
       this.outputAnalyser.smoothingTimeConstant = 0.8;
       this.outputAnalyser.connect(this.outputAudioCtx.destination);
     }
     if (this.outputAudioCtx.state === "suspended") {
-      this.outputAudioCtx.resume();
+      this.outputAudioCtx.resume().catch(() => {});
     }
     return this.outputAudioCtx;
   }

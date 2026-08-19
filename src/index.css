@@ -15,30 +15,31 @@
     background: rgba(255, 255, 255, 0.25);
   }
 
-  /* Gemini-inspired sleek dark surfaces */
+  /* Unified sleek AMOLED dark surfaces matching Immersive Voice */
   .dora-dark-bg {
-    background-color: #050507;
+    background-color: #000000;
   }
 
   .dora-sidebar-bg {
-    background-color: #0A0B0E;
+    background-color: #0F1014;
   }
 
   .dora-pill-card {
-    background-color: #1E1F22;
+    background-color: #18191E;
   }
 
   .dora-pill-card:hover {
-    background-color: #282A2F;
+    background-color: #22232A;
   }
 
   .dora-composer-pill {
-    background-color: #1A1C20;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: #141519;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    backdrop-filter: blur(16px);
   }
 
   .dora-composer-pill:focus-within {
-    border-color: rgba(72, 168, 255, 0.35);
-    box-shadow: 0 0 25px rgba(29, 114, 254, 0.15);
+    border-color: rgba(72, 168, 255, 0.40);
+    box-shadow: 0 0 25px rgba(29, 114, 254, 0.20), 0 12px 40px rgba(0, 0, 0, 0.7);
   }
 }

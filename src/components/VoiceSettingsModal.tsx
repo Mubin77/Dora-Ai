@@ -15,9 +15,14 @@ import {
   Radio,
   Cpu,
   Zap,
+  ShieldCheck,
+  Activity,
+  Play,
+  RotateCcw,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { DoraSparkle } from "./DoraSparkle";
+import { memoryManager } from "../memory/MemoryManager";
 
 interface VoiceSettingsModalProps {
   isOpen: boolean;
@@ -27,7 +32,7 @@ interface VoiceSettingsModalProps {
   onOpenMemory?: () => void;
 }
 
-type SettingsTab = "voice" | "language" | "memory" | "general" | "about";
+type SettingsSection = "main" | "voice" | "speech" | "language" | "memory" | "general" | "about";
 
 interface VoicePreset {
   id: string;
@@ -80,16 +85,39 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   onUpdateSettings,
   onOpenMemory,
 }) => {
-  const [activeTab, setActiveTab] = useState<SettingsTab>("voice");
-  const [mobileViewingDetail, setMobileViewingDetail] = useState<boolean>(false);
+  const [activeSection, setActiveSection] = useState<SettingsSection>("main");
+  const [totalMemories, setTotalMemories] = useState<number>(0);
+  const [isPlayingSample, setIsPlayingSample] = useState<boolean>(false);
 
-  // Close on escape key
+  useEffect(() => {
+    if (isOpen) {
+      setTotalMemories(memoryManager.getTotalCount());
+      const unsub = memoryManager.subscribe(() => {
+        setTotalMemories(memoryManager.getTotalCount());
+      });
+      return () => unsub();
+    }
+  }, [isOpen]);
+
+  // Reset to main view on open
+  useEffect(() => {
+    if (isOpen) {
+      // Default to voice sub-view on desktop, main list on mobile
+      if (window.innerWidth >= 1024) {
+        setActiveSection("voice");
+      } else {
+        setActiveSection("main");
+      }
+    }
+  }, [isOpen]);
+
+  // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
       if (e.key === "Escape") {
-        if (mobileViewingDetail) {
-          setMobileViewingDetail(false);
+        if (activeSection !== "main" && window.innerWidth < 1024) {
+          setActiveSection("main");
         } else {
           onClose();
         }
@@ -97,24 +125,35 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, mobileViewingDetail, onClose]);
+  }, [isOpen, activeSection, onClose]);
 
   if (!isOpen) return null;
 
-  // Active preset check
-  const activePreset = VOICE_PRESETS.find(
-    (p) =>
-      p.voice === settings.voiceName &&
-      Math.abs(p.rate - settings.speakingRate) < 0.02 &&
-      Math.abs(p.pitch - settings.pitch) < 0.02
-  );
+  const playVoiceSample = () => {
+    if (isPlayingSample) return;
+    setIsPlayingSample(true);
+    try {
+      const sampleText =
+        settings.language === "bn-en"
+          ? "Hey there! Ami Dora. How are you feeling today?"
+          : "Hey there! I'm Dora, your AI companion. How can I help you today?";
+      const utterance = new SpeechSynthesisUtterance(sampleText);
+      utterance.rate = settings.speakingRate;
+      utterance.pitch = settings.pitch;
+      utterance.onend = () => setIsPlayingSample(false);
+      utterance.onerror = () => setIsPlayingSample(false);
+      window.speechSynthesis?.speak(utterance);
+    } catch {
+      setIsPlayingSample(false);
+    }
+  };
 
   const getLanguageLabel = () => {
     switch (settings.language) {
       case "en":
         return "English Only";
       case "bn-en":
-        return "Banglish / বাংলা";
+        return "Banglish / Everyday Bangla";
       default:
         return "Auto (Bangla/English)";
     }
@@ -125,29 +164,167 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
       ? "Gemini Live Stream"
       : settings.engine === "gemini-tts"
       ? "Gemini Studio TTS"
-      : "Browser Voice";
+      : "Browser Native";
   };
 
-  // -------------------------------------------------------------------------
-  // SUB-VIEW RENDERERS
-  // -------------------------------------------------------------------------
+  // =========================================================================
+  // MAIN SETTINGS MENU (Clean, minimalist standalone rows with section labels)
+  // =========================================================================
+  const renderMainSettingsList = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
+      {/* 1. AUDIO & SPEECH */}
+      <div className="space-y-1">
+        <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
+          Audio & Speech
+        </div>
 
+        <div className="divide-y divide-white/[0.04]">
+          <button
+            type="button"
+            onClick={() => setActiveSection("voice")}
+            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Mic className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
+              <div>
+                <span className="text-sm font-medium text-white block">Voice & personality</span>
+                <span className="text-xs text-white/45 block">
+                  {settings.voiceName || "Aoede"} ({settings.speakingRate}× speed)
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSection("speech")}
+            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Radio className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
+              <div>
+                <span className="text-sm font-medium text-white block">Speech engine</span>
+                <span className="text-xs text-white/45 block">{getEngineLabel()}</span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+        </div>
+      </div>
+
+      {/* 2. LANGUAGE */}
+      <div className="space-y-1">
+        <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
+          Language
+        </div>
+
+        <div className="divide-y divide-white/[0.04]">
+          <button
+            type="button"
+            onClick={() => setActiveSection("language")}
+            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Globe className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
+              <div>
+                <span className="text-sm font-medium text-white block">Language & accent</span>
+                <span className="text-xs text-white/45 block">{getLanguageLabel()}</span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+        </div>
+      </div>
+
+      {/* 3. INTELLIGENCE */}
+      <div className="space-y-1">
+        <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
+          Intelligence
+        </div>
+
+        <div className="divide-y divide-white/[0.04]">
+          <button
+            type="button"
+            onClick={() => setActiveSection("memory")}
+            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Brain className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
+              <div>
+                <span className="text-sm font-medium text-white block">Memory & personalization</span>
+                <span className="text-xs text-white/45 block">
+                  {totalMemories} {totalMemories === 1 ? "fact" : "facts"} remembered
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+        </div>
+      </div>
+
+      {/* 4. SYSTEM & ABOUT */}
+      <div className="space-y-1">
+        <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
+          System
+        </div>
+
+        <div className="divide-y divide-white/[0.04]">
+          <button
+            type="button"
+            onClick={() => setActiveSection("general")}
+            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Sliders className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
+              <div>
+                <span className="text-sm font-medium text-white block">General</span>
+                <span className="text-xs text-white/45 block">
+                  Sensitivity, ambience & haptics
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSection("about")}
+            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Info className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
+              <div>
+                <span className="text-sm font-medium text-white block">About Dora</span>
+                <span className="text-xs text-white/45 block">Gemini 2.0 Flash • Live API</span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // 1. VOICE & PERSONALITY INNER SECTION
+  // =========================================================================
   const renderVoiceContent = () => (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
       <div>
-        <h3 className="text-xl font-normal text-white mb-1">Voice & Conversation</h3>
-        <p className="text-sm text-white/50">
-          Customize Dora's vocal personality, speech engine, cadence, and turn-taking behavior.
+        <h3 className="text-base font-semibold text-white mb-1">Voice & Personality</h3>
+        <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
+          Select Dora's speaking personality and fine-tune natural voice characteristics.
         </p>
       </div>
 
-      {/* 1. Voice Personality Presets */}
-      <div className="space-y-3">
-        <label className="text-xs font-semibold uppercase tracking-wider text-white/60 flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-[#38BDF8]" />
-          Voice Personality
-        </label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+      {/* Voice Presets List */}
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
+          Preset Profiles
+        </div>
+
+        <div className="divide-y divide-white/[0.04]">
           {VOICE_PRESETS.map((preset) => {
             const isSelected =
               settings.voiceName === preset.voice &&
@@ -165,25 +342,23 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                     pitch: preset.pitch,
                   })
                 }
-                className={`p-4 text-left rounded-2xl border transition-all relative ${
+                className={`w-full flex items-start justify-between p-3 rounded-xl transition-colors text-left ${
                   isSelected
-                    ? "bg-[#1D72FE]/10 border-[#1D72FE]/60 shadow-[0_0_20px_rgba(29,114,254,0.12)]"
-                    : "bg-[#1E1F22] border-white/5 hover:bg-[#282A2F] hover:border-white/10"
+                    ? "bg-[#0C1938] text-[#38BDF8]"
+                    : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
                 }`}
               >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium text-white">{preset.name}</span>
-                  {isSelected && (
-                    <span className="w-5 h-5 rounded-full bg-[#1D72FE] text-white flex items-center justify-center shrink-0">
-                      <Check className="w-3 h-3 stroke-[2.5]" />
-                    </span>
-                  )}
+                <div className="space-y-0.5 pr-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium block">{preset.name}</span>
+                    {isSelected && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#38BDF8] inline-block" />
+                    )}
+                  </div>
+                  <p className="text-xs text-white/45 leading-relaxed">{preset.desc}</p>
                 </div>
-                <p className="text-xs text-white/50 leading-relaxed pr-2">{preset.desc}</p>
-                <div className="mt-2.5 flex items-center gap-2 text-[11px] text-white/40 font-mono">
-                  <span>{preset.voice}</span>
-                  <span>•</span>
-                  <span>{preset.rate}× speed</span>
+                <div className="text-[11px] font-mono text-white/35 shrink-0 pt-0.5">
+                  {preset.rate}×
                 </div>
               </button>
             );
@@ -191,351 +366,403 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         </div>
       </div>
 
-      {/* 2. Speech Engine Mode */}
-      <div className="space-y-3 pt-2 border-t border-white/5">
-        <label className="text-xs font-semibold uppercase tracking-wider text-white/60 flex items-center gap-1.5">
-          <Radio className="w-3.5 h-3.5 text-[#38BDF8]" />
-          Speech Engine
-        </label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+      {/* Voice Tuning Sliders */}
+      <div className="space-y-4 pt-2 border-t border-white/[0.04]">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
+          Fine Tuning
+        </div>
+
+        {/* Speed Slider */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs sm:text-sm">
+            <span className="text-white/80 font-medium">Speaking Speed</span>
+            <span className="font-mono text-[#38BDF8] text-xs">{settings.speakingRate}×</span>
+          </div>
+          <input
+            type="range"
+            min="0.75"
+            max="1.3"
+            step="0.05"
+            value={settings.speakingRate}
+            onChange={(e) => onUpdateSettings({ speakingRate: parseFloat(e.target.value) })}
+            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
+          />
+        </div>
+
+        {/* Pitch Slider */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs sm:text-sm">
+            <span className="text-white/80 font-medium">Voice Pitch</span>
+            <span className="font-mono text-[#38BDF8] text-xs">{settings.pitch}×</span>
+          </div>
+          <input
+            type="range"
+            min="0.8"
+            max="1.2"
+            step="0.05"
+            value={settings.pitch}
+            onChange={(e) => onUpdateSettings({ pitch: parseFloat(e.target.value) })}
+            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
+          />
+        </div>
+      </div>
+
+      {/* Sample Voice Player */}
+      <div className="pt-2">
+        <button
+          type="button"
+          onClick={playVoiceSample}
+          disabled={isPlayingSample}
+          className="w-full flex items-center justify-center gap-2.5 py-3 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] active:bg-white/[0.12] border border-white/[0.06] text-white text-sm font-medium transition-all"
+        >
+          <Play className={`w-4 h-4 ${isPlayingSample ? "animate-pulse text-[#38BDF8]" : ""}`} />
+          <span>{isPlayingSample ? "Playing voice sample…" : "Test Voice Output"}</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // 2. SPEECH ENGINE INNER SECTION
+  // =========================================================================
+  const renderSpeechContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Speech Engine</h3>
+        <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
+          Configure real-time voice streaming latency and microphone processing.
+        </p>
+      </div>
+
+      {/* Engine Selection */}
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
+          Audio Pipeline
+        </div>
+
+        <div className="divide-y divide-white/[0.04]">
           <button
             type="button"
             onClick={() => onUpdateSettings({ engine: "gemini-live" })}
-            className={`p-4 text-left rounded-2xl border transition-all ${
+            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
               settings.engine === "gemini-live"
-                ? "bg-[#1D72FE]/10 border-[#1D72FE]/60 shadow-[0_0_20px_rgba(29,114,254,0.12)]"
-                : "bg-[#1E1F22] border-white/5 hover:bg-[#282A2F] hover:border-white/10"
+                ? "bg-[#0C1938] text-[#38BDF8]"
+                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
             }`}
           >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-medium text-white">Gemini Live Stream</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1D72FE]/20 text-[#38BDF8] font-mono">
-                Real-time
-              </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium block">Gemini Live Stream</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#1D72FE]/20 text-[#38BDF8] font-mono">
+                  Real-time
+                </span>
+              </div>
+              <p className="text-xs text-white/45">Ultra-low latency bidirectional audio pipeline</p>
             </div>
-            <p className="text-xs text-white/50 leading-relaxed">
-              Ultra-low latency bidirectional audio with natural barge-in interruptions.
-            </p>
+            {settings.engine === "gemini-live" && <Check className="w-4 h-4 text-[#38BDF8]" />}
           </button>
 
           <button
             type="button"
             onClick={() => onUpdateSettings({ engine: "gemini-tts" })}
-            className={`p-4 text-left rounded-2xl border transition-all ${
+            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
               settings.engine === "gemini-tts"
-                ? "bg-[#1D72FE]/10 border-[#1D72FE]/60 shadow-[0_0_20px_rgba(29,114,254,0.12)]"
-                : "bg-[#1E1F22] border-white/5 hover:bg-[#282A2F] hover:border-white/10"
+                ? "bg-[#0C1938] text-[#38BDF8]"
+                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
             }`}
           >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-medium text-white">Gemini Studio TTS</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-white/70 font-mono">
-                Neural HD
-              </span>
-            </div>
-            <p className="text-xs text-white/50 leading-relaxed">
-              High-definition expressive speech generated per turn.
-            </p>
-          </button>
-        </div>
-      </div>
-
-      {/* 3. Sliders: Speaking Speed, Pitch & Turn-Taking */}
-      <div className="space-y-6 pt-2 border-t border-white/5">
-        {/* Speaking Speed */}
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-white flex items-center gap-2">
-              <Volume2 className="w-4 h-4 text-[#38BDF8]" /> Speaking speed
-            </span>
-            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-[#1E1F22] border border-white/10 text-[#38BDF8]">
-              {settings.speakingRate.toFixed(2)}×
-            </span>
-          </div>
-          <input
-            type="range"
-            min="0.75"
-            max="1.30"
-            step="0.02"
-            value={settings.speakingRate}
-            onChange={(e) => onUpdateSettings({ speakingRate: parseFloat(e.target.value) })}
-            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
-          />
-          <div className="flex justify-between text-xs text-white/40">
-            <span>Slow (0.75×)</span>
-            <span>Default (0.96×)</span>
-            <span>Fast (1.30×)</span>
-          </div>
-        </div>
-
-        {/* Voice Pitch */}
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-white flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-[#38BDF8]" /> Voice pitch
-            </span>
-            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-[#1E1F22] border border-white/10 text-[#38BDF8]">
-              {settings.pitch.toFixed(2)}×
-            </span>
-          </div>
-          <input
-            type="range"
-            min="0.85"
-            max="1.25"
-            step="0.02"
-            value={settings.pitch}
-            onChange={(e) => onUpdateSettings({ pitch: parseFloat(e.target.value) })}
-            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
-          />
-          <div className="flex justify-between text-xs text-white/40">
-            <span>Warmer & Deeper</span>
-            <span>Natural (1.05×)</span>
-            <span>Brighter</span>
-          </div>
-        </div>
-
-        {/* Turn-Taking Silence Threshold */}
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-white flex items-center gap-2">
-              <Mic className="w-4 h-4 text-[#38BDF8]" /> Turn-taking silence threshold
-            </span>
-            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-[#1E1F22] border border-white/10 text-[#38BDF8]">
-              {(settings.pauseThresholdMs / 1000).toFixed(1)}s
-            </span>
-          </div>
-          <input
-            type="range"
-            min="800"
-            max="2500"
-            step="100"
-            value={settings.pauseThresholdMs}
-            onChange={(e) => onUpdateSettings({ pauseThresholdMs: parseInt(e.target.value) })}
-            className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
-          />
-          <div className="flex justify-between text-xs text-white/40">
-            <span>Snappy (0.8s)</span>
-            <span>Balanced (1.3s)</span>
-            <span>Patient (2.5s)</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderLanguageContent = () => (
-    <div className="space-y-8 animate-fade-in">
-      <div>
-        <h3 className="text-xl font-normal text-white mb-1">Language & Accent</h3>
-        <p className="text-sm text-white/50">
-          Control how Dora detects and switches between English, Bengali, and bilingual Banglish.
-        </p>
-      </div>
-
-      <div className="space-y-3">
-        {[
-          {
-            id: "auto",
-            title: "Auto (Bangla/English)",
-            desc: "Dora dynamically recognizes both English and Bangla in real-time, responding in the appropriate dialect.",
-            tag: "Recommended",
-          },
-          {
-            id: "en",
-            title: "English Only",
-            desc: "Communicates strictly in crisp, natural English with international clarity.",
-            tag: "Global",
-          },
-          {
-            id: "bn-en",
-            title: "Banglish / বাংলা",
-            desc: "Optimized for natural South Asian colloquial speech, switching seamlessly between Bangla and English phrases.",
-            tag: "Colloquial",
-          },
-        ].map((item) => {
-          const isSelected = settings.language === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onUpdateSettings({ language: item.id as any })}
-              className={`w-full p-4 text-left rounded-2xl border transition-all flex items-start justify-between ${
-                isSelected
-                  ? "bg-[#1D72FE]/10 border-[#1D72FE]/60 shadow-[0_0_20px_rgba(29,114,254,0.12)]"
-                  : "bg-[#1E1F22] border-white/5 hover:bg-[#282A2F] hover:border-white/10"
-              }`}
-            >
-              <div className="space-y-1 pr-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-white">{item.title}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-white/60 font-mono">
-                    {item.tag}
-                  </span>
-                </div>
-                <p className="text-xs text-white/50 leading-relaxed">{item.desc}</p>
-              </div>
-              <div className="pt-1">
-                <div
-                  className={`w-5 h-5 rounded-full flex items-center justify-center border transition-all ${
-                    isSelected
-                      ? "bg-[#1D72FE] border-[#1D72FE] text-white"
-                      : "border-white/20 bg-transparent"
-                  }`}
-                >
-                  {isSelected && <Check className="w-3 h-3 stroke-[2.5]" />}
-                </div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-
-  const renderMemoryContent = () => (
-    <div className="space-y-8 animate-fade-in">
-      <div>
-        <h3 className="text-xl font-normal text-white mb-1">Memory & Personalization</h3>
-        <p className="text-sm text-white/50">
-          Manage facts, user preferences, and memories Dora recalls across voice and chat sessions.
-        </p>
-      </div>
-
-      <div className="p-6 rounded-2xl bg-[#1E1F22] border border-white/5 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-[#1D72FE]/15 border border-[#1D72FE]/30 flex items-center justify-center text-[#38BDF8]">
-            <Brain className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className="text-sm font-medium text-white">What Dora Remembers</h4>
-            <p className="text-xs text-white/50">
-              Personalized context such as your preferred name, language habits, and ongoing topics.
-            </p>
-          </div>
-        </div>
-
-        <div className="pt-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (onOpenMemory) {
-                onOpenMemory();
-              }
-            }}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-full bg-[#1D72FE] hover:bg-[#1D72FE]/90 active:scale-95 text-white text-xs font-medium transition-all shadow-[0_0_20px_rgba(29,114,254,0.3)] flex items-center justify-center gap-2"
-          >
-            <Brain className="w-4 h-4" />
-            <span>Manage Memories</span>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderGeneralContent = () => (
-    <div className="space-y-8 animate-fade-in">
-      <div>
-        <h3 className="text-xl font-normal text-white mb-1">General & Interaction</h3>
-        <p className="text-sm text-white/50">
-          Configure turn management, sensitivity, and session ergonomics.
-        </p>
-      </div>
-
-      <div className="space-y-4">
-        {/* Interrupt Sensitivity */}
-        <div className="p-4 rounded-2xl bg-[#1E1F22] border border-white/5 space-y-3">
-          <div className="flex items-center justify-between">
             <div>
-              <span className="text-sm font-medium text-white block">Interruption Sensitivity</span>
-              <span className="text-xs text-white/50">
-                How quickly Dora pauses when you speak while she is talking.
-              </span>
+              <span className="text-sm font-medium block">Gemini Studio TTS</span>
+              <p className="text-xs text-white/45">High-fidelity voice synthesis fallback</p>
             </div>
-            <span className="text-xs font-mono uppercase text-[#38BDF8] px-2 py-0.5 rounded-full bg-[#1D72FE]/10 border border-[#1D72FE]/30">
-              {settings.interruptSensitivity}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2 pt-1">
-            {(["low", "medium", "high"] as const).map((sens) => (
-              <button
-                key={sens}
-                type="button"
-                onClick={() => onUpdateSettings({ interruptSensitivity: sens })}
-                className={`py-2 px-3 text-xs rounded-xl border capitalize transition-all ${
-                  settings.interruptSensitivity === sens
-                    ? "bg-[#1D72FE]/20 border-[#1D72FE] text-white font-medium"
-                    : "bg-white/[0.02] border-white/10 text-white/60 hover:text-white hover:bg-white/5"
-                }`}
-              >
-                {sens}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Continuous Listening Toggle */}
-        <div className="p-4 rounded-2xl bg-[#1E1F22] border border-white/5 flex items-center justify-between">
-          <div className="space-y-0.5 pr-4">
-            <span className="text-sm font-medium text-white block">Continuous Listening</span>
-            <span className="text-xs text-white/50 block">
-              Keep the microphone channel active across conversational pauses for hands-free dialogue.
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => onUpdateSettings({ continuousListening: !settings.continuousListening })}
-            className={`w-11 h-6 rounded-full transition-colors relative flex items-center p-0.5 shrink-0 ${
-              settings.continuousListening ? "bg-[#1D72FE]" : "bg-white/20"
-            }`}
-          >
-            <div
-              className={`w-5 h-5 rounded-full bg-white transition-transform ${
-                settings.continuousListening ? "translate-x-5" : "translate-x-0"
-              }`}
-            />
+            {settings.engine === "gemini-tts" && <Check className="w-4 h-4 text-[#38BDF8]" />}
           </button>
         </div>
       </div>
-    </div>
-  );
 
-  const renderAboutContent = () => (
-    <div className="space-y-8 animate-fade-in">
-      <div>
-        <h3 className="text-xl font-normal text-white mb-1">About Dora</h3>
-        <p className="text-sm text-white/50">
-          Conversational intelligence architecture and version details.
-        </p>
-      </div>
+      {/* Voice Activity Detection */}
+      <div className="space-y-4 pt-2 border-t border-white/[0.04]">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
+          Interaction Dynamics
+        </div>
 
-      <div className="p-6 rounded-2xl bg-[#1E1F22] border border-white/5 flex flex-col items-center text-center space-y-4">
-        <DoraSparkle size={48} />
-        <div>
-          <h4 className="text-base font-medium text-white">Dora Voice AI</h4>
-          <p className="text-xs text-white/50 mt-1 max-w-sm">
-            A conversational AI companion designed with multimodal intelligence, emotional responsiveness, and real-time voice streaming.
+        {/* Interruption Sensitivity */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs sm:text-sm">
+            <span className="text-white/80 font-medium">Interruption Sensitivity</span>
+            <span className="font-mono text-[#38BDF8] text-xs">High</span>
+          </div>
+          <input
+            type="range"
+            min="1"
+            max="5"
+            defaultValue="4"
+            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
+          />
+          <p className="text-[11px] text-white/40 leading-relaxed">
+            Higher values allow interrupting Dora immediately when you start speaking.
           </p>
         </div>
 
-        <div className="w-full pt-4 border-t border-white/5 grid grid-cols-2 gap-3 text-left">
-          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-            <span className="text-[11px] text-white/40 block">Live Engine</span>
-            <span className="text-xs font-mono text-white/90">Gemini 2.0 Multimodal</span>
+        {/* Ambient Noise Suppression */}
+        <div className="flex items-center justify-between py-2">
+          <div className="space-y-0.5 pr-4">
+            <span className="text-sm font-medium text-white block">Noise Cancellation</span>
+            <span className="text-xs text-white/45 block">
+              Filter background room chatter and ambient echo
+            </span>
           </div>
-          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-            <span className="text-[11px] text-white/40 block">Audio Engine</span>
-            <span className="text-xs font-mono text-white/90">24kHz PCM / WebAudio</span>
+          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
+            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
           </div>
         </div>
       </div>
     </div>
   );
 
-  const renderActiveContent = () => {
-    switch (activeTab) {
+  // =========================================================================
+  // 3. LANGUAGE & ACCENT INNER SECTION
+  // =========================================================================
+  const renderLanguageContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Language & Accent</h3>
+        <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
+          Configure multilingual voice detection and regional conversational styles.
+        </p>
+      </div>
+
+      {/* Language Options */}
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
+          Primary Language
+        </div>
+
+        <div className="divide-y divide-white/[0.04]">
+          <button
+            type="button"
+            onClick={() => onUpdateSettings({ language: "auto" })}
+            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
+              settings.language === "auto"
+                ? "bg-[#0C1938] text-[#38BDF8]"
+                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
+            }`}
+          >
+            <div>
+              <span className="text-sm font-medium block">Auto (Bangla / English)</span>
+              <p className="text-xs text-white/45">
+                Automatically adapts to English or Banglish as you speak
+              </p>
+            </div>
+            {settings.language === "auto" && <Check className="w-4 h-4 text-[#38BDF8]" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdateSettings({ language: "en" })}
+            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
+              settings.language === "en"
+                ? "bg-[#0C1938] text-[#38BDF8]"
+                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
+            }`}
+          >
+            <div>
+              <span className="text-sm font-medium block">English Only</span>
+              <p className="text-xs text-white/45">Standard English conversational mode</p>
+            </div>
+            {settings.language === "en" && <Check className="w-4 h-4 text-[#38BDF8]" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdateSettings({ language: "bn-en" })}
+            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
+              settings.language === "bn-en"
+                ? "bg-[#0C1938] text-[#38BDF8]"
+                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
+            }`}
+          >
+            <div>
+              <span className="text-sm font-medium block">Everyday Bangla / Banglish</span>
+              <p className="text-xs text-white/45">Natural conversational Bangla & Banglish</p>
+            </div>
+            {settings.language === "bn-en" && <Check className="w-4 h-4 text-[#38BDF8]" />}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // 4. MEMORY & PERSONALIZATION INNER SECTION
+  // =========================================================================
+  const renderMemoryContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Memory & Intelligence</h3>
+        <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
+          Manage how Dora learns and recalls facts about you across conversations.
+        </p>
+      </div>
+
+      {/* Memory Master Toggle */}
+      <div className="flex items-center justify-between py-3 border-b border-white/[0.04]">
+        <div className="space-y-0.5 pr-4">
+          <span className="text-sm font-medium text-white block">Continuous Memory</span>
+          <span className="text-xs text-white/45 block">
+            Dora remembers your preferences and projects automatically
+          </span>
+        </div>
+        <div
+          onClick={() => {
+            const next = !memoryManager.isEnabled();
+            memoryManager.setEnabled(next);
+            setTotalMemories(memoryManager.getTotalCount());
+          }}
+          className={`w-8 h-4.5 rounded-full transition-colors relative shrink-0 p-0.5 cursor-pointer ${
+            memoryManager.isEnabled() ? "bg-[#1D72FE]" : "bg-white/20"
+          }`}
+        >
+          <div
+            className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+              memoryManager.isEnabled() ? "translate-x-3.5" : "translate-x-0"
+            }`}
+          />
+        </div>
+      </div>
+
+      {/* Memory Overview Stats */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-xs sm:text-sm">
+          <span className="text-white/70">Stored Facts</span>
+          <span className="font-mono text-[#38BDF8] font-medium">{totalMemories} items</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onOpenMemory?.();
+          }}
+          className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.12] border border-white/[0.06] text-white text-sm font-medium transition-all"
+        >
+          <div className="flex items-center gap-2.5">
+            <Brain className="w-4 h-4 text-[#38BDF8]" />
+            <span>Open Memory Store</span>
+          </div>
+          <ChevronRight className="w-4 h-4 text-white/40" />
+        </button>
+      </div>
+
+      {/* Privacy Notice */}
+      <div className="pt-2 flex items-center gap-2 text-xs text-white/40">
+        <ShieldCheck className="w-4 h-4 text-[#38BDF8] shrink-0" />
+        <span>Stored securely in local browser memory with complete user ownership.</span>
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // 5. GENERAL & SYSTEM INNER SECTION
+  // =========================================================================
+  const renderGeneralContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">General Preferences</h3>
+        <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
+          Configure ambient effects, sound indicators, and system interactions.
+        </p>
+      </div>
+
+      <div className="divide-y divide-white/[0.04]">
+        {/* Ambient Glow */}
+        <div className="flex items-center justify-between py-3">
+          <div className="space-y-0.5 pr-4">
+            <span className="text-sm font-medium text-white block">Cinematic Ambient Glow</span>
+            <span className="text-xs text-white/45 block">
+              Subtle atmospheric blue gradient during voice calls
+            </span>
+          </div>
+          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
+            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
+          </div>
+        </div>
+
+        {/* Haptic / Tactile Feedback */}
+        <div className="flex items-center justify-between py-3">
+          <div className="space-y-0.5 pr-4">
+            <span className="text-sm font-medium text-white block">Haptic Feedback</span>
+            <span className="text-xs text-white/45 block">
+              Vibrate slightly when speech starts or turn finishes
+            </span>
+          </div>
+          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
+            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
+          </div>
+        </div>
+
+        {/* Auto-sleep on silence */}
+        <div className="flex items-center justify-between py-3">
+          <div className="space-y-0.5 pr-4">
+            <span className="text-sm font-medium text-white block">Auto-pause on Silence</span>
+            <span className="text-xs text-white/45 block">
+              Pause microphone stream after 3 minutes of inactivity
+            </span>
+          </div>
+          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
+            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // 6. ABOUT DORA INNER SECTION
+  // =========================================================================
+  const renderAboutContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
+      <div className="flex items-center gap-3">
+        <DoraSparkle size={28} />
+        <div>
+          <h3 className="text-base font-semibold text-white tracking-tight">Dora AI</h3>
+          <span className="text-xs text-white/45">Version 2.4.0 • Gemini 2.0</span>
+        </div>
+      </div>
+
+      <p className="text-xs sm:text-sm text-white/60 leading-relaxed">
+        Dora is an adaptive, human-like voice companion built with Gemini Live streaming,
+        continuous autonomous memory, and emotional attunement.
+      </p>
+
+      <div className="divide-y divide-white/[0.04] pt-2">
+        <div className="flex items-center justify-between py-2.5 text-xs sm:text-sm">
+          <span className="text-white/60">Core Intelligence</span>
+          <span className="font-mono text-white/90">Gemini 2.0 Flash</span>
+        </div>
+        <div className="flex items-center justify-between py-2.5 text-xs sm:text-sm">
+          <span className="text-white/60">Live Voice Protocol</span>
+          <span className="font-mono text-white/90">WebSocket 16kHz PCM</span>
+        </div>
+        <div className="flex items-center justify-between py-2.5 text-xs sm:text-sm">
+          <span className="text-white/60">Audio Latency</span>
+          <span className="font-mono text-[#38BDF8]">~180ms</span>
+        </div>
+        <div className="flex items-center justify-between py-2.5 text-xs sm:text-sm">
+          <span className="text-white/60">Memory Encryption</span>
+          <span className="font-mono text-white/90">AES Browser Sandbox</span>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Helper to render current section content
+  const renderActiveSectionContent = () => {
+    switch (activeSection) {
       case "voice":
         return renderVoiceContent();
+      case "speech":
+        return renderSpeechContent();
       case "language":
         return renderLanguageContent();
       case "memory":
@@ -544,310 +771,191 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         return renderGeneralContent();
       case "about":
         return renderAboutContent();
+      default:
+        return renderMainSettingsList();
     }
   };
-
-  // -------------------------------------------------------------------------
-  // MOBILE ROOT LIST VIEW
-  // -------------------------------------------------------------------------
-  const renderMobileRootList = () => (
-    <div className="p-4 space-y-6">
-      {/* Group: VOICE */}
-      <div className="space-y-2">
-        <span className="text-[11px] font-semibold tracking-wider text-white/40 uppercase px-2">
-          Voice
-        </span>
-        <div className="rounded-2xl bg-[#1E1F22] border border-white/5 overflow-hidden divide-y divide-white/5">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("voice");
-              setMobileViewingDetail(true);
-            }}
-            className="w-full p-4 flex items-center justify-between hover:bg-[#282A2F] transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-[#1D72FE]/15 text-[#38BDF8] flex items-center justify-center">
-                <Mic className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-sm font-medium text-white block">Voice & conversation</span>
-                <span className="text-xs text-white/50 block">Personality, speed, silence threshold</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5 text-white/40">
-              <span className="text-xs text-white/60 font-mono">
-                {activePreset ? activePreset.name : `${settings.voiceName} (${settings.speakingRate}×)`}
-              </span>
-              <ChevronRight className="w-4 h-4" />
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("voice");
-              setMobileViewingDetail(true);
-            }}
-            className="w-full p-4 flex items-center justify-between hover:bg-[#282A2F] transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-white/5 text-white/70 flex items-center justify-center">
-                <Radio className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-sm font-medium text-white block">Speech engine</span>
-                <span className="text-xs text-white/50 block">{getEngineLabel()}</span>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-white/40" />
-          </button>
-        </div>
-      </div>
-
-      {/* Group: LANGUAGE */}
-      <div className="space-y-2">
-        <span className="text-[11px] font-semibold tracking-wider text-white/40 uppercase px-2">
-          Language
-        </span>
-        <div className="rounded-2xl bg-[#1E1F22] border border-white/5 overflow-hidden">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("language");
-              setMobileViewingDetail(true);
-            }}
-            className="w-full p-4 flex items-center justify-between hover:bg-[#282A2F] transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-cyan-500/15 text-cyan-400 flex items-center justify-center">
-                <Globe className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-sm font-medium text-white block">Language & accent</span>
-                <span className="text-xs text-white/50 block">{getLanguageLabel()}</span>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-white/40" />
-          </button>
-        </div>
-      </div>
-
-      {/* Group: MEMORY */}
-      <div className="space-y-2">
-        <span className="text-[11px] font-semibold tracking-wider text-white/40 uppercase px-2">
-          Memory
-        </span>
-        <div className="rounded-2xl bg-[#1E1F22] border border-white/5 overflow-hidden">
-          <button
-            type="button"
-            onClick={() => {
-              if (onOpenMemory) {
-                onClose();
-                onOpenMemory();
-              } else {
-                setActiveTab("memory");
-                setMobileViewingDetail(true);
-              }
-            }}
-            className="w-full p-4 flex items-center justify-between hover:bg-[#282A2F] transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-purple-500/15 text-purple-400 flex items-center justify-center">
-                <Brain className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-sm font-medium text-white block">Memory</span>
-                <span className="text-xs text-white/50 block">Manage what Dora remembers</span>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-white/40" />
-          </button>
-        </div>
-      </div>
-
-      {/* Group: GENERAL & ABOUT */}
-      <div className="space-y-2">
-        <span className="text-[11px] font-semibold tracking-wider text-white/40 uppercase px-2">
-          General & About
-        </span>
-        <div className="rounded-2xl bg-[#1E1F22] border border-white/5 overflow-hidden divide-y divide-white/5">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("general");
-              setMobileViewingDetail(true);
-            }}
-            className="w-full p-4 flex items-center justify-between hover:bg-[#282A2F] transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-white/5 text-white/70 flex items-center justify-center">
-                <Sliders className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-sm font-medium text-white block">General</span>
-                <span className="text-xs text-white/50 block">Sensitivity & ergonomics</span>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-white/40" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("about");
-              setMobileViewingDetail(true);
-            }}
-            className="w-full p-4 flex items-center justify-between hover:bg-[#282A2F] transition-colors text-left"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-white/5 text-white/70 flex items-center justify-center">
-                <Info className="w-4 h-4" />
-              </div>
-              <div>
-                <span className="text-sm font-medium text-white block">About Dora</span>
-                <span className="text-xs text-white/50 block">Model & system details</span>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-white/40" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <AnimatePresence>
       <div
         id="dora-settings-overlay"
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
       >
         {/* ================================================================ */}
-        {/* MOBILE FULL-SCREEN PAGE (< lg)                                   */}
+        {/* MOBILE FULL-SCREEN / ADAPTIVE CONTAINER (< lg)                   */}
         {/* ================================================================ */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 20 }}
-          className="lg:hidden w-full h-full bg-[#131314] flex flex-col overflow-hidden text-white"
+          exit={{ opacity: 0, y: 15 }}
+          transition={{ duration: 0.18 }}
+          className="lg:hidden w-full h-full bg-[#000000] flex flex-col text-[#E3E3E3] font-sans select-none overflow-hidden"
         >
           {/* Mobile Top Header Bar */}
-          <div className="px-4 py-3.5 border-b border-white/5 flex items-center justify-between shrink-0 bg-[#131314]">
-            {mobileViewingDetail ? (
+          <div className="px-4 py-3.5 border-b border-white/[0.04] flex items-center justify-between shrink-0 bg-[#000000]">
+            {activeSection !== "main" ? (
               <button
                 type="button"
-                onClick={() => setMobileViewingDetail(false)}
-                className="flex items-center gap-1 text-sm text-white/80 hover:text-white -ml-1 p-1 rounded-lg"
+                onClick={() => setActiveSection("main")}
+                className="flex items-center gap-1.5 text-sm font-medium text-white/80 hover:text-white -ml-1 p-1 rounded-lg"
               >
-                <ChevronLeft className="w-5 h-5" />
+                <ChevronLeft className="w-4 h-4" />
                 <span>Settings</span>
               </button>
             ) : (
-              <h2 className="text-lg font-medium text-white">Settings</h2>
+              <div className="flex items-center gap-2">
+                <DoraSparkle size={18} />
+                <span className="text-sm font-semibold text-white">Settings</span>
+              </div>
             )}
 
             <button
               id="btn-close-settings-mobile"
               type="button"
               onClick={onClose}
-              className="p-2 rounded-full text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+              className="p-1.5 rounded-full text-white/60 hover:text-white hover:bg-white/[0.08] transition-colors"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
           {/* Mobile Body Content */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
-            {mobileViewingDetail ? (
-              <div className="p-4">{renderActiveContent()}</div>
-            ) : (
-              renderMobileRootList()
-            )}
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-5">
+            {renderActiveSectionContent()}
           </div>
         </motion.div>
 
         {/* ================================================================ */}
-        {/* DESKTOP RESPONSIVE MODAL CONTAINER (>= lg)                        */}
+        {/* DESKTOP RESPONSIVE TWO-PANE SETTINGS DIALOG (>= lg)               */}
         {/* ================================================================ */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.96 }}
+          initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.96 }}
-          className="hidden lg:flex w-full max-w-4xl h-[85vh] max-h-[760px] bg-[#131314] rounded-3xl border border-white/10 shadow-2xl overflow-hidden text-white"
+          exit={{ opacity: 0, scale: 0.98 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+          className="hidden lg:flex w-full max-w-3xl h-[75vh] max-h-[640px] bg-[#05070B] rounded-3xl border border-white/[0.06] shadow-[0_24px_64px_rgba(0,0,0,0.95)] overflow-hidden text-[#E3E3E3] font-sans select-none"
         >
-          {/* Left Navigation Sidebar */}
-          <aside className="w-72 shrink-0 bg-[#18191C]/80 border-r border-white/5 p-5 flex flex-col justify-between">
-            <div className="space-y-6">
+          {/* Left Navigation Menu */}
+          <aside className="w-64 shrink-0 bg-[#000000] border-r border-white/[0.04] p-4 flex flex-col justify-between">
+            <div className="space-y-4">
               {/* Header */}
-              <div className="flex items-center gap-2.5 px-2">
-                <DoraSparkle size={24} />
-                <h2 className="text-lg font-medium text-white tracking-tight">Settings</h2>
+              <div className="flex items-center gap-2.5 px-2 pt-1">
+                <DoraSparkle size={20} />
+                <h2 className="text-base font-semibold text-white tracking-tight">Settings</h2>
               </div>
 
               {/* Navigation Items */}
-              <nav className="space-y-1">
-                {[
-                  { id: "voice", label: "Voice & Conversation", icon: Mic },
-                  { id: "language", label: "Language & Accent", icon: Globe },
-                  { id: "memory", label: "Memory", icon: Brain },
-                  { id: "general", label: "General", icon: Sliders },
-                  { id: "about", label: "About Dora", icon: Info },
-                ].map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeTab === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setActiveTab(item.id as SettingsTab)}
-                      className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all text-left ${
-                        isActive
-                          ? "bg-[#1E1F22] text-white shadow-sm border border-white/5"
-                          : "text-white/60 hover:text-white hover:bg-white/[0.04]"
-                      }`}
-                    >
-                      <Icon
-                        className={`w-4 h-4 ${
-                          isActive ? "text-[#38BDF8]" : "text-white/50"
-                        }`}
-                      />
-                      <span>{item.label}</span>
-                    </button>
-                  );
-                })}
+              <nav className="space-y-0.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveSection("voice")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
+                    activeSection === "voice"
+                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
+                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <Mic className="w-4 h-4 shrink-0" />
+                  <span>Voice & personality</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSection("speech")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
+                    activeSection === "speech"
+                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
+                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <Radio className="w-4 h-4 shrink-0" />
+                  <span>Speech engine</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSection("language")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
+                    activeSection === "language"
+                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
+                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <Globe className="w-4 h-4 shrink-0" />
+                  <span>Language & accent</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSection("memory")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
+                    activeSection === "memory"
+                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
+                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <Brain className="w-4 h-4 shrink-0" />
+                  <span>Memory & intelligence</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSection("general")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
+                    activeSection === "general"
+                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
+                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <Sliders className="w-4 h-4 shrink-0" />
+                  <span>General preferences</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSection("about")}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
+                    activeSection === "about"
+                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
+                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <Info className="w-4 h-4 shrink-0" />
+                  <span>About Dora</span>
+                </button>
               </nav>
             </div>
 
-            {/* Bottom Version Pill */}
-            <div className="px-2 py-3 border-t border-white/5">
-              <div className="flex items-center justify-between text-xs text-white/40">
-                <span>Dora AI Engine</span>
-                <span className="font-mono">v2.4.0</span>
-              </div>
+            {/* Bottom Status */}
+            <div className="px-2 py-2 text-[11px] text-white/35 font-mono border-t border-white/[0.04]">
+              Gemini Live Connected
             </div>
           </aside>
 
           {/* Right Detail Pane */}
-          <main className="flex-1 bg-[#131314] flex flex-col overflow-hidden">
-            {/* Top Bar with Close Button */}
-            <div className="px-8 py-4 border-b border-white/5 flex items-center justify-between shrink-0">
+          <main className="flex-1 bg-[#05070B] flex flex-col overflow-hidden">
+            {/* Top Close Bar */}
+            <div className="px-7 py-4 border-b border-white/[0.04] flex items-center justify-between shrink-0">
               <div className="text-xs text-white/40 uppercase tracking-wider font-mono">
-                Settings / {activeTab}
+                Settings / {activeSection}
               </div>
               <button
                 id="btn-close-settings-desktop"
                 type="button"
                 onClick={onClose}
-                className="p-1.5 rounded-full text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-                title="Close settings (Esc)"
+                className="p-1.5 rounded-full text-white/40 hover:text-white hover:bg-white/[0.08] transition-colors"
+                title="Close (Esc)"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Content Area */}
-            <div className="flex-1 p-8 overflow-y-auto custom-scrollbar">
-              <div className="max-w-2xl">{renderActiveContent()}</div>
+            {/* Content Pane */}
+            <div className="flex-1 p-7 overflow-y-auto custom-scrollbar">
+              <div className="max-w-xl">
+                {activeSection === "main" ? renderVoiceContent() : renderActiveSectionContent()}
+              </div>
             </div>
           </main>
         </motion.div>

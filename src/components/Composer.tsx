@@ -103,7 +103,7 @@ export const Composer: React.FC<ComposerProps> = ({
         {/* Floating Rounded Pill Bar */}
         <div
           id="dora-input-container"
-          className="relative w-full dora-composer-pill rounded-full p-1.5 sm:p-2 flex flex-col shadow-[0_12px_40px_rgba(0,0,0,0.65)] transition-all"
+          className="relative w-full dora-composer-pill rounded-full p-2 sm:p-2.5 flex flex-col shadow-[0_12px_40px_rgba(0,0,0,0.7)] transition-all min-h-[58px] sm:min-h-[64px]"
         >
           {/* Staged Attachment Preview inside / above pill input */}
           {pendingAttachment && (
@@ -121,21 +121,21 @@ export const Composer: React.FC<ComposerProps> = ({
               onClick={() => setIsActionMenuOpen((prev) => !prev)}
               aria-label="Add attachment or action"
               title="Add attachment"
-              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shrink-0 transition-colors focus:outline-none ${
+              className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shrink-0 transition-colors focus:outline-none ${
                 isActionMenuOpen || isDeepThinkActive
                   ? "bg-[#1D72FE]/20 text-[#38BDF8]"
                   : "text-white/70 hover:text-white hover:bg-white/[0.08]"
               }`}
             >
               <Plus
-                className={`w-5 h-5 transition-transform duration-150 ${
+                className={`w-5 h-5 sm:w-6 sm:h-6 transition-transform duration-150 ${
                   isActionMenuOpen ? "rotate-45" : ""
                 }`}
               />
             </button>
 
             {/* Middle: Text Input Field */}
-            <form onSubmit={onSubmit} className="flex-1 px-2 sm:px-3 min-w-0">
+            <form onSubmit={onSubmit} className="flex-1 px-3 sm:px-4 min-w-0">
               <input
                 ref={textInputRef}
                 type="text"
@@ -149,27 +149,27 @@ export const Composer: React.FC<ComposerProps> = ({
                     : "Ask Dora..."
                 }
                 disabled={state === "thinking"}
-                className="w-full bg-transparent text-sm sm:text-base text-white placeholder-white/40 focus:outline-none font-normal"
+                className="w-full bg-transparent text-base sm:text-lg text-white placeholder-white/40 focus:outline-none font-normal"
               />
             </form>
 
             {/* Right Controls: Microphone & Live Voice Button / Send */}
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
               {/* Optional Microphone Dictation Button */}
               <button
                 type="button"
                 onClick={onToggleCall}
                 title={isCallActive ? "Mute / Disconnect voice" : "Voice input"}
-                className={`p-2 rounded-full transition-colors ${
+                className={`p-2.5 rounded-full transition-colors ${
                   isCallActive
                     ? "text-[#38BDF8] bg-[#1D72FE]/15"
                     : "text-white/60 hover:text-white hover:bg-white/[0.08]"
                 }`}
               >
                 {isMuted && isCallActive ? (
-                  <MicOff className="w-5 h-5 text-red-400" />
+                  <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-red-400" />
                 ) : (
-                  <Mic className="w-5 h-5" />
+                  <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
                 )}
               </button>
 
@@ -181,9 +181,9 @@ export const Composer: React.FC<ComposerProps> = ({
                   onClick={(e) => onSubmit(e)}
                   title="Send message"
                   aria-label="Send message"
-                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#1D72FE] hover:bg-[#155FD6] text-white flex items-center justify-center shadow-[0_0_12px_rgba(29,114,254,0.4)] transition-all shrink-0"
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-[#1D72FE] hover:bg-[#155FD6] text-white flex items-center justify-center shadow-[0_0_14px_rgba(29,114,254,0.45)] transition-all shrink-0"
                 >
-                  <Send className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                  <Send className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
                 </button>
               ) : (
                 <button
@@ -192,13 +192,13 @@ export const Composer: React.FC<ComposerProps> = ({
                   onClick={onToggleCall}
                   title={isCallActive ? "End live conversation" : "Start live voice conversation"}
                   aria-label="Live Voice Conversation"
-                  className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shrink-0 transition-all shadow-[0_0_16px_rgba(29,114,254,0.4)] ${
+                  className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shrink-0 transition-all shadow-[0_0_18px_rgba(29,114,254,0.45)] ${
                     isCallActive
                       ? "bg-[#1D72FE] text-white animate-pulse"
                       : "bg-[#1D72FE] hover:bg-[#155FD6] text-white transform hover:scale-105 active:scale-95"
                   }`}
                 >
-                  <AudioLines className="w-5 h-5" />
+                  <AudioLines className="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
               )}
             </div>

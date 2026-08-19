@@ -663,7 +663,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
     let isConnecting = false;
     let activeScreenFrame: string | null = null;
 
-    async function initLiveSession(voiceName = "Aoede", memoryContext = "") {
+    async function initLiveSession(voiceName = "Aoede", memoryContext = "", historyContext = "") {
       if (liveSession) {
         clientWs.send(JSON.stringify({ type: "session_ready" }));
         return;
@@ -679,6 +679,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
       const effectiveSystemInstruction = [
         DORA_SYSTEM_INSTRUCTION,
         memoryContext ? `\n\n${memoryContext}` : "",
+        historyContext ? `\n\n[RECENT ACTIVE CONVERSATION CONTEXT]\n${historyContext}\n(Continue seamlessly from the above context in this voice session)` : "",
       ]
         .filter(Boolean)
         .join("\n");
@@ -804,7 +805,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
         const data = JSON.parse(raw.toString());
 
         if (data.type === "start_session") {
-          await initLiveSession(data.voiceName || "Aoede", data.memoryContext || "");
+          await initLiveSession(data.voiceName || "Aoede", data.memoryContext || "", data.historyContext || "");
         } else if (data.type === "screen_frame" && data.frame) {
           activeScreenFrame = data.frame;
           if (liveSession) {
@@ -825,7 +826,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
           });
         } else if (data.type === "text_input") {
           if (!liveSession) {
-            await initLiveSession(data.voiceName || "Aoede", data.memoryContext || "");
+            await initLiveSession(data.voiceName || "Aoede", data.memoryContext || "", data.historyContext || "");
           }
           if (liveSession) {
             let processedText = data.text;

@@ -77,6 +77,8 @@ export class DoraService {
     return this.latestScreenFrame;
   }
 
+  private lastHistoryContext: string = "";
+
   /**
    * Returns whether the Live WebSocket session is connected and ready
    */
@@ -90,12 +92,14 @@ export class DoraService {
   public connectLiveStream(
     callbacks: LiveStreamCallbacks,
     voiceName = "Kore",
-    memoryContext = ""
+    memoryContext = "",
+    historyContext = ""
   ) {
     this.wsCallbacks = callbacks;
     this.currentVoiceName = voiceName;
     const effectiveMemoryContext = memoryContext || MemoryManager.getInstance().buildContext("");
     this.lastMemoryContext = effectiveMemoryContext;
+    this.lastHistoryContext = historyContext;
 
     // If socket is already open and ready, notify callback and return
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -149,6 +153,7 @@ export class DoraService {
               type: "start_session",
               voiceName: this.currentVoiceName,
               memoryContext: contextToSend,
+              historyContext: this.lastHistoryContext,
             })
           );
         } catch (err) {

@@ -1,6 +1,7 @@
 import React from "react";
-import { X, Sparkles, Mic, Brain, Zap, Globe, MessageSquareHeart, ShieldCheck } from "lucide-react";
+import { X, Mic, Brain, Zap, Globe, MessageSquareHeart, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { DoraSparkle } from "./DoraSparkle";
 
 interface SkillsModalProps {
   isOpen: boolean;
@@ -11,38 +12,38 @@ const SKILLS = [
   {
     icon: Mic,
     title: "Natural Female Voice Engine",
-    desc: "Fluid, low-latency conversational audio with human-like breathing, cadence, and interruption detection.",
-    tag: "Gemini Live",
+    desc: "Low-latency streaming audio with human-like breathing, cadence, and interruption detection.",
+    protocol: "Gemini Live",
   },
   {
     icon: Brain,
-    title: "Continuous Memory & Learning",
-    desc: "Implicitly and explicitly remembers your preferences, projects, routines, and personal facts across sessions.",
-    tag: "Autonomous",
+    title: "Continuous Autonomous Memory",
+    desc: "Recalls preferences, projects, routines, and personal facts across all conversations.",
+    protocol: "Long-term Memory",
   },
   {
     icon: MessageSquareHeart,
     title: "Emotional Attunement",
-    desc: "Dynamically adapts tone and empathy in real-time based on conversational sentiment and topic.",
-    tag: "Adaptive",
+    desc: "Dynamically adapts conversational warmth and cadence based on emotional context.",
+    protocol: "Adaptive",
   },
   {
     icon: Zap,
-    title: "Real-time Interruption",
-    desc: "Stop and redirect Dora anytime mid-sentence just like a real-life voice conversation.",
-    tag: "Zero Latency",
+    title: "Instant Interruption",
+    desc: "Seamlessly interrupt and redirect Dora mid-turn with natural voice detection.",
+    protocol: "Real-time",
   },
   {
     icon: Globe,
-    title: "Bilingual Dialogue (Bangla & English)",
-    desc: "Full support for natural English and everyday Banglish / Bengali conversational speech.",
-    tag: "Multilingual",
+    title: "Bilingual Intelligence (Bangla & English)",
+    desc: "Fluid understanding of English, everyday Bengali, and conversational Banglish.",
+    protocol: "Multilingual",
   },
   {
     icon: ShieldCheck,
-    title: "Private & Secure Storage",
-    desc: "All personal memories and interaction contexts are stored securely with granular user controls.",
-    tag: "Encrypted",
+    title: "Private & Secure Architecture",
+    desc: "All interaction data and stored memories remain locally sandboxed with full user ownership.",
+    protocol: "Encrypted",
   },
 ];
 
@@ -53,52 +54,62 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ isOpen, onClose }) => 
     <AnimatePresence>
       <div
         id="dora-skills-modal"
-        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md"
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
       >
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 15 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 15 }}
-          className="relative w-full max-w-xl bg-[#070C18]/95 border border-[#2F8CFF]/20 backdrop-blur-2xl rounded-3xl p-6 shadow-[0_0_50px_rgba(22,119,255,0.15)] text-white space-y-6 max-h-[90vh] overflow-y-auto custom-scrollbar"
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.98 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+          className="relative w-full max-w-lg bg-[#05070B] border border-white/[0.06] rounded-3xl p-5 sm:p-6 shadow-[0_24px_64px_rgba(0,0,0,0.95)] text-[#E3E3E3] font-sans select-none space-y-4 max-h-[85vh] overflow-y-auto custom-scrollbar"
         >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-white/10 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-2xl bg-[#1677FF]/15 border border-[#2F8CFF]/30 text-[#2F8CFF] shadow-[0_0_15px_rgba(22,119,255,0.3)]">
-                <Sparkles className="w-5 h-5" />
-              </div>
+          <div className="flex items-center justify-between border-b border-white/[0.04] pb-3.5">
+            <div className="flex items-center gap-2.5">
+              <DoraSparkle size={20} />
               <div>
-                <h2 className="text-lg font-semibold tracking-wide text-white">Dora Skills & Capabilities</h2>
-                <p className="text-xs text-[#9AA4B5] font-normal">Core intelligent systems powering your AI companion</p>
+                <h2 className="text-base font-semibold text-white tracking-tight">
+                  Skills & Intelligence
+                </h2>
+                <p className="text-xs text-white/45">
+                  Core intelligent capabilities powering Dora
+                </p>
               </div>
             </div>
             <button
+              type="button"
               onClick={onClose}
-              className="p-2 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+              className="p-1.5 rounded-full hover:bg-white/[0.08] text-white/40 hover:text-white transition-colors"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Grid of skills */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Clean Standalone Rows */}
+          <div className="divide-y divide-white/[0.04]">
             {SKILLS.map((skill, i) => {
               const Icon = skill.icon;
               return (
                 <div
                   key={i}
-                  className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.07] hover:border-[#2F8CFF]/40 hover:bg-[#1677FF]/[0.05] transition-all group"
+                  className="py-3 px-1 flex items-start justify-between gap-3 text-left group"
                 >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="p-2 rounded-xl bg-white/5 group-hover:bg-[#1677FF]/20 text-[#2F8CFF] transition-colors">
-                      <Icon className="w-4 h-4" />
+                  <div className="flex items-start gap-3.5">
+                    <Icon className="w-4 h-4 text-white/60 group-hover:text-[#38BDF8] transition-colors mt-0.5 shrink-0" />
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-white block">
+                          {skill.title}
+                        </span>
+                      </div>
+                      <p className="text-xs text-white/45 leading-relaxed">
+                        {skill.desc}
+                      </p>
                     </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1677FF]/10 text-[#48A8FF] border border-[#2F8CFF]/20 font-medium">
-                      {skill.tag}
-                    </span>
                   </div>
-                  <h3 className="text-sm font-medium text-white mb-1">{skill.title}</h3>
-                  <p className="text-xs text-[#9AA4B5] leading-relaxed">{skill.desc}</p>
+                  <span className="text-[10px] font-mono text-white/30 shrink-0 pt-0.5">
+                    {skill.protocol}
+                  </span>
                 </div>
               );
             })}
