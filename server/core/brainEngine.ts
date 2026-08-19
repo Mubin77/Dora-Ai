@@ -61,6 +61,8 @@ import {
   MemorySource,
   MemoryStatus as MemoryRecordStatus,
 } from "./memoryTypes";
+import { memoryRetrievalEngine } from "./memoryRetrievalEngine";
+import { MemoryRetrievalAnalysis } from "./memoryRetrievalTypes";
 
 export * from "./contextTypes";
 export * from "./contextStore";
@@ -69,11 +71,13 @@ export * from "./reasoningTypes";
 export * from "./planningTypes";
 export * from "./verificationTypes";
 export * from "./memoryTypes";
+export * from "./memoryRetrievalTypes";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
 export { planningEngine } from "./planningEngine";
 export { verificationEngine } from "./verificationEngine";
 export { memoryDecisionEngine } from "./memoryDecisionEngine";
+export { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
 
@@ -97,6 +101,7 @@ export interface BrainAnalysis {
   planningAnalysis: PlanningAnalysis;
   verificationAnalysis?: VerificationAnalysis;
   memoryDecision?: MemoryDecision;
+  memoryRetrieval?: MemoryRetrievalAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -147,7 +152,8 @@ export class BrainEngine {
     message: string,
     history: ConversationTurn[] = [],
     existingContext?: ConversationContext,
-    sessionId: string = "default"
+    sessionId: string = "default",
+    memories: MemoryRecord[] = []
   ): BrainAnalysis {
     const trimmed = (message || "").trim();
     const recentHistory = Array.isArray(history) ? history.slice(-12) : [];
@@ -293,10 +299,26 @@ export class BrainEngine {
       context: contextResult.context,
       intent: structuredIntent,
       reasoning: reasoningAnalysis,
+      existingMemories: memories,
     });
 
     if (memoryDecision.directive && !promptDirectives.includes(memoryDecision.directive)) {
       promptDirectives.push(memoryDecision.directive);
+    }
+
+    // Step 7 / Phase 2: Long-Term Memory Retrieval & Recall Engine
+    const memoryRetrieval = memoryRetrievalEngine.retrieve({
+      message,
+      context: contextResult.context,
+      intent: structuredIntent,
+      memories,
+      userId: sessionId,
+    });
+
+    for (const d of memoryRetrieval.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
     }
 
     // Calibrated unified confidence score from Verification Engine
@@ -309,6 +331,7 @@ export class BrainEngine {
       planningAnalysis,
       verificationAnalysis,
       memoryDecision,
+      memoryRetrieval,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,
