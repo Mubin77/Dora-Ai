@@ -275,6 +275,14 @@ export class ContextEngine {
    * Detects domain matches from message text
    */
   private detectDomain(text: string): TopicDomainDefinition | null {
+    // Strip dismissed topics (e.g. "forget the laptop", "leave the phone", "bad dao laptop")
+    const cleanedText = text.replace(/\b(?:forget\s+(?:about\s+)?(?:the\s+)?|leave\s+(?:the\s+)?|bad\s+dao\s+|never\s*mind\s+)[a-z0-9\s_-]+/gi, " ");
+
+    for (const def of this.domainDefinitions) {
+      if (def.keywords.test(cleanedText)) {
+        return def;
+      }
+    }
     for (const def of this.domainDefinitions) {
       if (def.keywords.test(text)) {
         return def;
@@ -302,6 +310,7 @@ export class ContextEngine {
     const priorTopic = context.activeTopic;
     const priorTask = context.currentTask;
     const priorGoal = context.userGoal;
+    const isExplicitDismissal = /\b(?:forget\s+(?:about\s+)?(?:the\s+)?|leave\s+(?:the\s+)?|bad\s+dao|onno\s*kotha|never\s*mind)[a-z0-9\s_-]*/i.test(text);
 
     // If no prior topic existed, initialize with detected domain or generic classification
     if (!priorTopic) {
@@ -329,8 +338,9 @@ export class ContextEngine {
     if (detectedDomain && detectedDomain.topic !== priorTopic) {
       // Check if this is a sub-topic refinement (e.g. "RTX 4060" inside "gaming laptop" or "laptop recommendation")
       const isCompatibleRefinement =
-        (priorTopic.includes("laptop") && (detectedDomain.topic.includes("hardware") || detectedDomain.topic.includes("laptop"))) ||
-        (priorTopic.includes("programming") && detectedDomain.topic.includes("programming"));
+        !isExplicitDismissal &&
+        ((priorTopic.includes("laptop") && (detectedDomain.topic.includes("hardware") || detectedDomain.topic.includes("laptop"))) ||
+        (priorTopic.includes("programming") && detectedDomain.topic.includes("programming")));
 
       if (isCompatibleRefinement) {
         reasoningTrace.push(`Refinement within domain "${priorTopic}" via sub-feature "${detectedDomain.topic}"`);

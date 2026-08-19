@@ -7,6 +7,7 @@
  */
 
 import { ConversationContext, InactiveContextSnapshot } from "./contextTypes";
+import { PlanStatus } from "./planningTypes";
 
 export class ContextStore {
   private static instance: ContextStore;
@@ -109,11 +110,17 @@ export class ContextStore {
       ...context.topicHistory,
     ].slice(0, 10);
 
+    const updatedArchivedPlans = context.activeTaskPlan
+      ? [{ ...context.activeTaskPlan, status: (context.activeTaskPlan.status === "COMPLETED" ? "COMPLETED" : "CANCELLED") as PlanStatus, updatedAt: Date.now() }, ...(context.archivedPlans || [])]
+      : (context.archivedPlans || []);
+
     return {
       ...context,
       activeTopic: null,
       currentTask: null,
       userGoal: null,
+      activeTaskPlan: undefined,
+      archivedPlans: updatedArchivedPlans,
       // Archive entities: mark existing entities as archived
       entities: context.entities.map((e) => ({ ...e, status: "archived" })),
       // Invalidate current constraints for the new topic

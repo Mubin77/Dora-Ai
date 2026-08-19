@@ -71,6 +71,7 @@ export interface ToolRequirement {
   query?: string;
   reason: string;
   isMandatory: boolean;
+  priority?: "REQUIRED" | "OPTIONAL" | "HIGH" | "NORMAL";
 }
 
 export interface ReasoningAnalysis {

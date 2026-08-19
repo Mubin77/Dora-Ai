@@ -30,13 +30,27 @@ import {
   StructuredReasoningConstraint,
   ToolRequirement,
 } from "./reasoningTypes";
+import { planningEngine } from "./planningEngine";
+import {
+  PlanningAnalysis,
+  TaskPlan,
+  PlanStep,
+  PlanStatus,
+  PlanPriority,
+  PlanComplexity,
+  ExecutionStrategy,
+  FailureStrategy,
+  PlanActionType,
+} from "./planningTypes";
 
 export * from "./contextTypes";
 export * from "./contextStore";
 export * from "./intentTypes";
 export * from "./reasoningTypes";
+export * from "./planningTypes";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
+export { planningEngine } from "./planningEngine";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
 
@@ -57,6 +71,9 @@ export interface BrainAnalysis {
   intent: BrainIntent;
   structuredIntent: StructuredIntent;
   reasoningAnalysis: ReasoningAnalysis;
+  planningAnalysis: PlanningAnalysis;
+  activeTaskPlan?: TaskPlan;
+  requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
   confidence: number;
   contextReference: ContextualReference;
@@ -156,6 +173,18 @@ export class BrainEngine {
       recentHistory
     );
 
+    // 4. Run Structured Planning & Task Orchestration Engine
+    const planningAnalysis = planningEngine.generatePlan(
+      trimmed,
+      structuredIntent,
+      reasoningAnalysis,
+      contextResult.context,
+      recentHistory
+    );
+
+    // Save updated active context (including activeTaskPlan) to persistent session store
+    contextStore.save(sessionId, contextResult.context);
+
     const isCorrection = structuredIntent.primaryIntent === "CORRECTION";
     const refMatches = trimmed.match(this.referenceRegex);
     const hasReference = Boolean(refMatches) || contextResult.resolvedReferences.length > 0;
@@ -188,12 +217,13 @@ export class BrainEngine {
       structuredIntent.primaryIntent === "REAL_TIME_INFORMATION" ||
       contextResult.context.currentTask === "realtime_information" ||
       reasoningAnalysis.reasoningType === "TOOL_ASSISTED_REASONING" ||
-      reasoningAnalysis.toolRequirements.some(t => t.toolType === "weather" || t.toolType === "search")
+      reasoningAnalysis.toolRequirements.some(t => t.toolType === "weather" || t.toolType === "search") ||
+      (planningAnalysis.plan?.toolRequirements && planningAnalysis.plan.toolRequirements.length > 0)
     ) {
       knowledgeType = "DYNAMIC";
     }
 
-    // Combine prompt directives (Intent + Context + Reasoning)
+    // Combine prompt directives (Intent + Context + Reasoning + Planning)
     const promptDirectives: string[] = [];
     for (const d of structuredIntent.suggestedDirectives) {
       if (!promptDirectives.includes(d)) {
@@ -210,6 +240,11 @@ export class BrainEngine {
         promptDirectives.push(d);
       }
     }
+    for (const d of planningAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
 
     // Unified confidence score
     let confidence = Math.min(structuredIntent.intentConfidence, reasoningAnalysis.reasoningConfidence);
@@ -221,13 +256,16 @@ export class BrainEngine {
       intent: structuredIntent.primaryIntent,
       structuredIntent,
       reasoningAnalysis,
+      planningAnalysis,
+      activeTaskPlan: planningAnalysis.plan,
+      requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,
       confidence,
       contextReference: contextRef,
       reasoningRequired: reasoningAnalysis.reasoningRequired,
       requiresClarification: isAmbiguous || structuredIntent.requiresClarification || reasoningAnalysis.requiresClarification,
       ambiguityReason: structuredIntent.ambiguityReason || (reasoningAnalysis.missingInformation.length > 0 ? `Missing: ${reasoningAnalysis.missingInformation.join(", ")}` : undefined),
-      clarificationPrompt: reasoningAnalysis.clarificationPrompt,
+      clarificationPrompt: reasoningAnalysis.clarificationPrompt || planningAnalysis.plan?.clarificationRequirement,
       promptDirectives,
       activeContext: contextResult.context,
       context: contextResult.context,

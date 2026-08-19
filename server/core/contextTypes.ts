@@ -9,6 +9,7 @@
  */
 
 import { BrainIntent } from "./intentTypes";
+import { TaskPlan } from "./planningTypes";
 export * from "./intentTypes";
 
 export interface ConversationTurn {
@@ -129,6 +130,8 @@ export interface ConversationContext {
   turnsCount: number;
   isTopicSwitched: boolean;
   isAmbiguousReference: boolean;
+  activeTaskPlan?: TaskPlan;
+  archivedPlans?: TaskPlan[];
   archivedContexts: InactiveContextSnapshot[];
   topicHistory: Array<{ topic: string; endedAtTurn: number }>;
 }
