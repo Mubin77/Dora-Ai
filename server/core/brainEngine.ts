@@ -42,15 +42,28 @@ import {
   FailureStrategy,
   PlanActionType,
 } from "./planningTypes";
+import { verificationEngine } from "./verificationEngine";
+import {
+  VerificationAnalysis,
+  VerificationStatus,
+  ClaimVerification,
+  Contradiction,
+  CorrectionAction,
+  ConfidenceAssessment,
+  EvidenceAssessment,
+  ConstraintCompliance,
+} from "./verificationTypes";
 
 export * from "./contextTypes";
 export * from "./contextStore";
 export * from "./intentTypes";
 export * from "./reasoningTypes";
 export * from "./planningTypes";
+export * from "./verificationTypes";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
 export { planningEngine } from "./planningEngine";
+export { verificationEngine } from "./verificationEngine";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
 
@@ -72,6 +85,7 @@ export interface BrainAnalysis {
   structuredIntent: StructuredIntent;
   reasoningAnalysis: ReasoningAnalysis;
   planningAnalysis: PlanningAnalysis;
+  verificationAnalysis?: VerificationAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -182,6 +196,15 @@ export class BrainEngine {
       recentHistory
     );
 
+    // 5. Run Verification, Confidence Calibration & Self-Correction Engine
+    const verificationAnalysis = verificationEngine.verify({
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+    });
+
     // Save updated active context (including activeTaskPlan) to persistent session store
     contextStore.save(sessionId, contextResult.context);
 
@@ -193,7 +216,8 @@ export class BrainEngine {
     const isAmbiguous =
       contextResult.context.isAmbiguousReference ||
       structuredIntent.requiresClarification ||
-      reasoningAnalysis.requiresClarification;
+      reasoningAnalysis.requiresClarification ||
+      verificationAnalysis.requiresClarification;
     const candidateTargets = contextResult.resolvedReferences.flatMap((r) => r.candidateTargets || []);
 
     const isFollowUp = structuredIntent.relationship === "FOLLOW_UP" || contextResult.isFollowUp;
@@ -218,12 +242,13 @@ export class BrainEngine {
       contextResult.context.currentTask === "realtime_information" ||
       reasoningAnalysis.reasoningType === "TOOL_ASSISTED_REASONING" ||
       reasoningAnalysis.toolRequirements.some(t => t.toolType === "weather" || t.toolType === "search") ||
-      (planningAnalysis.plan?.toolRequirements && planningAnalysis.plan.toolRequirements.length > 0)
+      (planningAnalysis.plan?.toolRequirements && planningAnalysis.plan.toolRequirements.length > 0) ||
+      verificationAnalysis.missingEvidence.length > 0
     ) {
       knowledgeType = "DYNAMIC";
     }
 
-    // Combine prompt directives (Intent + Context + Reasoning + Planning)
+    // Combine prompt directives (Intent + Context + Reasoning + Planning + Verification)
     const promptDirectives: string[] = [];
     for (const d of structuredIntent.suggestedDirectives) {
       if (!promptDirectives.includes(d)) {
@@ -245,26 +270,29 @@ export class BrainEngine {
         promptDirectives.push(d);
       }
     }
-
-    // Unified confidence score
-    let confidence = Math.min(structuredIntent.intentConfidence, reasoningAnalysis.reasoningConfidence);
-    if (isAmbiguous) {
-      confidence = Math.min(confidence, 0.45);
+    for (const d of verificationAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
     }
+
+    // Calibrated unified confidence score from Verification Engine
+    const confidence = verificationAnalysis.confidence.calibratedScore;
 
     return {
       intent: structuredIntent.primaryIntent,
       structuredIntent,
       reasoningAnalysis,
       planningAnalysis,
+      verificationAnalysis,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,
       confidence,
       contextReference: contextRef,
       reasoningRequired: reasoningAnalysis.reasoningRequired,
-      requiresClarification: isAmbiguous || structuredIntent.requiresClarification || reasoningAnalysis.requiresClarification,
-      ambiguityReason: structuredIntent.ambiguityReason || (reasoningAnalysis.missingInformation.length > 0 ? `Missing: ${reasoningAnalysis.missingInformation.join(", ")}` : undefined),
+      requiresClarification: isAmbiguous || structuredIntent.requiresClarification || reasoningAnalysis.requiresClarification || verificationAnalysis.requiresClarification,
+      ambiguityReason: structuredIntent.ambiguityReason || verificationAnalysis.clarificationReason || (reasoningAnalysis.missingInformation.length > 0 ? `Missing: ${reasoningAnalysis.missingInformation.join(", ")}` : undefined),
       clarificationPrompt: reasoningAnalysis.clarificationPrompt || planningAnalysis.plan?.clarificationRequirement,
       promptDirectives,
       activeContext: contextResult.context,
@@ -280,12 +308,14 @@ export class BrainEngine {
         ...contextResult.diagnostics.signals,
         ...structuredIntent.intentSignals,
         reasoning_confidence: reasoningAnalysis.reasoningConfidence,
+        verification_confidence: verificationAnalysis.confidence.calibratedScore,
       },
       diagnostics: {
         signals: {
           ...contextResult.diagnostics.signals,
           ...structuredIntent.intentSignals,
           reasoning_confidence: reasoningAnalysis.reasoningConfidence,
+          verification_confidence: verificationAnalysis.confidence.calibratedScore,
         },
         reasoningTrace: contextResult.diagnostics.reasoningTrace,
       },
