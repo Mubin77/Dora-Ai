@@ -26,6 +26,18 @@ export interface ChatMessage {
   audioUrl?: string;
   isInterrupted?: boolean;
   reaction?: string;
+  inputMode?: 'text' | 'voice';
+  isStreaming?: boolean;
+  isFinal?: boolean;
+}
+
+export interface ConversationSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessage[];
+  hasVoice?: boolean;
 }
 
 export interface VoiceSettings {
