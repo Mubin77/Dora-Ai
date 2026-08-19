@@ -130,12 +130,24 @@ export class PlanningEngine {
       if (activeTaskPlan && (activeTaskPlan.status === "READY" || activeTaskPlan.status === "NOT_STARTED" || activeTaskPlan.status === "IN_PROGRESS")) {
         activeTaskPlan.status = "IN_PROGRESS";
         activeTaskPlan.updatedAt = Date.now();
-        // Activate first pending step
-        const nextStep = activeTaskPlan.steps.find(s => s.status === "NOT_STARTED" || s.status === "READY");
-        if (nextStep) {
-          nextStep.status = "IN_PROGRESS";
-          activeTaskPlan.activeStepId = nextStep.id;
+
+        // Check if there is already an active step in progress
+        const existingInProgressStep = activeTaskPlan.steps.find(s => s.status === "IN_PROGRESS");
+        if (existingInProgressStep) {
+          activeTaskPlan.activeStepId = existingInProgressStep.id;
+        } else {
+          // Find first pending step whose dependencies are strictly ALL COMPLETED
+          const eligibleStep = activeTaskPlan.steps.find(s => {
+            if (s.status !== "NOT_STARTED" && s.status !== "READY") return false;
+            return this.areDependenciesSatisfied(s, activeTaskPlan);
+          });
+          if (eligibleStep) {
+            eligibleStep.status = "IN_PROGRESS";
+            activeTaskPlan.activeStepId = eligibleStep.id;
+          }
         }
+
+        const activeStep = activeTaskPlan.steps.find(s => s.id === activeTaskPlan.activeStepId);
 
         return {
           requiresPlanning: true,
@@ -144,7 +156,7 @@ export class PlanningEngine {
           activePlanStatus: "IN_PROGRESS",
           planAction: "ACTIVATED",
           directives: [
-            `PLAN ACTIVATED: User confirmed the action. Proceed with executing step: "${nextStep?.title || activeTaskPlan.objective}".`
+            `PLAN ACTIVATED: User confirmed the action. Proceed with executing step: "${activeStep?.title || activeTaskPlan.objective}".`
           ],
         };
       }
@@ -1009,9 +1021,26 @@ export class PlanningEngine {
   }
 
   /**
-   * Progresses step status across conversational turns
+   * Verifies that all declared dependencies for a step exist in the plan and have COMPLETED status
    */
-  private progressActivePlan(
+  public areDependenciesSatisfied(step: PlanStep, plan: TaskPlan): boolean {
+    if (!step.dependencies || step.dependencies.length === 0) {
+      return true;
+    }
+    for (const depId of step.dependencies) {
+      const depStep = plan.steps.find(s => s.id === depId);
+      if (!depStep || depStep.status !== "COMPLETED") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Progresses step status across conversational turns safely without fabricating completion.
+   * A step may transition to COMPLETED ONLY when there is genuine validated completion evidence.
+   */
+  public progressActivePlan(
     plan: TaskPlan,
     intent: StructuredIntent,
     reasoning: ReasoningAnalysis,
@@ -1022,30 +1051,45 @@ export class PlanningEngine {
       updatedAt: Date.now(),
     };
 
-    const lower = message.toLowerCase();
+    // Update eligible steps whose dependencies are now all COMPLETED to READY if they were NOT_STARTED
+    updatedPlan.steps = updatedPlan.steps.map(step => {
+      if (step.status === "NOT_STARTED" && this.areDependenciesSatisfied(step, updatedPlan)) {
+        return { ...step, status: "READY" };
+      }
+      return step;
+    });
 
-    // If user is asking for the final recommendation:
-    if (/recommend|which\s+should\s+i\s+buy|which\s+one\s+is\s+better|verdict/i.test(lower)) {
-      // Mark preceding steps completed and activate final recommendation step
-      updatedPlan.steps = plan.steps.map((step, idx) => {
-        if (idx < plan.steps.length - 1) {
-          return { ...step, status: "COMPLETED", completedAt: Date.now() };
-        }
-        return { ...step, status: "IN_PROGRESS" };
+    // Find current active step
+    const currentActiveStep = updatedPlan.steps.find(s => s.id === updatedPlan.activeStepId);
+
+    // If current active step is COMPLETED (e.g. from validated execution / verified context), activate next eligible step
+    if (currentActiveStep && currentActiveStep.status === "COMPLETED") {
+      const nextEligibleStep = updatedPlan.steps.find(s => {
+        if (s.id === currentActiveStep.id) return false;
+        if (s.status !== "READY" && s.status !== "NOT_STARTED") return false;
+        return this.areDependenciesSatisfied(s, updatedPlan);
       });
-      updatedPlan.activeStepId = plan.steps[plan.steps.length - 1].id;
-      return updatedPlan;
+
+      if (nextEligibleStep) {
+        nextEligibleStep.status = "IN_PROGRESS";
+        updatedPlan.activeStepId = nextEligibleStep.id;
+      }
+    } else if (!currentActiveStep || currentActiveStep.status !== "IN_PROGRESS") {
+      // If no step is in progress, find first eligible step whose dependencies are satisfied
+      const nextEligibleStep = updatedPlan.steps.find(s => {
+        if (s.status !== "READY" && s.status !== "NOT_STARTED") return false;
+        return this.areDependenciesSatisfied(s, updatedPlan);
+      });
+      if (nextEligibleStep) {
+        nextEligibleStep.status = "IN_PROGRESS";
+        updatedPlan.activeStepId = nextEligibleStep.id;
+      }
     }
 
-    // Progress current active step if completed
-    const currentActiveIdx = plan.steps.findIndex(s => s.id === plan.activeStepId);
-    if (currentActiveIdx > -1 && currentActiveIdx < plan.steps.length - 1) {
-      updatedPlan.steps[currentActiveIdx].status = "COMPLETED";
-      updatedPlan.steps[currentActiveIdx].completedAt = Date.now();
-      
-      const nextStep = updatedPlan.steps[currentActiveIdx + 1];
-      nextStep.status = "IN_PROGRESS";
-      updatedPlan.activeStepId = nextStep.id;
+    // Check overall plan completion: if ALL steps are COMPLETED
+    const allCompleted = updatedPlan.steps.every(s => s.status === "COMPLETED");
+    if (allCompleted && updatedPlan.steps.length > 0) {
+      updatedPlan.status = "COMPLETED";
     }
 
     return updatedPlan;

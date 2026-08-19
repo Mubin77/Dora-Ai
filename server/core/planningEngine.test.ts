@@ -10,6 +10,7 @@ import { brainEngine } from "./brainEngine";
 import { contextStore } from "./contextStore";
 import { planningEngine } from "./planningEngine";
 import { ConversationTurn } from "./contextTypes";
+import { TaskPlan } from "./planningTypes";
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -396,8 +397,318 @@ async function runAllPlanningTests() {
     );
   }
 
+  // TEST 16 (REGRESSION A) — Confirmation Cannot Bypass Dependency
+  console.log("\nTEST 16 (REGRESSION A) — Confirmation Cannot Bypass Dependency:");
+  {
+    const sessionId = "reg-test-a";
+    const context = contextStore.getOrCreate(sessionId);
+    context.activeTopic = "gaming laptop";
+    context.currentTask = "purchase_research";
+
+    // Construct Plan with Step 1 = IN_PROGRESS, Step 2 = NOT_STARTED (depends on Step 1)
+    const customPlan: TaskPlan = {
+      id: "plan-reg-a",
+      objective: "Select and recommend optimal laptop",
+      goal: "purchase_research",
+      status: "IN_PROGRESS",
+      priority: "NORMAL",
+      complexity: "MEDIUM",
+      steps: [
+        {
+          id: "step-1",
+          title: "Collect hardware specifications",
+          description: "Search live specs",
+          order: 1,
+          status: "IN_PROGRESS",
+          dependencies: [],
+          requiredInputs: ["target_models"],
+          expectedOutput: "Verified specs sheet",
+          canRunInParallel: false,
+          completionCriteria: "Specs verified",
+        },
+        {
+          id: "step-2",
+          title: "Perform dimensional comparison",
+          description: "Evaluate performance",
+          order: 2,
+          status: "NOT_STARTED",
+          dependencies: ["step-1"],
+          requiredInputs: ["specs_sheet"],
+          expectedOutput: "Side-by-side comparison",
+          canRunInParallel: false,
+          completionCriteria: "Comparison matrix completed",
+        }
+      ],
+      dependencies: {
+        "step-1": [],
+        "step-2": ["step-1"],
+      },
+      requiredInputs: ["target_models"],
+      availableInputs: ["target_models"],
+      missingInputs: [],
+      toolRequirements: [],
+      executionStrategy: "SEQUENTIAL",
+      completionCriteria: ["Comparison matrix completed"],
+      failureStrategy: "RETRY",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      sourceIntent: "RECOMMENDATION",
+      sourceReasoning: "MULTI_FACTOR_DECISION",
+      isCancellable: true,
+      activeStepId: "step-1",
+    };
+
+    context.activeTaskPlan = customPlan;
+
+    // Simulate user confirmation "Yes, proceed"
+    const res = brainEngine.analyze(
+      "Yes, proceed.",
+      [{ sender: "user", text: "Compare these laptops." }],
+      context,
+      sessionId
+    );
+
+    const step1AfterConfirm = res.activeTaskPlan?.steps.find(s => s.id === "step-1");
+    const step2AfterConfirm = res.activeTaskPlan?.steps.find(s => s.id === "step-2");
+
+    assert(
+      step2AfterConfirm?.status !== "IN_PROGRESS",
+      `Step 2 MUST NOT become IN_PROGRESS on confirmation while Step 1 is not completed (got: "${step2AfterConfirm?.status}")`
+    );
+    assert(
+      step1AfterConfirm?.status === "IN_PROGRESS",
+      `Step 1 remains IN_PROGRESS (got: "${step1AfterConfirm?.status}")`
+    );
+    assert(
+      res.activeTaskPlan?.activeStepId === "step-1",
+      `Active step ID remains "step-1" (got: "${res.activeTaskPlan?.activeStepId}")`
+    );
+
+    // Now simulate Step 1 genuinely completing with validated output
+    step1AfterConfirm!.status = "COMPLETED";
+    step1AfterConfirm!.completedAt = Date.now();
+
+    const progressed = planningEngine.progressActivePlan(
+      res.activeTaskPlan!,
+      {
+        primaryIntent: "RECOMMENDATION",
+        relationship: "FOLLOW_UP",
+        intentConfidence: 0.95,
+        intentSignals: {},
+        isMultiIntent: false,
+        requiresClarification: false,
+        suggestedDirectives: [],
+      },
+      {
+        reasoningRequired: true,
+        reasoningType: "MULTI_FACTOR_DECISION",
+        complexity: "MEDIUM",
+        objective: "Select and recommend",
+        relevantContext: {},
+        relevantEntities: [],
+        relevantConstraints: [],
+        assumptions: [],
+        missingInformation: [],
+        subtasks: [],
+        comparisons: [],
+        tradeoffs: [],
+        evidenceRequirements: [],
+        toolRequirements: [],
+        conclusionStrategy: "RANKED_RECOMMENDATION",
+        reasoningConfidence: 0.95,
+        requiresClarification: false,
+        directives: [],
+      },
+      "Proceed with next step"
+    );
+
+    const step2AfterCompletion = progressed.steps.find(s => s.id === "step-2");
+    assert(
+      step2AfterCompletion?.status === "IN_PROGRESS" && progressed.activeStepId === "step-2",
+      `Step 2 becomes eligible and IN_PROGRESS only after Step 1 is genuinely COMPLETED (got: "${step2AfterCompletion?.status}")`
+    );
+  }
+
+  // TEST 17 (REGRESSION B) — No Fabricated Completion
+  console.log("\nTEST 17 (REGRESSION B) — No Fabricated Completion:");
+  {
+    const threeStepPlan: TaskPlan = {
+      id: "plan-reg-b",
+      objective: "Full 3-step evaluation",
+      goal: "purchase_research",
+      status: "IN_PROGRESS",
+      priority: "NORMAL",
+      complexity: "MEDIUM",
+      steps: [
+        {
+          id: "step-1",
+          title: "Step 1: Identify Candidates",
+          description: "Search candidates",
+          order: 1,
+          status: "IN_PROGRESS",
+          dependencies: [],
+          requiredInputs: [],
+          expectedOutput: "Candidate models",
+          canRunInParallel: false,
+          completionCriteria: "Candidates listed",
+        },
+        {
+          id: "step-2",
+          title: "Step 2: Collect Benchmark Data",
+          description: "Benchmark testing",
+          order: 2,
+          status: "NOT_STARTED",
+          dependencies: ["step-1"],
+          requiredInputs: ["candidate_models"],
+          expectedOutput: "Benchmark results",
+          canRunInParallel: false,
+          completionCriteria: "Benchmarks verified",
+        },
+        {
+          id: "step-3",
+          title: "Step 3: Deliver Final Recommendation",
+          description: "Final verdict",
+          order: 3,
+          status: "NOT_STARTED",
+          dependencies: ["step-2"],
+          requiredInputs: ["benchmark_results"],
+          expectedOutput: "Recommended model",
+          canRunInParallel: false,
+          completionCriteria: "Verdict delivered",
+        },
+      ],
+      dependencies: {
+        "step-1": [],
+        "step-2": ["step-1"],
+        "step-3": ["step-2"],
+      },
+      requiredInputs: [],
+      availableInputs: [],
+      missingInputs: [],
+      toolRequirements: [],
+      executionStrategy: "SEQUENTIAL",
+      completionCriteria: ["Verdict delivered"],
+      failureStrategy: "RETRY",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      sourceIntent: "RECOMMENDATION",
+      sourceReasoning: "MULTI_FACTOR_DECISION",
+      isCancellable: true,
+      activeStepId: "step-1",
+    };
+
+    // Attempt to progress toward Step 3 by asking for recommendation without any step completion signal
+    const progressedWithoutEvidence = planningEngine.progressActivePlan(
+      threeStepPlan,
+      {
+        primaryIntent: "RECOMMENDATION",
+        relationship: "FOLLOW_UP",
+        intentConfidence: 0.95,
+        intentSignals: {},
+        isMultiIntent: false,
+        requiresClarification: false,
+        suggestedDirectives: [],
+      },
+      {
+        reasoningRequired: true,
+        reasoningType: "MULTI_FACTOR_DECISION",
+        complexity: "MEDIUM",
+        objective: "Recommend model",
+        relevantContext: {},
+        relevantEntities: [],
+        relevantConstraints: [],
+        assumptions: [],
+        missingInformation: [],
+        subtasks: [],
+        comparisons: [],
+        tradeoffs: [],
+        evidenceRequirements: [],
+        toolRequirements: [],
+        conclusionStrategy: "RANKED_RECOMMENDATION",
+        reasoningConfidence: 0.95,
+        requiresClarification: false,
+        directives: [],
+      },
+      "Which one is the best? Give me your final recommendation."
+    );
+
+    const s1 = progressedWithoutEvidence.steps.find(s => s.id === "step-1");
+    const s2 = progressedWithoutEvidence.steps.find(s => s.id === "step-2");
+    const s3 = progressedWithoutEvidence.steps.find(s => s.id === "step-3");
+
+    assert(
+      s1?.status !== "COMPLETED",
+      `Step 1 must NOT automatically become COMPLETED without validated execution (got: "${s1?.status}")`
+    );
+    assert(
+      s2?.status !== "COMPLETED",
+      `Step 2 must NOT automatically become COMPLETED without validated execution (got: "${s2?.status}")`
+    );
+    assert(
+      s3?.status !== "IN_PROGRESS" && s3?.status !== "COMPLETED",
+      `Step 3 must NOT become executable or completed through fabricated progression (got: "${s3?.status}")`
+    );
+
+    // Provide legitimate completion signal for Step 1
+    const legitimatelyCompletedPlan: TaskPlan = {
+      ...progressedWithoutEvidence,
+      steps: progressedWithoutEvidence.steps.map(s => s.id === "step-1" ? { ...s, status: "COMPLETED", completedAt: Date.now() } : s),
+    };
+
+    const nextProgressed = planningEngine.progressActivePlan(
+      legitimatelyCompletedPlan,
+      {
+        primaryIntent: "RECOMMENDATION",
+        relationship: "FOLLOW_UP",
+        intentConfidence: 0.95,
+        intentSignals: {},
+        isMultiIntent: false,
+        requiresClarification: false,
+        suggestedDirectives: [],
+      },
+      {
+        reasoningRequired: true,
+        reasoningType: "MULTI_FACTOR_DECISION",
+        complexity: "MEDIUM",
+        objective: "Recommend model",
+        relevantContext: {},
+        relevantEntities: [],
+        relevantConstraints: [],
+        assumptions: [],
+        missingInformation: [],
+        subtasks: [],
+        comparisons: [],
+        tradeoffs: [],
+        evidenceRequirements: [],
+        toolRequirements: [],
+        conclusionStrategy: "RANKED_RECOMMENDATION",
+        reasoningConfidence: 0.95,
+        requiresClarification: false,
+        directives: [],
+      },
+      "Proceed with benchmarks"
+    );
+
+    const s1Next = nextProgressed.steps.find(s => s.id === "step-1");
+    const s2Next = nextProgressed.steps.find(s => s.id === "step-2");
+    const s3Next = nextProgressed.steps.find(s => s.id === "step-3");
+
+    assert(
+      s1Next?.status === "COMPLETED",
+      "Step 1 remains COMPLETED"
+    );
+    assert(
+      s2Next?.status === "IN_PROGRESS",
+      `Step 2 becomes IN_PROGRESS according to DAG dependency rules (got: "${s2Next?.status}")`
+    );
+    assert(
+      s3Next?.status === "NOT_STARTED",
+      `Step 3 remains NOT_STARTED and is NOT falsely completed (got: "${s3Next?.status}")`
+    );
+  }
+
   console.log("==========================================");
-  console.log("ALL 15 PLANNING ENGINE TESTS PASSED!");
+  console.log("ALL 17 PLANNING ENGINE TESTS PASSED!");
   console.log("==========================================");
 }
 
