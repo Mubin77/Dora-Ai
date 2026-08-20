@@ -132,6 +132,14 @@ export default function App() {
   messagesRef.current = messages;
   const isCallActiveRef = useRef<boolean>(isCallActive);
   isCallActiveRef.current = isCallActive;
+  const isMutedRef = useRef<boolean>(isMuted);
+  isMutedRef.current = isMuted;
+  const stateRef = useRef<ConversationState>(state);
+  stateRef.current = state;
+  const settingsRef = useRef<VoiceSettings>(settings);
+  settingsRef.current = settings;
+  const handleSendMessageRef = useRef<any>(null);
+  const interruptDoraRef = useRef<any>(null);
 
   // Sync user name from memory store if present
   useEffect(() => {
@@ -286,6 +294,7 @@ export default function App() {
       },
 
       onAudio: (base64Chunk: string) => {
+        console.log(`[VOICE DEBUG] Frontend onAudio received chunk: ${base64Chunk.length} base64 chars`);
         if (audioEngineRef.current) {
           audioEngineRef.current.playAudioChunk(base64Chunk, 24000);
           doraService.recordPlaybackStarted();
@@ -313,6 +322,7 @@ export default function App() {
 
       onTranscript: (chunk: string, isFinal: boolean) => {
         if (chunk) {
+          console.log(`[VOICE DEBUG] Frontend onTranscript chunk: "${chunk}" (isFinal: ${isFinal})`);
           setCurrentSpokenText((prev) => {
             const updated = prev ? prev + " " + chunk : chunk;
             return updated;
@@ -424,7 +434,7 @@ export default function App() {
     };
   }, []);
 
-  // Initialize AudioEngine, SpeechRecognizer & proactive Live connection on mount
+  // Initialize AudioEngine & SpeechRecognizer ONCE on mount
   useEffect(() => {
     const engine = new AudioEngine();
     audioEngineRef.current = engine;
@@ -441,14 +451,14 @@ export default function App() {
       setCurrentSpokenText("");
       setState(isCallActiveRef.current ? "listening" : "idle");
       isProcessingTurnRef.current = false;
-      if (isCallActiveRef.current && !isMuted) {
+      if (isCallActiveRef.current && !isMutedRef.current) {
         speechRecognizerRef.current?.resumeAfterPlayback();
       }
     };
 
     engine.onSpeechStart = () => {
-      if (engine.getIsSpeaking() || state === "speaking") {
-        interruptDora();
+      if (engine.getIsSpeaking() || stateRef.current === "speaking") {
+        interruptDoraRef.current?.();
       }
     };
 
@@ -458,21 +468,13 @@ export default function App() {
       }
     };
 
-    const initialMemoryContext = memoryManager.buildContext();
-    doraService.connectLiveStream(
-      setupLiveCallbacks(),
-      settings.voiceName,
-      initialMemoryContext,
-      getRecentHistoryContext()
-    );
-
     // Initialize continuous browser speech recognition
     const recognizer = new SpeechRecognizer({
-      language: settings.language,
-      pauseThresholdMs: settings.pauseThresholdMs,
+      language: settingsRef.current.language,
+      pauseThresholdMs: settingsRef.current.pauseThresholdMs,
       onSpeechStart: () => {
-        if (engine.getIsSpeaking() || state === "speaking") {
-          interruptDora();
+        if (engine.getIsSpeaking() || stateRef.current === "speaking") {
+          interruptDoraRef.current?.();
         }
         setState("listening");
       },
@@ -526,7 +528,7 @@ export default function App() {
         setState("thinking");
 
         // Transcribed voice message is passed straight into Dora's turn pipeline
-        handleSendMessage(cleanText, undefined, true);
+        handleSendMessageRef.current?.(cleanText, undefined, true);
       },
       onError: (err) => {
         if (err.isPermissionDenied) {
@@ -553,7 +555,7 @@ export default function App() {
       engine.interruptPlayback();
       doraService.disconnectLiveStream();
     };
-  }, [setupLiveCallbacks, settings.voiceName, getRecentHistoryContext, state, interruptDora, isMuted, settings.language, settings.pauseThresholdMs]);
+  }, []);
 
   // Sync silence threshold and language with settings
   useEffect(() => {
@@ -586,6 +588,8 @@ export default function App() {
     async (userText: string, imageAttachment?: string, isVoiceTurn: boolean = false) => {
       const cleanText = userText.trim();
       if (!cleanText || isProcessingTurnRef.current) return;
+
+      console.log(`[VOICE DEBUG] submitting transcript: "${cleanText}" (isVoiceTurn: ${isVoiceTurn}, isCallActive: ${isCallActiveRef.current}, liveReady: ${doraService.isLiveReady()})`);
 
       if (audioEngineRef.current?.getIsSpeaking() || state === "speaking") {
         interruptDora();
@@ -671,8 +675,8 @@ export default function App() {
       setMessages((prev) => [...prev, userMessage]);
       setState("thinking");
 
-      // If in Voice Mode and Live WebSocket is active, send live text for streaming voice reply
-      if (isCallActiveRef.current && doraService.isLiveReady() && !imageAttachment) {
+      // If in Voice Mode, route message directly to Gemini Live session for real-time streaming audio response
+      if (isCallActiveRef.current && !imageAttachment) {
         const memoryContext = memoryManager.buildContext(cleanText);
         doraService.sendLiveText(cleanText, settings.language, memoryContext, isDeepThinkActive);
         return;
@@ -785,6 +789,8 @@ export default function App() {
     [interruptDora, settings, state, isDeepThinkActive, isMuted]
   );
 
+  handleSendMessageRef.current = handleSendMessage;
+
   // Toggle Live Conversational Voice Mode (NEVER clears messages)
   const handleToggleCall = async () => {
     if (isCallActive) {
@@ -793,6 +799,7 @@ export default function App() {
         audioEngineRef.current.stopMicrophone();
         audioEngineRef.current.interruptPlayback();
       }
+      doraService.disconnectLiveStream();
       setIsCallActive(false);
       setState("idle");
       setCurrentSpokenText("");
@@ -816,6 +823,7 @@ export default function App() {
         setState("listening");
         setActiveMode("voice");
         setSelectedModel("Dora Live");
+        console.log("[VOICE DEBUG] voice mode started");
 
         // Pass recent conversation history context so Dora seamlessly continues from chat
         const historyContext = getRecentHistoryContext();

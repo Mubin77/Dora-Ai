@@ -73,6 +73,7 @@ export class AudioEngine {
       if (this.isListening) return true;
 
       // 1. Request microphone access
+      console.log("[VOICE DEBUG] microphone permission: requesting...");
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -80,12 +81,21 @@ export class AudioEngine {
           autoGainControl: true,
         },
       });
+      console.log("[VOICE DEBUG] microphone permission: granted");
+      console.log("[VOICE DEBUG] microphone stream: active");
 
       // 2. Ensure AudioContext is ready and active
       const ctx = this.getOrCreateInputContext();
+      console.log(`[VOICE DEBUG] input audio context state: ${ctx.state}`);
       if (ctx.state === "suspended") {
-        await ctx.resume().catch(() => {});
+        await ctx.resume().catch((e) => {
+          console.warn("[VOICE DEBUG] input audio context resume warning:", e);
+        });
       }
+
+      // Also ensure output audio context is initialized early in the user gesture
+      const outCtx = this.ensureOutputContext();
+      console.log(`[VOICE DEBUG] output audio context state: ${outCtx.state}`);
 
       // 3. Connect MediaStreamSource and Analyser
       this.sourceNode = ctx.createMediaStreamSource(this.micStream);
@@ -238,7 +248,15 @@ export class AudioEngine {
    */
   public playAudioChunk(base64Pcm: string, sampleRate = 24000): void {
     try {
+      console.log(`[VOICE DEBUG] audio decode started (base64 length: ${base64Pcm?.length || 0})`);
       const ctx = this.ensureOutputContext();
+      console.log(`[VOICE DEBUG] audio context state: ${ctx.state}`);
+      if (ctx.state === "suspended") {
+        ctx.resume().catch((err) => {
+          console.warn("[VOICE DEBUG] audio context resume failed:", err);
+        });
+      }
+
       const binary = atob(base64Pcm);
       const len = binary.length;
       const bytes = new Uint8Array(len);
@@ -246,8 +264,11 @@ export class AudioEngine {
         bytes[i] = binary.charCodeAt(i);
       }
 
-      // Convert 16-bit PCM bytes to Float32
-      const int16 = new Int16Array(bytes.buffer);
+      console.log(`[VOICE DEBUG] audio data received: ${bytes.byteLength} bytes`);
+
+      // Safe 16-bit PCM conversion with alignment protection
+      const alignedLength = Math.floor(bytes.byteLength / 2);
+      const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, alignedLength);
       const float32 = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) {
         float32[i] = int16[i] / 32768.0;
@@ -271,11 +292,14 @@ export class AudioEngine {
         this.nextPlayTime = currentTime + 0.005; // Immediate start (5ms lookahead for gapless scheduling)
       }
 
+      console.log(`[VOICE DEBUG] audio playback scheduled: targetTime=${this.nextPlayTime.toFixed(3)}, currentTime=${currentTime.toFixed(3)}, duration=${audioBuffer.duration.toFixed(3)}s`);
+
       source.start(this.nextPlayTime);
       this.isSpeaking = true;
       this.activeSourceNodes.push(source);
 
       if (isFirstInQueue && this.onPlaybackStarted) {
+        console.log("[VOICE DEBUG] audio playback started");
         this.onPlaybackStarted();
       }
 
@@ -294,8 +318,8 @@ export class AudioEngine {
           }
         }
       };
-    } catch (err) {
-      console.error("Error playing audio chunk:", err);
+    } catch (err: any) {
+      console.error("[VOICE DEBUG] audio playback error:", err);
     }
   }
 

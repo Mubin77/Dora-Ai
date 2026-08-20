@@ -79,6 +79,15 @@ export class DoraService {
 
   private lastHistoryContext: string = "";
 
+  private pendingTextQueue: Array<{
+    text: string;
+    language: string;
+    memoryContext: string;
+    deepThink: boolean;
+    clientTimeZone: string;
+    clientTimestamp: number;
+  }> = [];
+
   /**
    * Returns whether the Live WebSocket session is connected and ready
    */
@@ -91,7 +100,7 @@ export class DoraService {
    */
   public connectLiveStream(
     callbacks: LiveStreamCallbacks,
-    voiceName = "Kore",
+    voiceName = "Aoede",
     memoryContext = "",
     historyContext = ""
   ) {
@@ -101,16 +110,18 @@ export class DoraService {
     this.lastMemoryContext = effectiveMemoryContext;
     this.lastHistoryContext = historyContext;
 
-    // If socket is already open and ready, notify callback and return
+    // If socket is already open and ready, notify callback, flush any pending messages and return
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       if (this.isWsReady) {
         callbacks.onReady?.();
+        this.flushPendingTextQueue();
       }
       return;
     }
 
     // If socket is currently connecting, do not spawn another concurrent connection
     if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      console.log("[VOICE DEBUG] WebSocket already connecting, skipping duplicate creation");
       return;
     }
 
@@ -121,23 +132,25 @@ export class DoraService {
 
     // Clean up any stale socket listeners before instantiating a new one
     if (this.ws) {
-      this.ws.onopen = null;
-      this.ws.onmessage = null;
-      this.ws.onerror = null;
-      this.ws.onclose = null;
+      const oldWs = this.ws;
+      this.ws = null;
+      this.isWsReady = false;
+      oldWs.onopen = null;
+      oldWs.onmessage = null;
+      oldWs.onerror = null;
+      oldWs.onclose = null;
       try {
-        this.ws.close();
+        oldWs.close();
       } catch {
         // ignore
       }
-      this.ws = null;
-      this.isWsReady = false;
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/live-ws`;
 
     try {
+      console.log(`[VOICE DEBUG] Creating authoritative Live WebSocket to ${wsUrl}`);
       const socket = new WebSocket(wsUrl);
       this.ws = socket;
 
@@ -145,7 +158,7 @@ export class DoraService {
         if (this.ws !== socket || socket.readyState !== WebSocket.OPEN) {
           return;
         }
-        console.log("[Dora Live] WebSocket connected, warming up Live session...");
+        console.log("[VOICE DEBUG] Gemini Live connection: OPEN (WebSocket connected to /live-ws)");
         const contextToSend = this.lastMemoryContext || MemoryManager.getInstance().buildContext("");
         try {
           socket.send(
@@ -157,7 +170,7 @@ export class DoraService {
             })
           );
         } catch (err) {
-          console.warn("[Dora Live] Error sending start_session on open:", err);
+          console.warn("[VOICE DEBUG] Error sending start_session on open:", err);
         }
       };
 
@@ -165,13 +178,17 @@ export class DoraService {
         if (this.ws !== socket) return;
         try {
           const data = JSON.parse(event.data);
+          console.log(`[VOICE DEBUG] Gemini Live message received: ${data.type}`);
           if (data.type === "session_ready") {
             this.isWsReady = true;
-            console.log("[Dora Live] Session ready and warm (Model:", data.modelUsed || "default", ")");
+            console.log("[VOICE DEBUG] Gemini Live session: READY (Model:", data.modelUsed || "default", ")");
             this.wsCallbacks.onReady?.();
+            this.flushPendingTextQueue();
           } else if (data.type === "user_transcript" && data.text) {
+            console.log(`[VOICE DEBUG] speech recognition result (Gemini STT): "${data.text}"`);
             this.wsCallbacks.onUserTranscript?.(data.text, !!data.isFinal);
           } else if (data.type === "audio" && data.audio) {
+            console.log(`[VOICE DEBUG] audio data received: ${data.audio.length} base64 chars`);
             if (this.activeMetrics) {
               const now = performance.now();
               if (!this.activeMetrics.firstAudioChunkAt) {
@@ -192,6 +209,7 @@ export class DoraService {
             }
             this.wsCallbacks.onTranscript?.(data.text, false);
           } else if (data.type === "turn_complete") {
+            console.log("[VOICE DEBUG] Gemini Live turn complete");
             if (this.activeMetrics) {
               this.activeMetrics.responseCompletedAt = performance.now();
               const totalStreamMs = this.activeMetrics.responseCompletedAt - this.activeMetrics.messageSentAt;
@@ -200,36 +218,58 @@ export class DoraService {
             }
             this.wsCallbacks.onTranscript?.("", true);
           } else if (data.type === "interrupted") {
-            console.log("[Dora Live] Response interrupted by user");
+            console.log("[VOICE DEBUG] Gemini Live response interrupted by user");
             this.activeMetrics = null;
             this.wsCallbacks.onInterrupted?.();
           } else if (data.type === "live_error" || data.type === "live_unavailable") {
-            console.warn("[Dora Live] Live API notice:", data.message || data.error);
+            console.warn("[VOICE DEBUG] Gemini Live notice/error:", data.message || data.error);
             this.wsCallbacks.onError?.(data);
           }
         } catch (err) {
-          console.error("[Dora Live] Error handling WS message:", err);
+          console.error("[VOICE DEBUG] Error handling WS message:", err);
         }
       };
 
       socket.onerror = (err) => {
         if (this.ws !== socket) return;
         this.isWsReady = false;
-        console.warn("[Dora Live] WebSocket error:", err);
+        console.warn("[VOICE DEBUG] WebSocket error event:", err);
         this.wsCallbacks.onError?.(err);
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (this.ws !== socket) return;
         this.isWsReady = false;
-        console.log("[Dora Live] WebSocket closed, auto-reconnecting in 2s...");
-        this.reconnectTimer = setTimeout(() => {
-          this.connectLiveStream(this.wsCallbacks, this.currentVoiceName, this.lastMemoryContext);
-        }, 2000);
+        console.log(`[VOICE DEBUG] WebSocket closed (code=${event.code}, reason=${event.reason || "normal"})`);
       };
     } catch (err) {
-      console.warn("[Dora Live] WebSocket initialization error:", err);
+      console.warn("[VOICE DEBUG] WebSocket initialization error:", err);
       callbacks.onError?.(err);
+    }
+  }
+
+  private flushPendingTextQueue() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isWsReady) return;
+    while (this.pendingTextQueue.length > 0) {
+      const item = this.pendingTextQueue.shift();
+      if (item) {
+        console.log(`[VOICE DEBUG] Flushing queued text to Gemini Live: "${item.text}"`);
+        try {
+          this.ws.send(
+            JSON.stringify({
+              type: "text_input",
+              text: item.text,
+              language: item.language,
+              memoryContext: item.memoryContext,
+              deepThink: item.deepThink,
+              clientTimeZone: item.clientTimeZone,
+              clientTimestamp: item.clientTimestamp,
+            })
+          );
+        } catch (err) {
+          console.warn("[VOICE DEBUG] Error sending flushed text:", err);
+        }
+      }
     }
   }
 
@@ -259,7 +299,7 @@ export class DoraService {
       playbackStartedAt: null,
       responseCompletedAt: null,
     };
-    console.log(`[Dora Latency] 📤 User message sent ("${text.slice(0, 30)}...") [DeepThink: ${deepThink}]`);
+    console.log(`[VOICE DEBUG] submitting transcript to Gemini Live: "${text}" [DeepThink: ${deepThink}]`);
 
     const effectiveMemoryContext = memoryContext || MemoryManager.getInstance().buildContext(text);
     this.lastMemoryContext = effectiveMemoryContext;
@@ -280,8 +320,18 @@ export class DoraService {
           })
         );
       } catch (err) {
-        console.warn("[Dora Live] Error sending live text:", err);
+        console.warn("[VOICE DEBUG] Error sending live text:", err);
       }
+    } else {
+      console.log(`[VOICE DEBUG] Gemini Live session warming up (ws readyState=${this.ws?.readyState}, isWsReady=${this.isWsReady}). Enqueuing transcript.`);
+      this.pendingTextQueue.push({
+        text,
+        language,
+        memoryContext: effectiveMemoryContext,
+        deepThink,
+        clientTimeZone,
+        clientTimestamp,
+      });
     }
   }
 

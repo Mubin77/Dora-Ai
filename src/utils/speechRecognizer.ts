@@ -45,7 +45,9 @@ export class SpeechRecognizer {
    * Starts speech recognition
    */
   public async start(): Promise<boolean> {
+    console.log("[VOICE DEBUG] attempting speech recognition start");
     if (!SpeechRecognizer.isSupported()) {
+      console.warn("[VOICE DEBUG] speech recognition is not supported in this browser");
       this.options.onError?.({
         code: "not_supported",
         message: "Speech recognition is not supported in this browser. Please use Google Chrome, Edge, or Safari.",
@@ -79,23 +81,28 @@ export class SpeechRecognizer {
         recognition.lang = "en-US";
       } else {
         // Auto / mixed: Use user browser locale or en-US default
-        const browserLang = navigator.language || "en-US";
+        const browserLang = typeof navigator !== "undefined" ? (navigator.language || "en-US") : "en-US";
         recognition.lang = browserLang.startsWith("bn") ? "bn-BD" : "en-US";
       }
 
       recognition.onstart = () => {
         this.isListening = true;
+        console.log(`[VOICE DEBUG] speech recognition onstart (lang=${recognition.lang})`);
+        console.log("[VOICE DEBUG] speech recognition started");
         this.options.onStateChange?.(true);
       };
 
       recognition.onspeechstart = () => {
         this.lastSpeechTimestamp = Date.now();
+        console.log("[VOICE DEBUG] speech recognition onspeechstart");
+        console.log("[VOICE DEBUG] user speech detected by recognizer");
         if (!this.isPausedForPlayback) {
           this.options.onSpeechStart?.();
         }
       };
 
       recognition.onresult = (event: any) => {
+        console.log(`[VOICE DEBUG] speech recognition onresult (results count: ${event?.results?.length || 0})`);
         if (this.isPausedForPlayback) return;
 
         let interim = "";
@@ -122,6 +129,7 @@ export class SpeechRecognizer {
         this.lastSpeechTimestamp = Date.now();
 
         if (this.currentTranscript) {
+          console.log(`[VOICE DEBUG] speech recognition result: "${this.currentTranscript}"`);
           this.options.onInterimResult?.(this.currentTranscript);
 
           // Clear any pending silence timer
@@ -139,9 +147,10 @@ export class SpeechRecognizer {
       };
 
       recognition.onerror = (event: any) => {
-        console.warn("[SpeechRecognizer] Notice:", event.error);
+        console.warn(`[VOICE DEBUG] speech recognition onerror: ${event?.error || "unknown"}`);
 
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+          console.error("[VOICE DEBUG] microphone permission: denied");
           this.shouldBeRunning = false;
           this.isListening = false;
           this.options.onError?.({
@@ -159,11 +168,12 @@ export class SpeechRecognizer {
         }
 
         if (event.error === "network") {
-          console.warn("[SpeechRecognizer] Network hiccup with speech recognition service.");
+          console.warn("[SpeechRecognizer] Network notice with speech recognition service.");
         }
       };
 
       recognition.onend = () => {
+        console.log("[VOICE DEBUG] speech recognition onend");
         this.isListening = false;
 
         // If user finished a turn right as recognition ended, emit final text
@@ -192,9 +202,10 @@ export class SpeechRecognizer {
     } catch (err: any) {
       console.warn("[SpeechRecognizer] Start error:", err);
       if (err?.name === "NotAllowedError") {
+        console.error("[VOICE DEBUG] microphone permission: denied");
         this.options.onError?.({
           code: "permission_denied",
-          message: "Microphone permission was denied.",
+          message: "Microphone permission was denied. Please allow microphone access in your browser.",
           isPermissionDenied: true,
         });
       }

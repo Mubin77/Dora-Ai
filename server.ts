@@ -665,15 +665,17 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
 
     async function initLiveSession(voiceName = "Aoede", memoryContext = "", historyContext = "") {
       if (liveSession) {
+        console.log("[VOICE DEBUG] Gemini Live session already active, sending session_ready");
         clientWs.send(JSON.stringify({ type: "session_ready" }));
         return;
       }
       if (isConnecting) return;
       isConnecting = true;
 
+      console.log(`[VOICE DEBUG] Initializing Gemini Live session with voice: ${voiceName}...`);
+
       const liveModels = [
         "gemini-3.1-flash-live-preview",
-        "gemini-2.5-flash",
       ];
 
       const effectiveSystemInstruction = [
@@ -686,6 +688,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
 
       for (const model of liveModels) {
         try {
+          console.log(`[VOICE DEBUG] Attempting Live connect to model: ${model}`);
           const ai = getGenAI();
           liveSession = await ai.live.connect({
             model,
@@ -702,6 +705,8 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
             },
             callbacks: {
               onmessage: (message: any) => {
+                console.log("[VOICE DEBUG] Gemini Live message received from SDK:", Object.keys(message || {}).join(", "));
+
                 // User input audio transcription (from Gemini Live speech-to-text)
                 const userTranscriptText =
                   message.serverContent?.inputAudioTranscription?.text ||
@@ -710,6 +715,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
                   (message.userTurn?.parts?.map((p: any) => p.text || "").join("") || "");
 
                 if (userTranscriptText && userTranscriptText.trim()) {
+                  console.log(`[VOICE DEBUG] speech recognition result from Live STT: "${userTranscriptText}"`);
                   clientWs.send(
                     JSON.stringify({
                       type: "user_transcript",
@@ -728,6 +734,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
                 if (parts) {
                   for (const part of parts) {
                     if (part.inlineData?.data) {
+                      console.log(`[VOICE DEBUG] audio data received from Gemini: ${part.inlineData.data.length} base64 chars (${part.inlineData.mimeType || "audio/pcm"})`);
                       clientWs.send(
                         JSON.stringify({
                           type: "audio",
@@ -737,6 +744,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
                       );
                     }
                     if (part.text) {
+                      console.log(`[VOICE DEBUG] Gemini Live transcript chunk: "${part.text}"`);
                       clientWs.send(
                         JSON.stringify({
                           type: "transcript_chunk",
@@ -759,15 +767,17 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
                 }
 
                 if (message.serverContent?.turnComplete) {
+                  console.log("[VOICE DEBUG] Gemini Live turnComplete received");
                   clientWs.send(JSON.stringify({ type: "turn_complete" }));
                 }
 
                 if (message.serverContent?.interrupted) {
+                  console.log("[VOICE DEBUG] Gemini Live interrupted received");
                   clientWs.send(JSON.stringify({ type: "interrupted" }));
                 }
               },
               onerror: (err: any) => {
-                console.warn("Live API session error:", err?.message || err);
+                console.error("[VOICE DEBUG] Gemini Live session error:", err?.message || err);
                 clientWs.send(
                   JSON.stringify({
                     type: "live_error",
@@ -776,22 +786,24 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
                 );
               },
               onclose: () => {
-                console.log("Live session closed");
+                console.log("[VOICE DEBUG] Gemini Live session closed");
                 liveSession = null;
                 clientWs.send(JSON.stringify({ type: "session_closed" }));
               },
             },
           });
 
+          console.log(`[VOICE DEBUG] Gemini Live connection: OPEN (model: ${model})`);
           clientWs.send(JSON.stringify({ type: "session_ready", modelUsed: model }));
           isConnecting = false;
           return;
         } catch (err: any) {
-          console.warn(`Live connection with model ${model} failed:`, err?.message || err);
+          console.warn(`[VOICE DEBUG] Live connection with model ${model} failed:`, err?.message || err);
         }
       }
 
       isConnecting = false;
+      console.warn("[VOICE DEBUG] Gemini Live connection could not be established; sending live_unavailable to client");
       clientWs.send(
         JSON.stringify({
           type: "live_unavailable",
@@ -805,13 +817,14 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
         const data = JSON.parse(raw.toString());
 
         if (data.type === "start_session") {
+          console.log("[VOICE DEBUG] Received start_session from frontend client");
           await initLiveSession(data.voiceName || "Aoede", data.memoryContext || "", data.historyContext || "");
         } else if (data.type === "screen_frame" && data.frame) {
           activeScreenFrame = data.frame;
           if (liveSession) {
             try {
               liveSession.sendRealtimeInput({
-                media: { data: data.frame, mimeType: "image/jpeg" },
+                video: { data: data.frame, mimeType: "image/jpeg" },
               });
             } catch (err: any) {
               console.warn("[Screen Vision] Live API media stream frame error:", err?.message);
@@ -825,6 +838,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
             audio: { data: data.audio, mimeType: "audio/pcm;rate=16000" },
           });
         } else if (data.type === "text_input") {
+          console.log(`[VOICE DEBUG] Received text_input over WS: "${data.text}" (liveSession active: ${Boolean(liveSession)})`);
           if (!liveSession) {
             await initLiveSession(data.voiceName || "Aoede", data.memoryContext || "", data.historyContext || "");
           }
@@ -849,17 +863,21 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
               });
             }
 
+            console.log(`[VOICE DEBUG] Sending user content to Gemini Live session: "${processedText}"`);
             try {
               liveSession.sendClientContent({
                 turns: [{ role: "user", parts: userParts }],
                 turnComplete: true,
               });
+              console.log("[VOICE DEBUG] sendClientContent completed successfully");
             } catch (err: any) {
-              console.warn("sendClientContent failed, attempting sendRealtimeInput:", err?.message);
+              console.warn("[VOICE DEBUG] sendClientContent failed, attempting sendRealtimeInput:", err?.message);
               try {
                 liveSession.sendRealtimeInput({ text: processedText });
               } catch (_) {}
             }
+          } else {
+            console.error("[VOICE DEBUG] Cannot send text to Gemini Live: liveSession is null");
           }
         } else if (data.type === "interrupt") {
           if (liveSession) {
