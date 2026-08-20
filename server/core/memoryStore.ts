@@ -17,12 +17,15 @@ import {
 } from "./memoryTypes";
 import { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 import { MemoryConsolidationResult } from "./memoryConsolidationTypes";
+import { LearningPattern } from "./adaptiveLearningTypes";
 
 export class MemoryStore {
   private static instance: MemoryStore;
   
   // Storage indexed by userId (e.g. "default", session ID, or user ID)
   private memoryMap: Map<string, MemoryRecord[]> = new Map();
+  // Adaptive learned patterns storage indexed by userId
+  private patternMap: Map<string, LearningPattern[]> = new Map();
 
   private constructor() {}
 
@@ -392,17 +395,74 @@ export class MemoryStore {
   }
 
   /**
-   * Clears all memories for a specific user.
+   * Retrieves cloned adaptive learning patterns for a user.
    */
-  public clear(userId: string = "default"): void {
-    this.memoryMap.delete(userId);
+  public getPatterns(userId: string = "default"): LearningPattern[] {
+    const patterns = this.patternMap.get(userId) || [];
+    return patterns.map((p) => ({
+      ...p,
+      evidence: p.evidence.map((e) => ({ ...e })),
+      directives: p.directives ? [...p.directives] : undefined,
+    }));
   }
 
   /**
-   * Clears memory storage across all users (useful for testing).
+   * Replaces all learned patterns for a user.
+   */
+  public replacePatterns(userId: string = "default", patterns: LearningPattern[]): void {
+    const cloned = patterns.map((p) => ({
+      ...p,
+      userId: p.userId || userId,
+      evidence: p.evidence.map((e) => ({ ...e })),
+      directives: p.directives ? [...p.directives] : undefined,
+    }));
+    this.patternMap.set(userId, cloned);
+  }
+
+  /**
+   * Saves or updates a single learning pattern for a user.
+   */
+  public savePattern(userId: string = "default", pattern: LearningPattern): LearningPattern {
+    const existing = this.getPatterns(userId);
+    const index = existing.findIndex((p) => p.id === pattern.id);
+    const toSave: LearningPattern = {
+      ...pattern,
+      userId: pattern.userId || userId,
+      evidence: pattern.evidence.map((e) => ({ ...e })),
+      directives: pattern.directives ? [...pattern.directives] : undefined,
+    };
+
+    if (index !== -1) {
+      existing[index] = toSave;
+    } else {
+      existing.push(toSave);
+    }
+
+    this.replacePatterns(userId, existing);
+    return toSave;
+  }
+
+  /**
+   * Clears all patterns for a specific user.
+   */
+  public clearPatterns(userId: string = "default"): void {
+    this.patternMap.delete(userId);
+  }
+
+  /**
+   * Clears all memories and patterns for a specific user.
+   */
+  public clear(userId: string = "default"): void {
+    this.memoryMap.delete(userId);
+    this.patternMap.delete(userId);
+  }
+
+  /**
+   * Clears memory and pattern storage across all users (useful for testing).
    */
   public clearAll(): void {
     this.memoryMap.clear();
+    this.patternMap.clear();
   }
 }
 

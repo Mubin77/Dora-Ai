@@ -67,6 +67,8 @@ import { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 import { MemoryConsolidationAnalysis } from "./memoryConsolidationTypes";
 import { memoryGovernanceEngine } from "./memoryGovernanceEngine";
 import { MemoryGovernanceAnalysis } from "./memoryGovernanceTypes";
+import { adaptiveLearningEngine } from "./adaptiveLearningEngine";
+import { LearningAnalysis, LearningPattern } from "./adaptiveLearningTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -79,6 +81,7 @@ export * from "./memoryTypes";
 export * from "./memoryRetrievalTypes";
 export * from "./memoryConsolidationTypes";
 export * from "./memoryGovernanceTypes";
+export * from "./adaptiveLearningTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -88,6 +91,7 @@ export { memoryDecisionEngine } from "./memoryDecisionEngine";
 export { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 export { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 export { memoryGovernanceEngine } from "./memoryGovernanceEngine";
+export { adaptiveLearningEngine } from "./adaptiveLearningEngine";
 export { memoryStore } from "./memoryStore";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
@@ -115,6 +119,7 @@ export interface BrainAnalysis {
   memoryRetrieval?: MemoryRetrievalAnalysis;
   memoryConsolidation?: MemoryConsolidationAnalysis;
   memoryGovernanceAnalysis?: MemoryGovernanceAnalysis;
+  adaptiveLearningAnalysis?: LearningAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -383,6 +388,37 @@ export class BrainEngine {
       }
     }
 
+    // Step 10 / Phase 2: Adaptive Memory Learning & User Model Engine
+    // Downstream of MemoryGovernanceEngine — learns stable personalization, task patterns, & interaction styles
+    const existingPatterns = memoryStore.getPatterns(userId);
+    const adaptiveLearningAnalysis = adaptiveLearningEngine.analyze({
+      message,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      governanceAnalysis: memoryGovernanceAnalysis,
+      existingPatterns,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+      },
+    });
+
+    // Update persistent user patterns in MemoryStore
+    if (options?.persistDecisions !== false) {
+      memoryStore.replacePatterns(userId, adaptiveLearningAnalysis.patterns);
+    }
+
+    // Add sanitized learning directives that don't conflict with existing directives
+    for (const d of adaptiveLearningAnalysis.activeDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -396,6 +432,7 @@ export class BrainEngine {
       memoryRetrieval,
       memoryConsolidation,
       memoryGovernanceAnalysis,
+      adaptiveLearningAnalysis,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,

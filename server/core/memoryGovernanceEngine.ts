@@ -612,8 +612,25 @@ export class MemoryGovernanceEngine {
 
       if (decision === "ALLOW") {
         allowedMemories.push(governed);
+        if (mem?.type === "PREFERENCE" || cand.memoryType === "PREFERENCE") {
+          const prefDirective = `MEMORY USAGE: Incorporate user's confirmed preference for ${value} naturally.`;
+          if (!directives.includes(prefDirective)) {
+            directives.push(prefDirective);
+          }
+        } else if (canSupportFactualClaim) {
+          const factDirective = `MEMORY USAGE: Confirmed factual detail: ${value}.`;
+          if (!directives.includes(factDirective)) {
+            directives.push(factDirective);
+          }
+        }
       } else if (decision === "ALLOW_WITH_CAUTION") {
         cautiousMemories.push(governed);
+        if (mem?.type === "PREFERENCE" || cand.memoryType === "PREFERENCE") {
+          const prefDirective = `MEMORY USAGE: Consider user's preference for ${value} with caution.`;
+          if (!directives.includes(prefDirective)) {
+            directives.push(prefDirective);
+          }
+        }
       } else if (decision === "INTERNAL_ONLY") {
         internalOnlyMemories.push(governed);
       } else {
@@ -707,20 +724,28 @@ export class MemoryGovernanceEngine {
    * Checks whether a memory key or value contains sensitive private authentication data
    */
   private isSensitiveData(key: string, value: string): boolean {
-    const combined = `${key} ${value}`.toLowerCase();
+    const rawCombined = `${key} ${value}`.toLowerCase();
+    const combined = rawCombined.replace(/[_\-]/g, " ");
     
     // Check sensitive keyword tokens
     if (
       combined.includes("password") ||
       combined.includes("passwd") ||
       combined.includes("pin number") ||
-      combined.includes("api_key") ||
+      combined.includes("pin code") ||
+      /\bpin\b/i.test(combined) ||
+      combined.includes("api key") ||
       combined.includes("apikey") ||
-      combined.includes("secret_key") ||
+      combined.includes("secret key") ||
       combined.includes("bearer token") ||
+      combined.includes("auth token") ||
+      combined.includes("access token") ||
+      combined.includes("refresh token") ||
       combined.includes("credit card") ||
       combined.includes("cvv") ||
-      combined.includes("cvc")
+      combined.includes("cvc") ||
+      combined.includes("ssn") ||
+      combined.includes("social security")
     ) {
       return true;
     }
