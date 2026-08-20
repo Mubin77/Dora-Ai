@@ -65,6 +65,8 @@ import { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 import { MemoryRetrievalAnalysis } from "./memoryRetrievalTypes";
 import { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 import { MemoryConsolidationAnalysis } from "./memoryConsolidationTypes";
+import { memoryGovernanceEngine } from "./memoryGovernanceEngine";
+import { MemoryGovernanceAnalysis } from "./memoryGovernanceTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -76,6 +78,7 @@ export * from "./verificationTypes";
 export * from "./memoryTypes";
 export * from "./memoryRetrievalTypes";
 export * from "./memoryConsolidationTypes";
+export * from "./memoryGovernanceTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -84,6 +87,7 @@ export { verificationEngine } from "./verificationEngine";
 export { memoryDecisionEngine } from "./memoryDecisionEngine";
 export { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 export { memoryConsolidationEngine } from "./memoryConsolidationEngine";
+export { memoryGovernanceEngine } from "./memoryGovernanceEngine";
 export { memoryStore } from "./memoryStore";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
@@ -110,6 +114,7 @@ export interface BrainAnalysis {
   memoryDecision?: MemoryDecision;
   memoryRetrieval?: MemoryRetrievalAnalysis;
   memoryConsolidation?: MemoryConsolidationAnalysis;
+  memoryGovernanceAnalysis?: MemoryGovernanceAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -369,6 +374,27 @@ export class BrainEngine {
       }
     }
 
+    // Step 9 / Phase 2: Memory Governance & Response Integration Engine
+    const memoryGovernanceAnalysis = memoryGovernanceEngine.evaluate({
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      retrieval: memoryRetrieval,
+      consolidation: memoryConsolidation,
+      message,
+      options: {
+        currentTime,
+      },
+    });
+
+    for (const d of memoryGovernanceAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -381,6 +407,7 @@ export class BrainEngine {
       memoryDecision,
       memoryRetrieval,
       memoryConsolidation,
+      memoryGovernanceAnalysis,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,

@@ -136,8 +136,20 @@ async function startServer() {
       );
 
       let brainPromptContext = "";
+      const promptSections: string[] = [];
+
+      if (brainAnalysis.memoryGovernanceAnalysis?.sanitizedMemoryContext) {
+        promptSections.push(brainAnalysis.memoryGovernanceAnalysis.sanitizedMemoryContext);
+      }
+
       if (brainAnalysis.promptDirectives.length > 0) {
-        brainPromptContext = `\n\n[DORA ADVANCED BRAIN & CONTEXTUAL COGNITION]\n${brainAnalysis.promptDirectives.map((d, i) => `${i + 1}. ${d}`).join("\n")}`;
+        promptSections.push(
+          `[DORA ADVANCED BRAIN & CONTEXTUAL COGNITION]\n${brainAnalysis.promptDirectives.map((d, i) => `${i + 1}. ${d}`).join("\n")}`
+        );
+      }
+
+      if (promptSections.length > 0) {
+        brainPromptContext = `\n\n${promptSections.join("\n\n")}`;
       }
 
       // 1. Detect task and intent (e.g. realtime_temporal vs web_search vs normal chat vs reasoning vs vision)
