@@ -8,6 +8,8 @@ import { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 import { memoryDecisionEngine } from "./memoryDecisionEngine";
 import { contextStore } from "./contextStore";
 import { intentEngine } from "./intentEngine";
+import { memoryStore } from "./memoryStore";
+import { brainEngine } from "./brainEngine";
 import { MemoryRecord, MemoryForgetDirective } from "./memoryTypes";
 
 function assert(condition: boolean, message: string) {
@@ -1067,8 +1069,581 @@ async function runConsolidationTests() {
     assert(decision.targetRecord?.value === "dark mode", "Target value is dark mode");
   }
 
+  // =========================================================================
+  // TEST 23 — MemoryStore Persistence Boundary & applyDecision
+  // =========================================================================
+  console.log("\nTEST 23 — MemoryStore persistence boundary & applyDecision:");
+  {
+    memoryStore.clearAll();
+    const context = contextStore.getOrCreate("store_test_user");
+    const intent = intentEngine.classifyIntent("Remember that my favorite programming language is TypeScript.", [], context);
+    const decision = memoryDecisionEngine.evaluate({
+      message: "Remember that my favorite programming language is TypeScript.",
+      context,
+      intent,
+    });
+
+    assert(decision.action === "SAVE", "Decision engine classified statement as SAVE");
+    const saved = memoryStore.applyDecision("store_test_user", decision, baseTime);
+    assert(saved !== undefined, "MemoryStore successfully applied decision");
+    assert(saved?.key === "fav_programming_language", "Saved key is fav_programming_language");
+    
+    const storedMemories = memoryStore.get("store_test_user");
+    assert(storedMemories.length === 1, "Exactly one record in MemoryStore for user");
+    assert(storedMemories[0].value === "TypeScript", "Value in MemoryStore is TypeScript");
+    assert(storedMemories[0].status === "ACTIVE", "Status is ACTIVE");
+  }
+
+  // =========================================================================
+  // TEST 24 — MemoryStore Update & Lineage Linking (supersedes / supersededBy)
+  // =========================================================================
+  console.log("\nTEST 24 — MemoryStore Update & Lineage Linking:");
+  {
+    const context = contextStore.getOrCreate("store_test_user");
+    const intent = intentEngine.classifyIntent("Remember that my favorite programming language is Rust.", [], context);
+    const updateDecision = memoryDecisionEngine.evaluate({
+      message: "Remember that my favorite programming language is Rust.",
+      context,
+      intent,
+      existingMemories: memoryStore.get("store_test_user"),
+    });
+
+    assert(updateDecision.action === "UPDATE", "Decision engine classified update as UPDATE");
+    const updated = memoryStore.applyDecision("store_test_user", updateDecision, baseTime + 1000);
+    assert(updated !== undefined, "MemoryStore applied update decision");
+
+    const all = memoryStore.get("store_test_user");
+    const active = memoryStore.getActive("store_test_user");
+    assert(all.length === 2, "MemoryStore contains 2 records total (historical + active)");
+    assert(active.length === 1, "MemoryStore contains exactly 1 active record");
+    assert(active[0].value === "Rust", "Active record value is Rust");
+
+    const oldRecord = all.find((m) => m.value === "TypeScript");
+    assert(oldRecord?.status === "SUPERSEDED", "Old TypeScript record is SUPERSEDED");
+    assert(oldRecord?.supersededBy === updated?.id, "Old record points to new record id via supersededBy");
+    assert(updated?.supersedes === oldRecord?.id, "New record points to old record id via supersedes");
+  }
+
+  // =========================================================================
+  // TEST 25 — MemoryStore Forget Scope & Execution
+  // =========================================================================
+  console.log("\nTEST 25 — MemoryStore Forget Scope & Execution:");
+  {
+    const forgetResult = memoryStore.forget("store_test_user", "fav_programming_language", "exact", baseTime + 2000);
+    assert(forgetResult.forgottenCount >= 1, "Forgotten count is at least 1");
+
+    const active = memoryStore.getActive("store_test_user");
+    assert(active.length === 0, "No active programming language memories remain");
+    
+    const all = memoryStore.get("store_test_user");
+    const deleted = all.filter((m) => m.status === "DELETED");
+    assert(deleted.length >= 1, "Record marked as DELETED in historical log");
+  }
+
+  // =========================================================================
+  // TEST 26 — User & Session Memory Isolation (User A vs User B)
+  // =========================================================================
+  console.log("\nTEST 26 — User & Session Memory Isolation:");
+  {
+    memoryStore.clearAll();
+    
+    const memUserA: MemoryRecord = {
+      id: "mem_alice_1",
+      userId: "user_alice",
+      type: "PREFERENCE",
+      key: "preference_editor",
+      value: "VS Code",
+      normalizedValue: "vs code",
+      source: "EXPLICIT_USER",
+      confidence: 1.0,
+      importance: 90,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      status: "ACTIVE",
+      tags: ["editor"],
+      evidence: ["I use VS Code"],
+      version: 1,
+    };
+
+    const memUserB: MemoryRecord = {
+      id: "mem_bob_1",
+      userId: "user_bob",
+      type: "PREFERENCE",
+      key: "preference_editor",
+      value: "Neovim",
+      normalizedValue: "neovim",
+      source: "EXPLICIT_USER",
+      confidence: 1.0,
+      importance: 90,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      status: "ACTIVE",
+      tags: ["editor"],
+      evidence: ["I use Neovim"],
+      version: 1,
+    };
+
+    memoryStore.save("user_alice", memUserA);
+    memoryStore.save("user_bob", memUserB);
+
+    const aliceMems = memoryStore.get("user_alice");
+    const bobMems = memoryStore.get("user_bob");
+
+    assert(aliceMems.length === 1 && aliceMems[0].value === "VS Code", "Alice has only VS Code memory");
+    assert(bobMems.length === 1 && bobMems[0].value === "Neovim", "Bob has only Neovim memory");
+
+    // Maintenance on Alice must not touch Bob
+    const aliceMaintained = memoryConsolidationEngine.maintain(aliceMems, { currentTime: baseTime + 5000 });
+    memoryStore.applyMaintenance("user_alice", aliceMaintained);
+
+    const bobMemsAfter = memoryStore.get("user_bob");
+    assert(bobMemsAfter.length === 1 && bobMemsAfter[0].value === "Neovim", "Bob's memory remained completely isolated");
+  }
+
+  // =========================================================================
+  // TEST 27 — Candidate Promotion Sole Authority
+  // =========================================================================
+  console.log("\nTEST 27 — Candidate Promotion Sole Authority:");
+  {
+    // Duplicate merge of two CANDIDATE memories must NEVER promote canonical to ACTIVE
+    const candA: MemoryRecord = {
+      id: "cand_music_a",
+      userId: "user_1",
+      type: "CANDIDATE",
+      key: "preference_music_genre",
+      value: "synthwave",
+      normalizedValue: "synthwave",
+      source: "INFERRED",
+      confidence: 0.6,
+      importance: 50,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      reinforcementCount: 1,
+      status: "CANDIDATE",
+      tags: ["music"],
+      evidence: ["Turn 1"],
+      version: 1,
+    };
+
+    const candB: MemoryRecord = {
+      id: "cand_music_b",
+      userId: "user_1",
+      type: "CANDIDATE",
+      key: "preference_music_genre",
+      value: "synthwave",
+      normalizedValue: "synthwave",
+      source: "INFERRED",
+      confidence: 0.65,
+      importance: 50,
+      createdAt: baseTime + 1000,
+      updatedAt: baseTime + 1000,
+      lastAccessedAt: baseTime + 1000,
+      accessCount: 1,
+      reinforcementCount: 1,
+      status: "CANDIDATE",
+      tags: ["music"],
+      evidence: ["Turn 2"],
+      version: 1,
+    };
+
+    const dupResult = memoryConsolidationEngine.consolidateDuplicates([candA, candB], baseTime + 2000);
+    const canonicalId = dupResult.merges[0].canonicalId;
+    const canonical = dupResult.updatedMemories.find((m) => m.id === canonicalId);
+    assert(canonical?.status === "CANDIDATE", "consolidateDuplicates() MUST preserve CANDIDATE status and never promote!");
+
+    // evaluateCandidate() is the sole promotion authority
+    // When confidence is below threshold (e.g. 0.70 < 0.75), evaluateCandidate does NOT promote
+    const evalUnqualified = memoryConsolidationEngine.evaluateCandidate(canonical!, dupResult.updatedMemories, {
+      candidateConfidenceThreshold: 0.75,
+    });
+    assert(evalUnqualified.updatedMemory.status === "CANDIDATE", "evaluateCandidate rejected promotion because confidence < 0.75");
+
+    // When confidence and reinforcement qualify, evaluateCandidate promotes
+    const qualifiedCand: MemoryRecord = {
+      ...canonical!,
+      confidence: 0.85,
+      reinforcementCount: 2,
+    };
+    const evalQualified = memoryConsolidationEngine.evaluateCandidate(qualifiedCand, dupResult.updatedMemories, {
+      candidateConfidenceThreshold: 0.75,
+      candidatePromotionThreshold: 2,
+    });
+    assert(evalQualified.updatedMemory.status === "ACTIVE", "evaluateCandidate successfully promoted candidate to ACTIVE");
+    assert(evalQualified.action?.action === "PROMOTE_CANDIDATE", "Action is PROMOTE_CANDIDATE");
+  }
+
+  // =========================================================================
+  // TEST 28 — Explicit User Conflict Precedence over Candidate
+  // =========================================================================
+  console.log("\nTEST 28 — Explicit User Conflict Precedence over Candidate:");
+  {
+    const explicitActive: MemoryRecord = {
+      id: "mem_exp_city",
+      userId: "user_1",
+      type: "FACT",
+      key: "user_city",
+      value: "Dhaka",
+      normalizedValue: "dhaka",
+      source: "EXPLICIT_USER",
+      confidence: 1.0,
+      importance: 90,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 5,
+      status: "ACTIVE",
+      tags: ["city"],
+      evidence: ["I live in Dhaka"],
+      version: 1,
+    };
+
+    const candidateInfer: MemoryRecord = {
+      id: "cand_infer_city",
+      userId: "user_1",
+      type: "CANDIDATE",
+      key: "user_city",
+      value: "Chittagong",
+      normalizedValue: "chittagong",
+      source: "INFERRED",
+      confidence: 0.70,
+      importance: 60,
+      createdAt: baseTime + 1000,
+      updatedAt: baseTime + 1000,
+      lastAccessedAt: baseTime + 1000,
+      accessCount: 1,
+      reinforcementCount: 1,
+      status: "CANDIDATE",
+      tags: ["city"],
+      evidence: ["Visiting Chittagong"],
+      version: 1,
+    };
+
+    const conflictResult = memoryConsolidationEngine.resolveConflicts([explicitActive, candidateInfer], baseTime + 2000);
+    const expRes = conflictResult.updatedMemories.find((m) => m.id === "mem_exp_city");
+    const candRes = conflictResult.updatedMemories.find((m) => m.id === "cand_infer_city");
+
+    assert(expRes?.status === "ACTIVE", "Explicit user memory retained ACTIVE status");
+    assert(candRes?.status === "SUPERSEDED", "Inferred candidate was superseded by explicit user record");
+    assert(conflictResult.conflicts.length === 1, "Conflict recorded");
+    assert(conflictResult.conflicts[0].winnerId === "mem_exp_city", "Winner is explicit user memory");
+  }
+
+  // =========================================================================
+  // TEST 29 — Consolidation Maintenance Idempotency
+  // =========================================================================
+  console.log("\nTEST 29 — Consolidation Maintenance Idempotency:");
+  {
+    const mixedMemories: MemoryRecord[] = [
+      {
+        id: "mem_idem_1",
+        userId: "user_1",
+        type: "PREFERENCE",
+        key: "food_spiciness",
+        value: "medium spicy",
+        normalizedValue: "medium spicy",
+        source: "EXPLICIT_USER",
+        confidence: 1.0,
+        importance: 80,
+        createdAt: baseTime,
+        updatedAt: baseTime,
+        lastAccessedAt: baseTime,
+        accessCount: 2,
+        status: "ACTIVE",
+        tags: ["food"],
+        evidence: ["medium spicy"],
+        version: 1,
+      },
+      {
+        id: "mem_idem_2",
+        userId: "user_1",
+        type: "PREFERENCE",
+        key: "food_spiciness",
+        value: "medium spicy",
+        normalizedValue: "medium spicy",
+        source: "INFERRED",
+        confidence: 0.7,
+        importance: 70,
+        createdAt: baseTime + 100,
+        updatedAt: baseTime + 100,
+        lastAccessedAt: baseTime + 100,
+        accessCount: 1,
+        status: "ACTIVE",
+        tags: ["food"],
+        evidence: ["medium spicy"],
+        version: 1,
+      },
+    ];
+
+    // Pass 1: performs duplicate merge
+    const pass1 = memoryConsolidationEngine.maintain(mixedMemories, { currentTime: baseTime + 500 });
+    assert(pass1.mergesCount === 1, "Pass 1 identified 1 merge");
+    assert(pass1.actionsTaken.length > 0, "Pass 1 generated maintenance actions");
+
+    // Pass 2: runs over the output of Pass 1 at the same timestamp -> MUST BE ZERO MUTATIONS
+    const pass2 = memoryConsolidationEngine.maintain(pass1.updatedMemories, { currentTime: baseTime + 500 });
+    assert(pass2.mergesCount === 0, "Pass 2 produced 0 merges (idempotent)");
+    assert(pass2.conflictsResolved.length === 0, "Pass 2 produced 0 conflict resolutions (idempotent)");
+    assert(pass2.promotionsCount === 0, "Pass 2 produced 0 promotions (idempotent)");
+    assert(pass2.actionsTaken.length === 0, "Pass 2 produced exactly 0 actions (perfect idempotency)");
+  }
+
+  // =========================================================================
+  // TEST 30 — Privacy Quarantine Rejection & Redaction
+  // =========================================================================
+  console.log("\nTEST 30 — Privacy Quarantine Rejection & Redaction:");
+  {
+    memoryStore.clearAll();
+    const sensitiveDecision = memoryDecisionEngine.evaluate({
+      message: "My API key is sk-1234567890abcdefghijklmnopqrstuv",
+      context: contextStore.getOrCreate("privacy_user"),
+      intent: intentEngine.classifyIntent("My API key is sk-1234567890abcdefghijklmnopqrstuv", [], contextStore.getOrCreate("privacy_user")),
+    });
+
+    assert(sensitiveDecision.isSensitiveRejected === true, "Sensitive data caught by security gate");
+    assert(sensitiveDecision.action === "IGNORE", "Action is IGNORE for sensitive credential");
+
+    const applied = memoryStore.applyDecision("privacy_user", sensitiveDecision, baseTime);
+    assert(applied === undefined, "MemoryStore applied decision returned undefined (nothing persisted)");
+
+    const activeMemories = memoryStore.getActive("privacy_user");
+    assert(activeMemories.length === 0, "Zero active memories persisted in memoryStore for privacy user");
+
+    // Also test quarantine redaction on raw memory record
+    const rawSensitiveMem: MemoryRecord = {
+      id: "mem_dirty_sec",
+      userId: "privacy_user",
+      type: "FACT",
+      key: "secret_api_key",
+      value: "sk-1234567890abcdefghijklmnopqrstuv",
+      normalizedValue: "sk-1234567890abcdefghijklmnopqrstuv",
+      source: "EXPLICIT_USER",
+      confidence: 1.0,
+      importance: 90,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      status: "ACTIVE",
+      tags: ["api"],
+      evidence: ["API key"],
+      version: 1,
+    };
+
+    const quarantineResult = memoryConsolidationEngine.quarantineSensitive(rawSensitiveMem);
+    assert(quarantineResult.isSensitive === true, "Quarantine identified sensitive token");
+    assert(quarantineResult.updatedMemory?.status === "DELETED", "Quarantined record status set to DELETED");
+    assert(quarantineResult.updatedMemory?.value === "[REDACTED_SENSITIVE_DATA]", "Sensitive token redacted in store");
+
+    memoryStore.save("privacy_user", quarantineResult.updatedMemory!);
+    assert(memoryStore.getActive("privacy_user").length === 0, "Active memories remains 0 after quarantine save");
+  }
+
+  // =========================================================================
+  // TEST 31 — End-to-End BrainEngine Pipeline with MemoryStore Integration
+  // =========================================================================
+  console.log("\nTEST 31 — End-to-End BrainEngine Pipeline with MemoryStore Integration:");
+  {
+    memoryStore.clearAll();
+    const testUserId = "pipeline_user";
+
+    // Turn 1: User states preference -> BrainEngine should analyze, evaluate decision, and persist in MemoryStore
+    const turn1Analysis = brainEngine.analyze(
+      "Remember that I prefer dark mode.",
+      [],
+      undefined,
+      testUserId,
+      undefined,
+      { userId: testUserId, persistDecisions: true, autoMaintain: true }
+    );
+
+    assert(turn1Analysis.memoryDecision?.action === "SAVE", "Turn 1 produced SAVE decision");
+    
+    // Verify it is now persisted in MemoryStore
+    const storedTurn1 = memoryStore.getActive(testUserId);
+    assert(storedTurn1.length === 1, "MemoryStore now contains 1 active memory from pipeline");
+    assert(storedTurn1[0].value === "dark mode", "Stored value is dark mode");
+
+    // Turn 2: User asks a recall question -> BrainEngine should load from MemoryStore and retrieve it
+    const turn2Analysis = brainEngine.analyze(
+      "What UI theme do I prefer?",
+      [{ sender: "user", text: "Remember that I prefer dark mode." }],
+      turn1Analysis.activeContext,
+      testUserId,
+      undefined,
+      { userId: testUserId }
+    );
+
+    assert(turn2Analysis.memoryRetrieval !== undefined, "Turn 2 executed memory retrieval");
+    assert(turn2Analysis.memoryRetrieval?.retrievedMemories.length === 1, "Turn 2 retrieved stored dark mode memory");
+    assert(turn2Analysis.memoryRetrieval?.retrievedMemories[0].memory.value === "dark mode", "Retrieved value is dark mode");
+    assert(turn2Analysis.promptDirectives.some((d) => d.includes("dark mode")), "Memory injected into prompt directives");
+  }
+
+  // =========================================================================
+  // TEST 32 — Topic & Scope Isolation in Retrieval & Consolidation
+  // =========================================================================
+  console.log("\nTEST 32 — Topic & Scope Isolation in Retrieval & Consolidation:");
+  {
+    const sportsMem: MemoryRecord = {
+      id: "mem_sports",
+      userId: "user_scope",
+      type: "PREFERENCE",
+      key: "preference_favorite_sport",
+      value: "Cricket",
+      normalizedValue: "cricket",
+      source: "EXPLICIT_USER",
+      confidence: 1.0,
+      importance: 85,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      status: "ACTIVE",
+      tags: ["sport", "cricket"],
+      evidence: ["I love cricket"],
+      version: 1,
+    };
+
+    const codingMem: MemoryRecord = {
+      id: "mem_coding",
+      userId: "user_scope",
+      type: "PREFERENCE",
+      key: "preference_ide",
+      value: "VS Code",
+      normalizedValue: "vs code",
+      source: "EXPLICIT_USER",
+      confidence: 1.0,
+      importance: 85,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      status: "ACTIVE",
+      tags: ["coding", "ide"],
+      evidence: ["I use VS Code"],
+      version: 1,
+    };
+
+    const context = contextStore.getOrCreate("scope_test");
+    const intent = intentEngine.classifyIntent("What IDE do I use?", [], context);
+
+    const retrievalResult = memoryRetrievalEngine.retrieve({
+      message: "What IDE do I use?",
+      context,
+      intent,
+      memories: [sportsMem, codingMem],
+      userId: "user_scope",
+    });
+
+    assert(retrievalResult.retrievedMemories.length === 1, "Retrieved only relevant IDE memory");
+    assert(retrievalResult.retrievedMemories[0].memory.key === "preference_ide", "Only IDE memory was retrieved, sports memory was scoped out");
+  }
+
+  // =========================================================================
+  // TEST 33 — Expiration Lifecycle & Exclusion
+  // =========================================================================
+  console.log("\nTEST 33 — Expiration Lifecycle & Exclusion:");
+  {
+    const tempMem: MemoryRecord = {
+      id: "mem_temp_expired",
+      userId: "user_exp",
+      type: "TEMPORARY",
+      key: "temp_task",
+      value: "Buy groceries today",
+      normalizedValue: "buy groceries today",
+      source: "EXPLICIT_USER",
+      confidence: 1.0,
+      importance: 40,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      expiresAt: baseTime + 1000,
+      status: "ACTIVE",
+      tags: ["task"],
+      evidence: ["Buy groceries today"],
+      version: 1,
+    };
+
+    // Before expiration timestamp
+    const beforeExp = memoryConsolidationEngine.checkExpiration(tempMem, baseTime + 500);
+    assert(!beforeExp.isExpired, "Memory is not expired before expiresAt");
+
+    // After expiration timestamp
+    const afterExp = memoryConsolidationEngine.checkExpiration(tempMem, baseTime + 1500);
+    assert(afterExp.isExpired, "Memory is expired after expiresAt");
+    assert(afterExp.updatedMemory?.status === "EXPIRED", "Status updated to EXPIRED");
+
+    // Full maintain pass updates status
+    const maintained = memoryConsolidationEngine.maintain([tempMem], { currentTime: baseTime + 1500 });
+    assert(maintained.expiredCount === 1, "Maintained marked 1 expired memory");
+    assert(maintained.updatedMemories[0].status === "EXPIRED", "Maintained status is EXPIRED");
+  }
+
+  // =========================================================================
+  // TEST 34 — Candidate Age Gating & Stale Demotion
+  // =========================================================================
+  console.log("\nTEST 34 — Candidate Age Gating & Stale Demotion:");
+  {
+    const youngCandidate: MemoryRecord = {
+      id: "cand_young",
+      userId: "user_cand",
+      type: "CANDIDATE",
+      key: "hobby_interest",
+      value: "Origami",
+      normalizedValue: "origami",
+      source: "INFERRED",
+      confidence: 0.90,
+      importance: 60,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      reinforcementCount: 3,
+      status: "CANDIDATE",
+      tags: ["hobby"],
+      evidence: ["Origami mentioned"],
+      version: 1,
+    };
+
+    // Age gating: min 7 days required. Candidate is only 1 day old.
+    const ageGatedEval = memoryConsolidationEngine.evaluateCandidate(youngCandidate, [youngCandidate], {
+      currentTime: baseTime + 1 * 86400000,
+      candidateMinAgeDays: 7,
+    });
+    assert(ageGatedEval.updatedMemory.status === "CANDIDATE", "Candidate not promoted yet because age < 7 days");
+
+    // Once 8 days have passed, candidate is promoted
+    const agedEval = memoryConsolidationEngine.evaluateCandidate(youngCandidate, [youngCandidate], {
+      currentTime: baseTime + 8 * 86400000,
+      candidateMinAgeDays: 7,
+      candidatePromotionThreshold: 2,
+      candidateConfidenceThreshold: 0.75,
+    });
+    assert(agedEval.updatedMemory.status === "ACTIVE", "Candidate promoted once age and criteria met");
+
+    // Stale candidate (inactive > 30 days without reinforcement)
+    const staleCandidate: MemoryRecord = {
+      ...youngCandidate,
+      reinforcementCount: 1,
+      confidence: 0.60,
+    };
+    const staleEval = memoryConsolidationEngine.evaluateCandidate(staleCandidate, [staleCandidate], {
+      currentTime: baseTime + 35 * 86400000,
+      candidateMaxStaleDays: 30,
+      candidatePromotionThreshold: 2,
+    });
+    assert(staleEval.updatedMemory.status === "OUTDATED", "Stale candidate demoted to OUTDATED");
+  }
+
   console.log("==========================================");
-  console.log("ALL 22 MEMORY CONSOLIDATION TESTS PASSED!");
+  console.log("ALL 34 MEMORY CONSOLIDATION TESTS PASSED!");
   console.log("==========================================");
 }
 
@@ -1076,3 +1651,4 @@ runConsolidationTests().catch((err) => {
   console.error("Test execution failed:", err);
   process.exit(1);
 });
+

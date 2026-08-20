@@ -284,10 +284,10 @@ export class MemoryConsolidationEngine {
       const existingMergedFrom = canonical.mergedFrom || [];
       const updatedMergedFrom = Array.from(new Set([...existingMergedFrom, ...duplicateIds]));
 
-      // Update canonical record
+      // Update canonical record (CRITICAL: preserve canonical status without accidental candidate promotion)
       const updatedCanonical: MemoryRecord = {
         ...canonical,
-        status: canonical.status === "CANDIDATE" && totalReinforcements >= 2 ? "ACTIVE" : canonical.status,
+        status: canonical.status,
         confidence: canonical.source === "EXPLICIT_USER" ? 1.0 : calibratedConfidence,
         importance: calibratedImportance,
         reinforcementCount: totalReinforcements,
@@ -593,6 +593,36 @@ export class MemoryConsolidationEngine {
     const count = memory.reinforcementCount || 1;
     const lastActive = memory.lastReinforcedAt ?? memory.updatedAt ?? memory.createdAt;
     const inactiveDays = (currentTime - lastActive) / (1000 * 60 * 60 * 24);
+
+    // 0. Demote if sensitive/quarantined or expired
+    if (memory.isQuarantined || memory.source === ("SENSITIVE_QUARANTINE" as any)) {
+      return { updatedMemory: memory, action: null };
+    }
+
+    if (memory.expiresAt && currentTime >= memory.expiresAt) {
+      const expired: MemoryRecord = {
+        ...memory,
+        status: "EXPIRED",
+        updatedAt: currentTime,
+        version: memory.version + 1,
+      };
+      const action: MemoryMaintenanceAction = {
+        action: "EXPIRE",
+        targetMemoryId: memory.id,
+        reason: "Candidate memory reached expiration timestamp",
+        updatedFields: { status: "EXPIRED" },
+        lineageUpdate: { previousState: "CANDIDATE" },
+      };
+      return { updatedMemory: expired, action };
+    }
+
+    // Check age gating if candidateMinAgeDays is configured
+    if (options?.candidateMinAgeDays && options.candidateMinAgeDays > 0) {
+      const ageDays = (currentTime - memory.createdAt) / (1000 * 60 * 60 * 24);
+      if (ageDays < options.candidateMinAgeDays) {
+        return { updatedMemory: memory, action: null };
+      }
+    }
 
     // Check for contradictory active memory
     const normKey = this.normalizeKey(memory.key);

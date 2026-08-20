@@ -65,6 +65,7 @@ import { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 import { MemoryRetrievalAnalysis } from "./memoryRetrievalTypes";
 import { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 import { MemoryConsolidationAnalysis } from "./memoryConsolidationTypes";
+import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
 export * from "./contextStore";
@@ -75,6 +76,7 @@ export * from "./verificationTypes";
 export * from "./memoryTypes";
 export * from "./memoryRetrievalTypes";
 export * from "./memoryConsolidationTypes";
+export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
 export { planningEngine } from "./planningEngine";
@@ -82,6 +84,7 @@ export { verificationEngine } from "./verificationEngine";
 export { memoryDecisionEngine } from "./memoryDecisionEngine";
 export { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 export { memoryConsolidationEngine } from "./memoryConsolidationEngine";
+export { memoryStore } from "./memoryStore";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
 
@@ -158,10 +161,22 @@ export class BrainEngine {
     history: ConversationTurn[] = [],
     existingContext?: ConversationContext,
     sessionId: string = "default",
-    memories: MemoryRecord[] = []
+    memories?: MemoryRecord[],
+    options?: {
+      userId?: string;
+      persistDecisions?: boolean;
+      autoMaintain?: boolean;
+      currentTime?: number;
+    }
   ): BrainAnalysis {
     const trimmed = (message || "").trim();
     const recentHistory = Array.isArray(history) ? history.slice(-12) : [];
+    const userId = options?.userId || sessionId || "default";
+    const currentTime = options?.currentTime || Date.now();
+
+    // 0. Load active long-term memories from MemoryStore if not explicitly passed
+    let userMemories: MemoryRecord[] =
+      memories && memories.length > 0 ? memories : memoryStore.get(userId);
 
     // 1. Run Structured Active Context Engine
     const contextResult = contextEngine.analyze(
@@ -304,11 +319,17 @@ export class BrainEngine {
       context: contextResult.context,
       intent: structuredIntent,
       reasoning: reasoningAnalysis,
-      existingMemories: memories,
+      existingMemories: userMemories,
     });
 
     if (memoryDecision.directive && !promptDirectives.includes(memoryDecision.directive)) {
       promptDirectives.push(memoryDecision.directive);
+    }
+
+    // Persist memory decision through MemoryStore boundary if enabled (default true)
+    if (options?.persistDecisions !== false && memoryDecision && memoryDecision.action !== "IGNORE") {
+      memoryStore.applyDecision(userId, memoryDecision, currentTime);
+      userMemories = memoryStore.get(userId);
     }
 
     // Step 7 / Phase 2: Long-Term Memory Retrieval & Recall Engine
@@ -316,8 +337,8 @@ export class BrainEngine {
       message,
       context: contextResult.context,
       intent: structuredIntent,
-      memories,
-      userId: sessionId,
+      memories: userMemories,
+      userId,
     });
 
     for (const d of memoryRetrieval.directives) {
@@ -326,10 +347,21 @@ export class BrainEngine {
       }
     }
 
-    // Step 8 / Phase 2: Memory Consolidation & Lifecycle Diagnostics (Read-Only Analysis)
+    // Optional automated consolidation maintenance
+    if (options?.autoMaintain) {
+      const maintenanceResult = memoryConsolidationEngine.maintain(userMemories, {
+        currentTime,
+      });
+      memoryStore.applyMaintenance(userId, maintenanceResult);
+      userMemories = memoryStore.get(userId);
+    }
+
+    // Step 8 / Phase 2: Memory Consolidation & Lifecycle Diagnostics (Analysis)
     let memoryConsolidation: MemoryConsolidationAnalysis | undefined;
-    if (memories && memories.length > 0) {
-      memoryConsolidation = memoryConsolidationEngine.analyze(memories);
+    if (userMemories && userMemories.length > 0) {
+      memoryConsolidation = memoryConsolidationEngine.analyze(userMemories, {
+        currentTime,
+      });
       for (const d of memoryConsolidation.directives) {
         if (!promptDirectives.includes(d)) {
           promptDirectives.push(d);

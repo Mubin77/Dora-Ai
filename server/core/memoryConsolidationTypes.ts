@@ -177,6 +177,7 @@ export interface MemoryConsolidationOptions {
   currentTime?: number;
   candidatePromotionThreshold?: number; // min reinforcements needed (default: 2)
   candidateConfidenceThreshold?: number; // min confidence (default: 0.75)
+  candidateMinAgeDays?: number;         // min age before promotion can occur (default: 0)
   candidateMaxStaleDays?: number;       // default: 30 days
   autoQuarantineSensitive?: boolean;    // default: true
   autoMergeDuplicates?: boolean;        // default: true
