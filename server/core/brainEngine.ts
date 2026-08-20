@@ -63,6 +63,8 @@ import {
 } from "./memoryTypes";
 import { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 import { MemoryRetrievalAnalysis } from "./memoryRetrievalTypes";
+import { memoryConsolidationEngine } from "./memoryConsolidationEngine";
+import { MemoryConsolidationAnalysis } from "./memoryConsolidationTypes";
 
 export * from "./contextTypes";
 export * from "./contextStore";
@@ -72,12 +74,14 @@ export * from "./planningTypes";
 export * from "./verificationTypes";
 export * from "./memoryTypes";
 export * from "./memoryRetrievalTypes";
+export * from "./memoryConsolidationTypes";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
 export { planningEngine } from "./planningEngine";
 export { verificationEngine } from "./verificationEngine";
 export { memoryDecisionEngine } from "./memoryDecisionEngine";
 export { memoryRetrievalEngine } from "./memoryRetrievalEngine";
+export { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
 
@@ -102,6 +106,7 @@ export interface BrainAnalysis {
   verificationAnalysis?: VerificationAnalysis;
   memoryDecision?: MemoryDecision;
   memoryRetrieval?: MemoryRetrievalAnalysis;
+  memoryConsolidation?: MemoryConsolidationAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -321,6 +326,17 @@ export class BrainEngine {
       }
     }
 
+    // Step 8 / Phase 2: Memory Consolidation & Lifecycle Diagnostics (Read-Only Analysis)
+    let memoryConsolidation: MemoryConsolidationAnalysis | undefined;
+    if (memories && memories.length > 0) {
+      memoryConsolidation = memoryConsolidationEngine.analyze(memories);
+      for (const d of memoryConsolidation.directives) {
+        if (!promptDirectives.includes(d)) {
+          promptDirectives.push(d);
+        }
+      }
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -332,6 +348,7 @@ export class BrainEngine {
       verificationAnalysis,
       memoryDecision,
       memoryRetrieval,
+      memoryConsolidation,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,

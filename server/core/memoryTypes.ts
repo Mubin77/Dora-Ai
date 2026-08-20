@@ -31,7 +31,9 @@ export type MemoryStatus =
   | "OUTDATED"
   | "ARCHIVED"
   | "SUPERSEDED"
-  | "CANDIDATE";
+  | "CANDIDATE"
+  | "EXPIRED"
+  | "DELETED";
 
 export type MemoryDecisionAction =
   | "SAVE"
@@ -60,6 +62,15 @@ export interface MemoryRecord {
   tags: string[];
   evidence: string[];
   supersedes?: string | null; // ID of replaced/superseded memory
+  supersededBy?: string | null; // ID of winning memory that superseded this one
+  mergedFrom?: string[];      // IDs of memories merged into this canonical record
+  mergedInto?: string | null; // ID of canonical memory this was merged into
+  reinforcementCount?: number;
+  lastReinforcedAt?: number;
+  isQuarantined?: boolean;
+  quarantineReason?: string;
+  healthScore?: number;
+  decayScore?: number;
   version: number;
 }
 
