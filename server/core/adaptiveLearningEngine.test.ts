@@ -67,25 +67,42 @@ export function runTests() {
   console.log("==========================================");
 
   // -------------------------------------------------------------
-  // TEST 1 — One-off preference does not immediately become confirmed
+  // TEST 1 — Explicit preference vs Inferred preference lifecycle
   // -------------------------------------------------------------
-  console.log("TEST 1 — One-off preference does not immediately become confirmed:");
+  console.log("TEST 1 — Explicit preference vs Inferred preference lifecycle:");
   {
     const ctx = createDummyContext();
     const intent = createDummyIntent();
-    const result = adaptiveLearningEngine.analyze({
+
+    // 1a. Explicit preference immediately confirmed
+    const explicitResult = adaptiveLearningEngine.analyze({
       message: "I prefer ASUS laptops.",
       context: ctx,
       intent,
-      options: { userId: "user_1", currentTime: 1000 },
+      options: { userId: "user_1_a", currentTime: 1000 },
     });
 
-    assert(result.patterns.length >= 1, "Pattern created for explicit preference");
-    const pref = result.patterns.find((p) => p.value.toLowerCase().includes("asus"));
-    assert(Boolean(pref), "ASUS preference pattern found");
-    assert(pref!.status === "CANDIDATE", "Single occurrence MUST be CANDIDATE, not CONFIRMED");
-    assert(pref!.independentEvidenceCount === 1, "Evidence count is 1");
-    console.log("  ✓ One-off preference starts safely as CANDIDATE");
+    assert(explicitResult.patterns.length >= 1, "Pattern created for explicit preference");
+    const explicitPref = explicitResult.patterns.find((p) => p.value.toLowerCase().includes("asus"));
+    assert(Boolean(explicitPref), "ASUS preference pattern found");
+    assert(explicitPref!.status === "CONFIRMED", "Explicit statement MUST be CONFIRMED immediately");
+    assert(explicitPref!.confidence >= 0.85, "Explicit statement has high confidence >= 0.85");
+    assert(explicitPref!.isExplicit === true, "Explicit flag is true");
+
+    // 1b. Inferred query preference starts safely as CANDIDATE
+    const inferredResult = adaptiveLearningEngine.analyze({
+      message: "Show me specs for RTX gaming laptops",
+      context: ctx,
+      intent,
+      options: { userId: "user_1_b", currentTime: 1000 },
+    });
+
+    const inferredPref = inferredResult.patterns.find((p) => p.patternType === "DOMAIN_INTEREST" || p.key.includes("laptop"));
+    if (inferredPref) {
+      assert(inferredPref.status === "CANDIDATE", "Inferred domain query MUST start as CANDIDATE");
+      assert(inferredPref.isExplicit === false, "Inferred query isExplicit is false");
+    }
+    console.log("  ✓ Explicit statements promoted to CONFIRMED; inferred queries start as CANDIDATE");
   }
 
   // -------------------------------------------------------------
@@ -128,25 +145,45 @@ export function runTests() {
   {
     const ctx = createDummyContext();
     const intent = createDummyIntent();
-    // Turn 1
-    const res1 = adaptiveLearningEngine.analyze({
-      message: "I prefer Dark Mode UI.",
-      context: ctx,
-      intent,
-      options: { userId: "user_3", currentTime: 1000 },
-    });
-    // Turn 2 (explicit confirmation satisfies explicit threshold >= 2, conf >= 0.75)
+    const candidatePattern: LearningPattern = {
+      id: "pat_cand_promote",
+      userId: "user_3",
+      patternType: "USER_PREFERENCE",
+      category: "general",
+      key: "pref_oled_display",
+      value: "OLED Display",
+      status: "CANDIDATE",
+      confidence: 0.60,
+      reinforcementCount: 1,
+      independentEvidenceCount: 1,
+      firstObservedAt: 1000,
+      lastObservedAt: 1000,
+      evidence: [],
+      source: "DOMAIN_QUERY",
+      isExplicit: false,
+    };
+
+    // Turn 2: Second observation
     const res2 = adaptiveLearningEngine.analyze({
-      message: "I always use Dark Mode UI.",
+      message: "Tell me about OLED Display laptops",
       context: ctx,
       intent,
-      existingPatterns: res1.patterns,
+      existingPatterns: [candidatePattern],
       options: { userId: "user_3", currentTime: 2000 },
     });
 
-    const pref = res2.patterns.find((p) => p.value.toLowerCase().includes("dark mode"))!;
+    // Turn 3: Third observation (satisfies threshold >= 3, conf >= 0.75)
+    const res3 = adaptiveLearningEngine.analyze({
+      message: "Are OLED Display screens good for coding?",
+      context: ctx,
+      intent,
+      existingPatterns: res2.patterns,
+      options: { userId: "user_3", currentTime: 3000 },
+    });
+
+    const pref = res3.patterns.find((p) => p.value.toLowerCase().includes("oled"))!;
     assert(pref.status === "CONFIRMED", "Pattern promoted to CONFIRMED after reaching threshold");
-    const promoAction = res2.decisions.find((d) => d.actionType === "PROMOTE_PATTERN");
+    const promoAction = res3.decisions.find((d) => d.actionType === "PROMOTE_PATTERN");
     assert(Boolean(promoAction), "Promotion action recorded in decisions");
     console.log("  ✓ Candidate promoted to CONFIRMED upon satisfying criteria");
   }
@@ -277,7 +314,7 @@ export function runTests() {
     assert(oldPat.status === "OUTDATED", "Old Lenovo preference marked OUTDATED");
     assert(oldPat.supersededBy === newPat.id, "Old pattern points to new pattern via supersededBy");
     assert(newPat.supersedes === oldPat.id, "New pattern points to old pattern via supersedes");
-    assert(newPat.status === "CANDIDATE", "New ASUS pattern active");
+    assert(newPat.status === "CONFIRMED", "New ASUS pattern active and CONFIRMED from explicit correction");
     console.log("  ✓ Explicit correction cleanly supersedes old preference with lineage");
   }
 

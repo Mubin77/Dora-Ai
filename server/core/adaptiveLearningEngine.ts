@@ -18,7 +18,7 @@
  */
 
 import { ConversationContext, ConversationTurn } from "./contextTypes";
-import { StructuredIntent } from "./intentTypes";
+import { StructuredIntent, BrainIntent } from "./intentTypes";
 import { ReasoningAnalysis } from "./reasoningTypes";
 import { PlanningAnalysis } from "./planningTypes";
 import { VerificationAnalysis } from "./verificationTypes";
@@ -131,20 +131,26 @@ export class AdaptiveLearningEngine {
 
     totalSignalsProcessed = rawSignals.length;
 
-    // 2. Filter sensitive signals
+    // 2. Filter sensitive signals and deduplicate same-turn signals
     const safeSignals: LearningSignal[] = [];
+    const seenSignalKeys = new Set<string>();
+
     for (const sig of rawSignals) {
       if (sig.isSensitive || this.isSensitiveContent(sig.signalKey, sig.signalValue)) {
         sensitiveSignalsBlocked++;
         decisions.push({
           actionType: "SUPPRESS",
-          patternId: `sig_${sig.id}`,
+          patternId: sig.id,
           reason: "SENSITIVE_DATA_SUPPRESSED",
           patternKey: sig.signalKey,
           patternValue: "[REDACTED_SENSITIVE_DATA]",
         });
       } else {
-        safeSignals.push(sig);
+        const sigDedupeKey = `${sig.source}_${sig.signalKey}_${this.normalizeKey(sig.signalValue)}`;
+        if (!seenSignalKeys.has(sigDedupeKey)) {
+          seenSignalKeys.add(sigDedupeKey);
+          safeSignals.push(sig);
+        }
       }
     }
 
@@ -168,17 +174,21 @@ export class AdaptiveLearningEngine {
       const matchIndex = this.findMatchingPatternIndex(currentPatterns, signal);
 
       if (matchIndex === -1) {
-        // No existing pattern: Create CANDIDATE pattern
-        const newCandidate = this.createCandidatePattern(userId, signal, currentTime);
-        currentPatterns.push(newCandidate);
-        candidatesCreated++;
+        // No existing pattern: Create pattern (CONFIRMED if explicit, CANDIDATE if inferred)
+        const newPattern = this.createPattern(userId, signal, currentTime);
+        currentPatterns.push(newPattern);
+        if (newPattern.status === "CANDIDATE") {
+          candidatesCreated++;
+        } else if (newPattern.status === "CONFIRMED") {
+          patternsPromoted++;
+        }
         decisions.push({
           actionType: "CREATE_CANDIDATE",
-          patternId: newCandidate.id,
+          patternId: newPattern.id,
           reason: signal.isExplicit ? "EXPLICIT_INITIAL_STATEMENT" : "INTERACTION_OBSERVED",
-          newStatus: "CANDIDATE",
-          patternKey: newCandidate.key,
-          patternValue: newCandidate.value,
+          newStatus: newPattern.status,
+          patternKey: newPattern.key,
+          patternValue: newPattern.value,
         });
       } else {
         // Existing pattern found: Evaluate reinforcement or promotion
@@ -380,7 +390,7 @@ export class AdaptiveLearningEngine {
     // 7. Detect Raw Sensitive Input to ensure explicit suppression tracking
     if (this.isSensitiveContent("input", trimmed)) {
       signals.push({
-        id: `sensitive_${currentTime}_${Math.random().toString(36).substring(2, 6)}`,
+        id: this.generateSignalId("sensitive", "sensitive_credential", "[REDACTED_SENSITIVE_DATA]", currentTime),
         source: "EXPLICIT_USER_STATEMENT",
         type: "PREFERENCE",
         signalKey: "sensitive_credential",
@@ -403,7 +413,7 @@ export class AdaptiveLearningEngine {
             );
             if (!alreadyExtracted) {
               signals.push({
-                id: `cand_obs_${currentTime}_${p.id}`,
+                id: this.generateSignalId("cand_obs", p.key, p.value, currentTime),
                 source: (p.source as LearningSignalSource) || "DOMAIN_QUERY",
                 type: p.patternType === "DOMAIN_INTEREST" ? "DOMAIN_INTEREST" : "PREFERENCE",
                 signalKey: p.key,
@@ -449,9 +459,9 @@ export class AdaptiveLearningEngine {
       return { value: val || raw.trim(), category };
     };
 
-    // English patterns: "I prefer X", "I like X", "My favorite X is Y", "I usually use X", "I usually choose X"
+    // English patterns: "I prefer X", "I like X", "My favorite X is Y", "I usually use X", "I usually choose X", "I always want X"
     const enPrefMatch =
-      message.match(/\b(?:i\s+prefer|i\s+like|i\s+always\s+use|i\s+usually\s+choose|i\s+usually\s+use|my\s+favorite\s+(\w+)\s+is)\s+([a-zA-Z0-9_\-\s]+)/i);
+      message.match(/\b(?:i\s+prefer|i\s+like|i\s+always\s+use|i\s+always\s+want|i\s+usually\s+choose|i\s+usually\s+use|my\s+favorite\s+(\w+)\s+is)\s+([a-zA-Z0-9_\-\s]+)/i);
     if (enPrefMatch) {
       const explicitCat = enPrefMatch[1] ? enPrefMatch[1].trim() : undefined;
       const rawVal = enPrefMatch[2] ? enPrefMatch[2].trim() : "";
@@ -460,12 +470,12 @@ export class AdaptiveLearningEngine {
       if (value && value.length > 1 && !this.isCommonFiller(value)) {
         const cat = explicitCat || category || "general";
         signals.push({
-          id: `exp_en_${currentTime}_${Math.random().toString(36).substring(2, 6)}`,
+          id: this.generateSignalId("exp_en", `pref_${value}`, value, currentTime),
           source: "EXPLICIT_USER_STATEMENT",
           type: "PREFERENCE",
           signalKey: this.normalizeKey(`pref_${value}`),
           signalValue: value,
-          confidence: 0.80,
+          confidence: 0.85,
           timestamp: currentTime,
           isExplicit: true,
           domain: cat,
@@ -473,15 +483,15 @@ export class AdaptiveLearningEngine {
       }
     }
 
-    // Bangla patterns: "আমার পছন্দ X", "আমি X পছন্দ করি", "আমার প্রিয় X হলো Y", "আমি X ব্যবহার করি"
+    // Bangla patterns: "আমার পছন্দ X", "আমি X পছন্দ করি", "আমার প্রিয় X হলো Y", "আমি X ব্যবহার করি", "সবসময় X দিও"
     const bnPrefMatch =
-      message.match(/(?:আমার\s+পছন্দ|আমি\s+([\u0980-\u09FF\w\s]+)\s+পছন্দ\s+করি|আমার\s+প্রিয়\s+([\u0980-\u09FF\w]+)\s+(?:হলো|হল)\s+([\u0980-\u09FF\w\s]+))/);
+      message.match(/(?:আমার\s+পছন্দ|আমি\s+([\u0980-\u09FF\w\s]+)\s+পছন্দ\s+করি|আমার\s+প্রিয়\s+([\u0980-\u09FF\w]+)\s+(?:হলো|হল)\s+([\u0980-\u09FF\w\s]+)|সবসময়\s+([\u0980-\u09FF\w\s]+)\s+(?:দিও|করো|করুন))/);
     if (bnPrefMatch) {
-      const rawVal = (bnPrefMatch[1] || bnPrefMatch[3] || message.replace(/.*আমার\s+পছন্দ\s+/, "")).trim();
+      const rawVal = (bnPrefMatch[1] || bnPrefMatch[3] || bnPrefMatch[4] || message.replace(/.*আমার\s+পছন্দ\s+/, "")).trim();
       const { value, category } = cleanValue(rawVal);
       if (value && value.length > 1) {
         signals.push({
-          id: `exp_bn_${currentTime}_${Math.random().toString(36).substring(2, 6)}`,
+          id: this.generateSignalId("exp_bn", `pref_${value}`, value, currentTime),
           source: "EXPLICIT_USER_STATEMENT",
           type: "PREFERENCE",
           signalKey: this.normalizeKey(`pref_${value}`),
@@ -496,18 +506,18 @@ export class AdaptiveLearningEngine {
 
     // Banglish patterns: "amar pochondo X", "ami X prefer kori", "ami shobshomoy X use kori"
     const banglishMatch =
-      message.match(/\b(?:amar\s+pochondo|ami\s+([a-zA-Z0-9_\-\s]+)\s+prefer\s+kori|ami\s+([a-zA-Z0-9_\-\s]+)\s+use\s+kori)\b/i);
+      message.match(/\b(?:amar\s+pochondo|ami\s+([a-zA-Z0-9_\-\s]+)\s+prefer\s+kori|ami\s+([a-zA-Z0-9_\-\s]+)\s+use\s+kori|shobshomoy\s+([a-zA-Z0-9_\-\s]+)\s+dio)\b/i);
     if (banglishMatch) {
-      const rawVal = (banglishMatch[1] || banglishMatch[2] || message.replace(/.*amar\s+pochondo\s+/i, "")).trim();
+      const rawVal = (banglishMatch[1] || banglishMatch[2] || banglishMatch[3] || message.replace(/.*amar\s+pochondo\s+/i, "")).trim();
       const { value, category } = cleanValue(rawVal);
       if (value && value.length > 1 && !this.isCommonFiller(value)) {
         signals.push({
-          id: `exp_bng_${currentTime}_${Math.random().toString(36).substring(2, 6)}`,
+          id: this.generateSignalId("exp_bng", `pref_${value}`, value, currentTime),
           source: "EXPLICIT_USER_STATEMENT",
           type: "PREFERENCE",
           signalKey: this.normalizeKey(`pref_${value}`),
           signalValue: value,
-          confidence: 0.80,
+          confidence: 0.85,
           timestamp: currentTime,
           isExplicit: true,
           domain: category || "general",
@@ -550,7 +560,7 @@ export class AdaptiveLearningEngine {
       const correctedVal = corrMatch[1].trim().replace(/\.$/, "");
       if (correctedVal && !this.isCommonFiller(correctedVal)) {
         return {
-          id: `corr_${currentTime}_${Math.random().toString(36).substring(2, 6)}`,
+          id: this.generateSignalId("corr", `pref_${correctedVal}`, correctedVal, currentTime),
           source: "USER_CORRECTION",
           type: "CORRECTION",
           signalKey: this.normalizeKey(`pref_${correctedVal}`),
@@ -568,7 +578,7 @@ export class AdaptiveLearningEngine {
       const val = (bnCorrMatch[1] || bnCorrMatch[2]).trim();
       if (val) {
         return {
-          id: `corr_bn_${currentTime}_${Math.random().toString(36).substring(2, 6)}`,
+          id: this.generateSignalId("corr_bn", `pref_${val}`, val, currentTime),
           source: "USER_CORRECTION",
           type: "CORRECTION",
           signalKey: this.normalizeKey(`pref_${val}`),
@@ -798,7 +808,7 @@ export class AdaptiveLearningEngine {
   // PATTERN REINFORCEMENT & DEDUPLICATION
   // ==========================================
 
-  private createCandidatePattern(
+  private createPattern(
     userId: string,
     signal: LearningSignal,
     currentTime: number
@@ -814,28 +824,35 @@ export class AdaptiveLearningEngine {
         ? "DOMAIN_INTEREST"
         : "USER_PREFERENCE";
 
-    const initialConfidence = Math.min(
-      this.MAX_CONFIDENCE,
-      Math.max(this.MIN_CONFIDENCE, signal.confidence || this.CANDIDATE_INITIAL_CONFIDENCE)
-    );
+    const isExplicit = !!signal.isExplicit;
+    const initialStatus: PatternStatus = isExplicit ? "CONFIRMED" : "CANDIDATE";
+    const initialConfidence = isExplicit
+      ? Math.max(0.85, Math.min(this.MAX_CONFIDENCE, signal.confidence || 0.85))
+      : Math.min(
+          0.65,
+          Math.max(this.MIN_CONFIDENCE, signal.confidence || this.CANDIDATE_INITIAL_CONFIDENCE)
+        );
+
+    const patternId = this.generatePatternId(userId, patternType, signal.signalKey, signal.signalValue);
+    const evidenceId = this.generateEvidenceId(signal.source, signal.signalKey, signal.signalValue, currentTime);
 
     const evidence: LearningEvidence = {
-      evidenceId: `ev_${currentTime}_${Math.random().toString(36).substring(2, 7)}`,
+      evidenceId,
       signalType: signal.type,
       timestamp: currentTime,
       valueHash: this.hashValue(signal.signalKey, signal.signalValue),
       source: signal.source,
-      isExplicit: signal.isExplicit,
+      isExplicit,
     };
 
     return {
-      id: `pat_${currentTime}_${Math.random().toString(36).substring(2, 7)}`,
+      id: patternId,
       userId,
       patternType,
       category: signal.domain || "general",
       key: signal.signalKey,
       value: signal.signalValue,
-      status: "CANDIDATE",
+      status: initialStatus,
       confidence: initialConfidence,
       reinforcementCount: 1,
       independentEvidenceCount: 1,
@@ -843,7 +860,7 @@ export class AdaptiveLearningEngine {
       lastObservedAt: currentTime,
       evidence: [evidence],
       source: signal.source,
-      isExplicit: signal.isExplicit,
+      isExplicit,
     };
   }
 
@@ -859,10 +876,13 @@ export class AdaptiveLearningEngine {
   } {
     const actions: LearningAction[] = [];
     const valHash = this.hashValue(signal.signalKey, signal.signalValue);
+    const evidenceId = this.generateEvidenceId(signal.source, signal.signalKey, signal.signalValue, currentTime);
 
-    // Check for duplicate evidence in the exact same turn/timestamp
+    // Check for duplicate evidence in the exact same turn or with identical evidence ID / timestamp
     const isDuplicateEvidence = pattern.evidence.some(
-      (e) => e.valueHash === valHash && Math.abs(e.timestamp - currentTime) < 1000
+      (e) =>
+        (e.evidenceId === evidenceId) ||
+        (e.valueHash === valHash && Math.abs(e.timestamp - currentTime) < 1000)
     );
 
     if (isDuplicateEvidence) {
@@ -879,7 +899,7 @@ export class AdaptiveLearningEngine {
 
     // New independent evidence
     const newEvidence: LearningEvidence = {
-      evidenceId: `ev_${currentTime}_${Math.random().toString(36).substring(2, 7)}`,
+      evidenceId,
       signalType: signal.type,
       timestamp: currentTime,
       valueHash: valHash,
@@ -974,7 +994,12 @@ export class AdaptiveLearningEngine {
         this.areKeysOrCategoriesConflicting(p.key, correction.signalKey)
       ) {
         conflictsCount++;
-        const newPatternId = `pat_${currentTime}_${Math.random().toString(36).substring(2, 7)}`;
+        const newPatternId = this.generatePatternId(
+          p.userId,
+          p.patternType,
+          correction.signalKey,
+          correction.signalValue
+        );
 
         const superseded: LearningPattern = {
           ...p,
@@ -1002,15 +1027,20 @@ export class AdaptiveLearningEngine {
           category: p.category,
           key: correction.signalKey,
           value: correction.signalValue,
-          status: "CANDIDATE",
-          confidence: 0.85,
+          status: "CONFIRMED",
+          confidence: 0.95,
           reinforcementCount: 1,
           independentEvidenceCount: 1,
           firstObservedAt: currentTime,
           lastObservedAt: currentTime,
           evidence: [
             {
-              evidenceId: `ev_${currentTime}_${Math.random().toString(36).substring(2, 7)}`,
+              evidenceId: this.generateEvidenceId(
+                "USER_CORRECTION",
+                correction.signalKey,
+                correction.signalValue,
+                currentTime
+              ),
               signalType: "CORRECTION",
               timestamp: currentTime,
               valueHash: this.hashValue(correction.signalKey, correction.signalValue),
@@ -1028,7 +1058,7 @@ export class AdaptiveLearningEngine {
           actionType: "CREATE_CANDIDATE",
           patternId: newPattern.id,
           reason: "CREATED_FROM_EXPLICIT_CORRECTION",
-          newStatus: "CANDIDATE",
+          newStatus: "CONFIRMED",
           patternKey: newPattern.key,
           patternValue: newPattern.value,
         });
@@ -1051,7 +1081,12 @@ export class AdaptiveLearningEngine {
     actions: LearningAction[];
   } {
     const actions: LearningAction[] = [];
-    const newId = `pat_${currentTime}_${Math.random().toString(36).substring(2, 7)}`;
+    const newId = this.generatePatternId(
+      userId,
+      existing.patternType,
+      signal.signalKey,
+      signal.signalValue
+    );
 
     const updatedExisting: LearningPattern = {
       ...existing,
@@ -1077,15 +1112,20 @@ export class AdaptiveLearningEngine {
       category: existing.category,
       key: signal.signalKey,
       value: signal.signalValue,
-      status: "CANDIDATE",
-      confidence: 0.85,
+      status: "CONFIRMED",
+      confidence: 0.90,
       reinforcementCount: 1,
       independentEvidenceCount: 1,
       firstObservedAt: currentTime,
       lastObservedAt: currentTime,
       evidence: [
         {
-          evidenceId: `ev_${currentTime}_${Math.random().toString(36).substring(2, 7)}`,
+          evidenceId: this.generateEvidenceId(
+            signal.source,
+            signal.signalKey,
+            signal.signalValue,
+            currentTime
+          ),
           signalType: signal.type,
           timestamp: currentTime,
           valueHash: this.hashValue(signal.signalKey, signal.signalValue),
@@ -1102,7 +1142,7 @@ export class AdaptiveLearningEngine {
       actionType: "CREATE_CANDIDATE",
       patternId: newPattern.id,
       reason: "CREATED_FROM_EXPLICIT_UPDATE",
-      newStatus: "CANDIDATE",
+      newStatus: "CONFIRMED",
       patternKey: newPattern.key,
       patternValue: newPattern.value,
     });
@@ -1259,13 +1299,45 @@ export class AdaptiveLearningEngine {
       }
     }
 
+    if (pattern.key === "style_code_density") {
+      if (pattern.value === "high" && (lowerMessage.includes("explain") || lowerMessage.includes("step by step"))) {
+        return true;
+      }
+    }
+
+    const valLower = (pattern.value || "").toLowerCase();
+
     // 2. Direct negation of preference in current message
-    if (
-      lowerMessage.includes(`not ${pattern.value.toLowerCase()}`) ||
-      lowerMessage.includes(`without ${pattern.value.toLowerCase()}`) ||
-      lowerMessage.includes(`instead of ${pattern.value.toLowerCase()}`)
-    ) {
-      return true;
+    if (valLower.length > 0) {
+      if (
+        lowerMessage.includes(`not ${valLower}`) ||
+        lowerMessage.includes(`without ${valLower}`) ||
+        lowerMessage.includes(`instead of ${valLower}`) ||
+        lowerMessage.includes(`no ${valLower}`) ||
+        lowerMessage.includes(`exclude ${valLower}`)
+      ) {
+        return true;
+      }
+
+      // 3. Competing alternative entity explicitly requested in current message
+      const brandTokens = ["asus", "lenovo", "dell", "hp", "apple", "macbook", "thinkpad", "acer", "samsung", "sony"];
+      if (brandTokens.includes(valLower)) {
+        const competingBrand = brandTokens.find(
+          (b) => b !== valLower && (
+            lowerMessage.includes(`choose ${b}`) ||
+            lowerMessage.includes(`pick ${b}`) ||
+            lowerMessage.includes(`recommend ${b}`) ||
+            lowerMessage.includes(`buy ${b}`) ||
+            lowerMessage.includes(`use ${b}`) ||
+            lowerMessage.includes(`for this one ${b}`) ||
+            lowerMessage.includes(`this time ${b}`) ||
+            lowerMessage.includes(`show ${b}`)
+          )
+        );
+        if (competingBrand) {
+          return true;
+        }
+      }
     }
 
     return false;
@@ -1526,6 +1598,21 @@ export class AdaptiveLearningEngine {
       .toLowerCase()
       .trim()
       .replace(/[\s\-_]+/g, "_");
+  }
+
+  private generateSignalId(source: string, key: string, value: string, timestamp: number): string {
+    const hash = this.hashValue(key, value);
+    return `sig_${this.normalizeKey(source)}_${hash}_${timestamp}`;
+  }
+
+  private generatePatternId(userId: string, patternType: string, key: string, value: string): string {
+    const hash = this.hashValue(key, value);
+    return `pat_${this.normalizeKey(userId)}_${this.normalizeKey(patternType)}_${hash}`;
+  }
+
+  private generateEvidenceId(source: string, key: string, value: string, timestamp: number): string {
+    const hash = this.hashValue(key, value);
+    return `ev_${this.normalizeKey(source)}_${hash}_${timestamp}`;
   }
 
   private hashValue(key: string, value: string): string {
