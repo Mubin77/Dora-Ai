@@ -327,10 +327,6 @@ export class BrainEngine {
       existingMemories: userMemories,
     });
 
-    if (memoryDecision.directive && !promptDirectives.includes(memoryDecision.directive)) {
-      promptDirectives.push(memoryDecision.directive);
-    }
-
     // Persist memory decision through MemoryStore boundary if enabled (default true)
     if (options?.persistDecisions !== false && memoryDecision && memoryDecision.action !== "IGNORE") {
       memoryStore.applyDecision(userId, memoryDecision, currentTime);
@@ -338,6 +334,7 @@ export class BrainEngine {
     }
 
     // Step 7 / Phase 2: Long-Term Memory Retrieval & Recall Engine
+    // NOTE: Retrieval results remain strictly internal until MemoryGovernanceEngine evaluates them
     const memoryRetrieval = memoryRetrievalEngine.retrieve({
       message,
       context: contextResult.context,
@@ -345,12 +342,6 @@ export class BrainEngine {
       memories: userMemories,
       userId,
     });
-
-    for (const d of memoryRetrieval.directives) {
-      if (!promptDirectives.includes(d)) {
-        promptDirectives.push(d);
-      }
-    }
 
     // Optional automated consolidation maintenance
     if (options?.autoMaintain) {
@@ -367,14 +358,10 @@ export class BrainEngine {
       memoryConsolidation = memoryConsolidationEngine.analyze(userMemories, {
         currentTime,
       });
-      for (const d of memoryConsolidation.directives) {
-        if (!promptDirectives.includes(d)) {
-          promptDirectives.push(d);
-        }
-      }
     }
 
     // Step 9 / Phase 2: Memory Governance & Response Integration Engine
+    // Authoritative boundary: ONLY governance-approved directives and sanitizedMemoryContext may influence the prompt
     const memoryGovernanceAnalysis = memoryGovernanceEngine.evaluate({
       context: contextResult.context,
       intent: structuredIntent,
@@ -389,6 +376,7 @@ export class BrainEngine {
       },
     });
 
+    // Only governance-approved memory directives are added to promptDirectives
     for (const d of memoryGovernanceAnalysis.directives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);

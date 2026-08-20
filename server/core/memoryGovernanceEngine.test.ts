@@ -1937,8 +1937,365 @@ function runTests() {
     assert(!sanitizedContext.includes("normalizedValue"), "Sanitized context does not leak raw object properties");
   }
 
+  // =========================================================================
+  // ARCHITECTURAL FIX REGRESSION TESTS (A - F)
+  // =========================================================================
+
+  // =========================================================================
+  // TEST A — Retrieval directives cannot bypass governance
+  // =========================================================================
+  console.log("\nTEST A — Retrieval directives cannot bypass governance:");
+  {
+    const testUserId = "user_gov_test_a";
+    memoryStore.clear(testUserId);
+
+    memoryStore.save(testUserId, {
+      id: "mem_unapproved_1",
+      userId: testUserId,
+      type: "PREFERENCE",
+      key: "preference_ide",
+      value: "VS Code",
+      normalizedValue: "vs code",
+      source: "EXPLICIT_USER",
+      confidence: 0.95,
+      importance: 80,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      status: "ACTIVE",
+      tags: ["ide"],
+      evidence: [],
+      version: 1,
+    });
+
+    const brainAnalysis = brainEngine.analyze(
+      "Calculate 500 * 20",
+      [],
+      undefined,
+      testUserId,
+      undefined,
+      { persistDecisions: false, currentTime: baseTime }
+    );
+
+    // Verify raw retrieval directives are NOT present in promptDirectives
+    const retrievalDirectives = brainAnalysis.memoryRetrieval?.directives || [];
+    if (retrievalDirectives.length > 0) {
+      for (const rd of retrievalDirectives) {
+        assert(
+          !brainAnalysis.promptDirectives.includes(rd),
+          `Raw retrieval directive "${rd}" was NOT leaked into promptDirectives without governance approval`
+        );
+      }
+    }
+    assert(
+      brainAnalysis.memoryGovernanceAnalysis?.memoryInfluenceAllowed === false ||
+      brainAnalysis.memoryGovernanceAnalysis?.allowedMemories.length === 0,
+      "Memory was isolated by governance for calculation intent"
+    );
+  }
+
+  // =========================================================================
+  // TEST B — Governed memory is safely injected
+  // =========================================================================
+  console.log("\nTEST B — Governed memory is safely injected:");
+  {
+    const testUserId = "user_gov_test_b";
+    memoryStore.clear(testUserId);
+
+    memoryStore.save(testUserId, {
+      id: "mem_approved_browser",
+      userId: testUserId,
+      type: "PREFERENCE",
+      key: "preferred_browser",
+      value: "Firefox Developer Edition",
+      normalizedValue: "firefox developer edition",
+      source: "EXPLICIT_USER",
+      confidence: 0.95,
+      importance: 85,
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      lastAccessedAt: baseTime,
+      accessCount: 1,
+      status: "ACTIVE",
+      tags: ["browser"],
+      evidence: ["User said: I always use Firefox"],
+      version: 1,
+    });
+
+    const brainAnalysis = brainEngine.analyze(
+      "Which browser should I use for web development?",
+      [],
+      undefined,
+      testUserId,
+      undefined,
+      { persistDecisions: false, currentTime: baseTime }
+    );
+
+    assert(brainAnalysis.memoryGovernanceAnalysis !== undefined, "Governance analysis exists");
+    assert(brainAnalysis.memoryGovernanceAnalysis?.memoryInfluenceAllowed === true, "Memory influence allowed for relevant recommendation");
+    assert(
+      brainAnalysis.memoryGovernanceAnalysis?.sanitizedMemoryContext.includes("Firefox Developer Edition") === true,
+      "Sanitized memory context contains Firefox Developer Edition"
+    );
+    assert(
+      !brainAnalysis.memoryGovernanceAnalysis?.sanitizedMemoryContext.includes("mem_approved_browser"),
+      "Sanitized memory context does not leak raw internal memory IDs"
+    );
+  }
+
+  // =========================================================================
+  // TEST C — Preference cannot support factual claims
+  // =========================================================================
+  console.log("\nTEST C — Preference cannot support factual claims:");
+  {
+    const cand: MemoryCandidate = {
+      memory: {
+        id: "mem_pref_brand_test",
+        userId: "u1",
+        type: "PREFERENCE",
+        key: "preference_laptop_brand",
+        value: "ASUS ROG",
+        normalizedValue: "asus rog",
+        source: "EXPLICIT_USER",
+        confidence: 0.95,
+        importance: 85,
+        createdAt: baseTime,
+        updatedAt: baseTime,
+        lastAccessedAt: baseTime,
+        accessCount: 3,
+        status: "ACTIVE",
+        tags: ["laptops"],
+        evidence: [],
+        version: 1,
+      },
+      memoryId: "mem_pref_brand_test",
+      content: "prefers ASUS ROG",
+      memoryType: "PREFERENCE",
+      category: "preference_laptop_brand",
+      confidence: 0.95,
+      importance: 85,
+      relevanceScore: 0.92,
+      matchedSignals: ["laptop", "brand"],
+      source: "EXPLICIT_USER",
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      status: "ACTIVE",
+      retrievalReason: "Brand preference match",
+    };
+
+    const analysis = memoryGovernanceEngine.evaluate({
+      context: createDummyContext("laptops"),
+      intent: createDummyIntent("RECOMMENDATION"),
+      retrieval: createDummyRetrieval([cand]),
+      message: "Suggest a good laptop for me",
+    });
+
+    assert(analysis.allowedMemories.length === 1, "Preference is allowed for personalization");
+    assert(analysis.allowedMemories[0].canPersonalize === true, "canPersonalize is true");
+    assert(analysis.allowedMemories[0].canSupportFactualClaim === false, "canSupportFactualClaim is strictly FALSE for PREFERENCE");
+  }
+
+  // =========================================================================
+  // TEST D — Inferred candidate cannot support factual claims
+  // =========================================================================
+  console.log("\nTEST D — Inferred candidate cannot support factual claims:");
+  {
+    const cand: MemoryCandidate = {
+      memory: {
+        id: "mem_cand_gaming_gpu",
+        userId: "u1",
+        type: "CANDIDATE",
+        key: "interest_gpu",
+        value: "RTX 4090",
+        normalizedValue: "rtx 4090",
+        source: "INFERRED",
+        confidence: 0.70,
+        importance: 60,
+        createdAt: baseTime,
+        updatedAt: baseTime,
+        lastAccessedAt: baseTime,
+        accessCount: 1,
+        status: "CANDIDATE",
+        tags: ["gpu"],
+        evidence: ["Inferred from queries"],
+        version: 1,
+      },
+      memoryId: "mem_cand_gaming_gpu",
+      content: "interested in RTX 4090",
+      memoryType: "CANDIDATE",
+      category: "interest_gpu",
+      confidence: 0.70,
+      importance: 60,
+      relevanceScore: 0.85,
+      matchedSignals: ["gpu"],
+      source: "INFERRED",
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      status: "CANDIDATE",
+      retrievalReason: "Candidate match",
+    };
+
+    const analysis = memoryGovernanceEngine.evaluate({
+      context: createDummyContext("hardware"),
+      intent: createDummyIntent("INFORMATION"),
+      retrieval: createDummyRetrieval([cand]),
+      message: "What are the specs of my graphics card?",
+    });
+
+    assert(analysis.cautiousMemories.length === 1, "Candidate placed in cautiousMemories");
+    assert(analysis.cautiousMemories[0].canSupportFactualClaim === false, "canSupportFactualClaim is strictly FALSE for CANDIDATE");
+    assert(analysis.cautiousMemories[0].isCandidateInferred === true, "isCandidateInferred is true");
+  }
+
+  // =========================================================================
+  // TEST E — Verified factual memory may support factual claims
+  // =========================================================================
+  console.log("\nTEST E — Verified factual memory may support factual claims:");
+  {
+    const cand: MemoryCandidate = {
+      memory: {
+        id: "mem_fact_job_title",
+        userId: "u1",
+        type: "FACT",
+        key: "user_job_title",
+        value: "Senior Staff Engineer",
+        normalizedValue: "senior staff engineer",
+        source: "EXPLICIT_USER",
+        confidence: 1.0,
+        importance: 90,
+        createdAt: baseTime,
+        updatedAt: baseTime,
+        lastAccessedAt: baseTime,
+        accessCount: 2,
+        status: "ACTIVE",
+        tags: ["profile", "career"],
+        evidence: ["User explicitly stated: I work as a Senior Staff Engineer"],
+        version: 1,
+      },
+      memoryId: "mem_fact_job_title",
+      content: "Senior Staff Engineer",
+      memoryType: "FACT",
+      category: "user_job_title",
+      confidence: 1.0,
+      importance: 90,
+      relevanceScore: 0.95,
+      matchedSignals: ["job", "title"],
+      source: "EXPLICIT_USER",
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      status: "ACTIVE",
+      retrievalReason: "Explicit factual profile match",
+    };
+
+    const analysis = memoryGovernanceEngine.evaluate({
+      context: createDummyContext("career"),
+      intent: createDummyIntent("INFORMATION"),
+      retrieval: createDummyRetrieval([cand]),
+      message: "What is my current job title?",
+    });
+
+    assert(analysis.allowedMemories.length === 1, "Verified fact is approved in allowedMemories");
+    assert(analysis.allowedMemories[0].canSupportFactualClaim === true, "canSupportFactualClaim is TRUE for verified high-confidence FACT");
+    assert(analysis.allowedMemories[0].status === "ACTIVE", "Status is ACTIVE");
+  }
+
+  // =========================================================================
+  // TEST F — Rejected memory has zero prompt influence
+  // =========================================================================
+  console.log("\nTEST F — Rejected memory has zero prompt influence:");
+  {
+    const candSensitive: MemoryCandidate = {
+      memory: {
+        id: "mem_secret_token",
+        userId: "u1",
+        type: "FACT",
+        key: "secret_api_token",
+        value: "sk-proj-abcdef1234567890abcdef1234567890",
+        normalizedValue: "sk-proj-abcdef1234567890abcdef1234567890",
+        source: "EXPLICIT_USER",
+        confidence: 1.0,
+        importance: 100,
+        createdAt: baseTime,
+        updatedAt: baseTime,
+        lastAccessedAt: baseTime,
+        accessCount: 1,
+        status: "ACTIVE",
+        tags: ["secret", "sensitive"],
+        evidence: [],
+        version: 1,
+      },
+      memoryId: "mem_secret_token",
+      content: "sk-proj-abcdef1234567890abcdef1234567890",
+      memoryType: "FACT",
+      category: "secret_api_token",
+      confidence: 1.0,
+      importance: 100,
+      relevanceScore: 0.95,
+      matchedSignals: ["token"],
+      source: "EXPLICIT_USER",
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      status: "ACTIVE",
+      retrievalReason: "Sensitive token match",
+    };
+
+    const candSuperseded: MemoryCandidate = {
+      memory: {
+        id: "mem_superseded_city",
+        userId: "u1",
+        type: "FACT",
+        key: "current_city",
+        value: "Old City London",
+        normalizedValue: "old city london",
+        source: "EXPLICIT_USER",
+        confidence: 0.9,
+        importance: 70,
+        createdAt: baseTime,
+        updatedAt: baseTime,
+        lastAccessedAt: baseTime,
+        accessCount: 1,
+        status: "SUPERSEDED",
+        tags: ["location"],
+        evidence: [],
+        version: 1,
+      },
+      memoryId: "mem_superseded_city",
+      content: "Old City London",
+      memoryType: "FACT",
+      category: "current_city",
+      confidence: 0.9,
+      importance: 70,
+      relevanceScore: 0.9,
+      matchedSignals: ["city"],
+      source: "EXPLICIT_USER",
+      createdAt: baseTime,
+      updatedAt: baseTime,
+      status: "SUPERSEDED",
+      retrievalReason: "Old city match",
+    };
+
+    const analysis = memoryGovernanceEngine.evaluate({
+      context: createDummyContext("profile"),
+      intent: createDummyIntent("INFORMATION"),
+      retrieval: createDummyRetrieval([candSensitive, candSuperseded]),
+      message: "What is my profile info?",
+    });
+
+    assert(analysis.allowedMemories.length === 0, "No rejected/suppressed memories in allowedMemories");
+    assert(analysis.cautiousMemories.length === 0, "No rejected/suppressed memories in cautiousMemories");
+    assert(analysis.suppressedMemories.length === 2, "Both rejected memories captured in suppressedMemories");
+    assert(analysis.memoryInfluenceAllowed === false, "memoryInfluenceAllowed is false when all candidates rejected");
+    assert(!analysis.sanitizedMemoryContext.includes("sk-proj-"), "Sanitized context contains NO sensitive token");
+    assert(!analysis.sanitizedMemoryContext.includes("Old City London"), "Sanitized context contains NO superseded value");
+    for (const mem of analysis.suppressedMemories) {
+      assert(mem.canSupportFactualClaim === false, "canSupportFactualClaim is strictly false for suppressed memory");
+      assert(mem.canAffectResponseContent === false, "canAffectResponseContent is strictly false for suppressed memory");
+    }
+  }
+
   console.log("\n==========================================");
-  console.log("ALL 35 MEMORY GOVERNANCE TESTS PASSED!");
+  console.log("ALL 35 + 6 REGRESSION TESTS (A-F) PASSED!");
   console.log("==========================================");
 }
 

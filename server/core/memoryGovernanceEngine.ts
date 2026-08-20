@@ -185,7 +185,7 @@ export class MemoryGovernanceEngine {
       let decision: MemoryUsageDecision = "ALLOW";
       let usageScore = cand.relevanceScore || 0.8;
       let canPersonalize = true;
-      let canSupportFactualClaim = true;
+      let canSupportFactualClaim = false; // FIX #2: Default-deny factual claim authority
       let requiresExplicitAttribution = false;
       let isCandidateInferred = mem?.type === "CANDIDATE" || cand.isLowConfidenceInferred === true;
       let notes = "";
@@ -544,6 +544,56 @@ export class MemoryGovernanceEngine {
           usageScore = 0.4;
           notes = "Low confidence or relevance; kept internal.";
         }
+      }
+
+      // -------------------------------------------------------------------
+      // GATE 8: STRICT FACTUAL-AUTHORITY POLICY GATE (Default-Deny)
+      // -------------------------------------------------------------------
+      // Stored memories are NOT automatically authoritative factual evidence.
+      // A memory receives canSupportFactualClaim = true ONLY when it strictly satisfies
+      // all factual-authority criteria (verified factual type, authorized provenance, active lifecycle,
+      // high confidence, approved ALLOW decision, unquarantined, and no disqualifying reasons).
+      const memoryType = mem?.type || cand.memoryType || "PREFERENCE";
+      const source = mem?.source || cand.source || "INFERRED";
+
+      const isFactualType =
+        memoryType === "FACT" ||
+        memoryType === "PROJECT_CONTEXT" ||
+        memoryType === "EXPLICIT_MEMORY";
+
+      const isAuthorizedProvenance =
+        source === "EXPLICIT_USER" ||
+        source === "SYSTEM" ||
+        source === "MANUAL";
+
+      const isActiveLifecycle = status === "ACTIVE";
+      const isHighConfidence = confidence >= 0.85;
+      const isAllowedDecision = decision === "ALLOW";
+      const isNotQuarantined = !mem?.isQuarantined;
+      const hasNoDisqualifyingReasons =
+        !reasons.includes("HARD_CONSTRAINT_OVERRIDDEN") &&
+        !reasons.includes("CONFLICTING_MEMORY") &&
+        !reasons.includes("VERIFIED_EVIDENCE_OVERRIDDEN") &&
+        !reasons.includes("SENSITIVE_DATA") &&
+        !reasons.includes("CANDIDATE_UNCERTAIN") &&
+        !reasons.includes("TOPIC_MISMATCH") &&
+        !reasons.includes("INTENT_MISMATCH") &&
+        !reasons.includes("SUPERSEDED_MEMORY") &&
+        !reasons.includes("EXPIRED_MEMORY") &&
+        !reasons.includes("DELETED_MEMORY");
+
+      if (
+        isFactualType &&
+        isAuthorizedProvenance &&
+        isActiveLifecycle &&
+        isHighConfidence &&
+        isAllowedDecision &&
+        isNotQuarantined &&
+        hasNoDisqualifyingReasons
+      ) {
+        canSupportFactualClaim = true;
+      } else {
+        canSupportFactualClaim = false;
       }
 
       // Final classification into buckets

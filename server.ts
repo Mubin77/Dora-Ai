@@ -355,7 +355,6 @@ Then organize key headlines with:
         DORA_SYSTEM_INSTRUCTION,
         languageHint,
         deepThinkPrompt,
-        memoryContext ? `\n\n${memoryContext}` : "",
         brainPromptContext,
         searchPromptContext,
       ]
