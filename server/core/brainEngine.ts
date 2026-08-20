@@ -69,6 +69,13 @@ import { memoryGovernanceEngine } from "./memoryGovernanceEngine";
 import { MemoryGovernanceAnalysis } from "./memoryGovernanceTypes";
 import { adaptiveLearningEngine } from "./adaptiveLearningEngine";
 import { LearningAnalysis, LearningPattern } from "./adaptiveLearningTypes";
+import { predictiveContextEngine } from "./predictiveContextEngine";
+import {
+  PredictiveContextAnalysis,
+  ProactiveContextCandidate,
+  PredictiveSignal,
+  PredictionType,
+} from "./predictiveContextTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -82,6 +89,7 @@ export * from "./memoryRetrievalTypes";
 export * from "./memoryConsolidationTypes";
 export * from "./memoryGovernanceTypes";
 export * from "./adaptiveLearningTypes";
+export * from "./predictiveContextTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -92,6 +100,7 @@ export { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 export { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 export { memoryGovernanceEngine } from "./memoryGovernanceEngine";
 export { adaptiveLearningEngine } from "./adaptiveLearningEngine";
+export { predictiveContextEngine } from "./predictiveContextEngine";
 export { memoryStore } from "./memoryStore";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
@@ -120,6 +129,7 @@ export interface BrainAnalysis {
   memoryConsolidation?: MemoryConsolidationAnalysis;
   memoryGovernanceAnalysis?: MemoryGovernanceAnalysis;
   adaptiveLearningAnalysis?: LearningAnalysis;
+  predictiveContextAnalysis?: PredictiveContextAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -419,6 +429,31 @@ export class BrainEngine {
       }
     }
 
+    // Step 11 / Phase 2: Predictive Context & Proactive Memory Orchestration Engine
+    // Downstream of AdaptiveLearningEngine — safely prepares context for active plans & confirmed preferences
+    const predictiveContextAnalysis = predictiveContextEngine.evaluate({
+      message,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      governanceAnalysis: memoryGovernanceAnalysis,
+      adaptiveLearning: adaptiveLearningAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+      },
+    });
+
+    // Add safe, non-conflicting proactive directives to promptDirectives
+    for (const d of predictiveContextAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -433,6 +468,7 @@ export class BrainEngine {
       memoryConsolidation,
       memoryGovernanceAnalysis,
       adaptiveLearningAnalysis,
+      predictiveContextAnalysis,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,
