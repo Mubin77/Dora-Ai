@@ -80,6 +80,8 @@ import { responseAdaptationEngine } from "./responseAdaptationEngine";
 import { ResponseAdaptationAnalysis } from "./responseAdaptationTypes";
 import { longTermUserModelEngine } from "./longTermUserModelEngine";
 import { UserModelAnalysis } from "./longTermUserModelTypes";
+import { temporalMemoryEngine } from "./temporalMemoryEngine";
+import { TemporalMemoryAnalysis } from "./temporalMemoryTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -94,6 +96,7 @@ export * from "./memoryConsolidationTypes";
 export * from "./memoryGovernanceTypes";
 export * from "./adaptiveLearningTypes";
 export * from "./longTermUserModelTypes";
+export * from "./temporalMemoryTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./memoryStore";
@@ -107,6 +110,7 @@ export { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 export { memoryGovernanceEngine } from "./memoryGovernanceEngine";
 export { adaptiveLearningEngine } from "./adaptiveLearningEngine";
 export { longTermUserModelEngine } from "./longTermUserModelEngine";
+export { temporalMemoryEngine } from "./temporalMemoryEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { memoryStore } from "./memoryStore";
@@ -138,6 +142,7 @@ export interface BrainAnalysis {
   memoryGovernanceAnalysis?: MemoryGovernanceAnalysis;
   adaptiveLearningAnalysis?: LearningAnalysis;
   longTermUserModelAnalysis?: UserModelAnalysis;
+  temporalMemoryAnalysis?: TemporalMemoryAnalysis;
   predictiveContextAnalysis?: PredictiveContextAnalysis;
   responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
   activeTaskPlan?: TaskPlan;
@@ -463,8 +468,35 @@ export class BrainEngine {
       }
     }
 
+    // Step 9 / Phase 2: Temporal Memory & Life-Pattern Reasoning Engine
+    // Downstream of LongTermUserModelEngine & AdaptiveLearningEngine — reasons about temporal state, evolution, & stability
+    const temporalMemoryAnalysis = temporalMemoryEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      governanceAnalysis: memoryGovernanceAnalysis,
+      adaptiveLearning: adaptiveLearningAnalysis,
+      longTermUserModel: longTermUserModelAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        isTopicIsolated: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
+    // Add safe temporal memory directives to promptDirectives
+    for (const d of temporalMemoryAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Step 11 / Phase 2: Predictive Context & Proactive Memory Orchestration Engine
-    // Downstream of AdaptiveLearningEngine & UserModelEngine — safely prepares context for active plans & confirmed preferences
+    // Downstream of AdaptiveLearningEngine, UserModelEngine & TemporalMemoryEngine — safely prepares context for active plans & confirmed preferences
     const predictiveContextAnalysis = predictiveContextEngine.evaluate({
       message,
       context: contextResult.context,
@@ -489,7 +521,7 @@ export class BrainEngine {
     }
 
     // Step 12 / Phase 2: Response Adaptation & Personalization Engine (Deterministic, Bounded, Non-LLM)
-    // Downstream of PredictiveContextEngine & UserModelEngine — resolves multi-layer style profiling, format constraints, & safe personalization
+    // Downstream of PredictiveContextEngine, UserModelEngine & TemporalMemoryEngine — resolves multi-layer style profiling, format constraints, & safe personalization
     const responseAdaptationAnalysis = responseAdaptationEngine.evaluate({
       message: trimmed,
       context: contextResult.context,
@@ -500,6 +532,7 @@ export class BrainEngine {
       governanceAnalysis: memoryGovernanceAnalysis,
       adaptiveLearning: adaptiveLearningAnalysis,
       longTermUserModel: longTermUserModelAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
       predictiveContext: predictiveContextAnalysis,
       history: recentHistory,
       options: {
@@ -530,6 +563,7 @@ export class BrainEngine {
       memoryGovernanceAnalysis,
       adaptiveLearningAnalysis,
       longTermUserModelAnalysis,
+      temporalMemoryAnalysis,
       predictiveContextAnalysis,
       responseAdaptationAnalysis,
       activeTaskPlan: planningAnalysis.plan,

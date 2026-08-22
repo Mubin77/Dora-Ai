@@ -14,6 +14,7 @@ import { PlanningAnalysis, TaskPlan, PlanStep } from "./planningTypes";
 import { VerificationAnalysis } from "./verificationTypes";
 import { MemoryGovernanceAnalysis, MemoryGovernanceCandidate } from "./memoryGovernanceTypes";
 import { LearningAnalysis, LearningPattern } from "./adaptiveLearningTypes";
+import { TemporalMemoryAnalysis } from "./temporalMemoryTypes";
 
 export type PredictiveSignalSource =
   | "CURRENT_CONTEXT"
@@ -117,6 +118,7 @@ export interface PredictiveContextInput {
   verification?: VerificationAnalysis;
   governanceAnalysis?: MemoryGovernanceAnalysis;
   adaptiveLearning?: LearningAnalysis;
+  temporalMemory?: TemporalMemoryAnalysis;
   history?: ConversationTurn[];
   options?: {
     userId?: string;
