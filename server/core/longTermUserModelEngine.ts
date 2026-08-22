@@ -114,7 +114,10 @@ export class LongTermUserModelEngine {
     const userId = input.userId || input.options?.userId || "default_user";
     const currentTime = input.options?.currentTime ?? 0;
     const isTopicIsolated = Boolean(
-      input.options?.isTopicIsolated || input.governanceAnalysis?.topicIsolationApplied
+      input.options?.isTopicIsolated ||
+      input.governanceAnalysis?.topicIsolationApplied ||
+      input.context?.isTopicSwitched ||
+      input.context?.conversationState === "topic_switched"
     );
 
     let sensitiveBlockedCount = 0;
@@ -175,6 +178,18 @@ export class LongTermUserModelEngine {
           : mem.type === "PREFERENCE"
           ? "CONFIRMED_PREFERENCE"
           : "REPEATED_VALIDATED_SIGNAL";
+
+        // Pre-synthesis hard topic isolation gate
+        if (isTopicIsolated && this.isDomainSpecific(dimension, mem.key)) {
+          decisions.push({
+            key: mem.key,
+            dimension,
+            decision: "EXCLUDED_UNSUPPORTED",
+            authority,
+            reason: "Domain-specific attribute excluded under hard topic isolation pre-synthesis gate",
+          });
+          continue;
+        }
 
         // Candidate vs Confirmed status
         const attrStatus: UserModelAttributeStatus = mem.isCandidateInferred
@@ -257,6 +272,18 @@ export class LongTermUserModelEngine {
           ? "CONFIRMED_ADAPTIVE_PATTERN"
           : "REPEATED_VALIDATED_SIGNAL";
 
+        // Pre-synthesis hard topic isolation gate
+        if (isTopicIsolated && this.isDomainSpecific(dimension, pat.key)) {
+          decisions.push({
+            key: pat.key,
+            dimension,
+            decision: "EXCLUDED_UNSUPPORTED",
+            authority,
+            reason: "Domain-specific pattern excluded under hard topic isolation pre-synthesis gate",
+          });
+          continue;
+        }
+
         const attrStatus: UserModelAttributeStatus = isConfirmed
           ? "CONFIRMED"
           : "CANDIDATE";
@@ -286,9 +313,40 @@ export class LongTermUserModelEngine {
           status: attrStatus,
           authority,
           currentTime,
+          firstObservedAt: pat.firstObservedAt || currentTime,
+          lastObservedAt: pat.lastObservedAt || currentTime,
           isExplicit: false,
           independentCount: pat.independentEvidenceCount,
           onConflictResolved: () => conflictsResolvedCount++,
+        });
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // Step 2.5: Strict Predictive Context Boundary (Authority 7 - Advisory Only)
+    // -----------------------------------------------------------------
+    if (input.predictiveContext?.acceptedCandidates) {
+      for (const pred of input.predictiveContext.acceptedCandidates) {
+        signalsProcessed++;
+
+        // Predictive context can never promote or mutate confirmed profile
+        const predKey = pred.directive || pred.contextSummary || pred.id;
+        if (this.isSensitive(predKey) || this.isSensitive(pred.contextSummary)) {
+          sensitiveBlockedCount++;
+          continue;
+        }
+        if (this.isForbiddenInferredIdentity(predKey)) {
+          unsupportedBlockedCount++;
+          continue;
+        }
+
+        // Advisory signals remain strictly non-authoritative
+        decisions.push({
+          key: predKey,
+          dimension: "COMMUNICATION",
+          decision: "HELD_AS_CANDIDATE",
+          authority: "PREDICTIVE_CONTEXT",
+          reason: "Predictive context candidate held as advisory only without mutating confirmed model",
         });
       }
     }
@@ -466,6 +524,8 @@ export class LongTermUserModelEngine {
     status: UserModelAttributeStatus;
     authority: UserModelEvidenceAuthority;
     currentTime: number;
+    firstObservedAt?: number;
+    lastObservedAt?: number;
     isExplicit: boolean;
     isDurable?: boolean;
     independentCount?: number;
@@ -482,6 +542,8 @@ export class LongTermUserModelEngine {
       status,
       authority,
       currentTime,
+      firstObservedAt = currentTime,
+      lastObservedAt = currentTime,
       isExplicit,
       isDurable = true,
       independentCount,
@@ -491,6 +553,22 @@ export class LongTermUserModelEngine {
     const existing = map.get(key);
 
     if (!existing) {
+      // Determine status using candidate promotion gate
+      let finalStatus: UserModelAttributeStatus = status;
+      if (!isExplicit) {
+        const promo = this.evaluateCandidatePromotion({
+          key,
+          dimension,
+          normalizedValue,
+          confidence,
+          independentEvidenceCount: independentCount ?? 1,
+          evidenceCount: 1,
+          isExplicit: false,
+          sourceClassification: authority,
+        });
+        finalStatus = promo.canPromote ? "CONFIRMED" : "CANDIDATE";
+      }
+
       const newAttr: UserModelAttribute = {
         key,
         dimension,
@@ -498,10 +576,10 @@ export class LongTermUserModelEngine {
         confidence,
         evidenceCount: 1,
         independentEvidenceCount: independentCount ?? (isExplicit ? 1 : 1),
-        status,
+        status: finalStatus,
         sourceClassification: authority,
-        firstObservedAt: currentTime,
-        lastObservedAt: currentTime,
+        firstObservedAt,
+        lastObservedAt,
         isDurable,
         isTemporary: !isDurable,
         evidence: [evidence],
@@ -510,9 +588,9 @@ export class LongTermUserModelEngine {
       decisions.push({
         key,
         dimension,
-        decision: status === "CANDIDATE" ? "HELD_AS_CANDIDATE" : "SYNTHESIZED",
+        decision: finalStatus === "CANDIDATE" ? "HELD_AS_CANDIDATE" : "SYNTHESIZED",
         authority,
-        reason: `Attribute synthesized under authority ${authority}`,
+        reason: `Attribute synthesized as ${finalStatus} under authority ${authority}`,
       });
       return;
     }
@@ -531,25 +609,44 @@ export class LongTermUserModelEngine {
         existing.evidence.push(evidence);
         existing.evidenceCount = Math.min(50, existing.evidenceCount + 1);
         if (independentCount !== undefined) {
-          existing.independentEvidenceCount = Math.min(50, Math.max(existing.independentEvidenceCount, independentCount));
-        } else {
-          existing.independentEvidenceCount = Math.min(50, existing.independentEvidenceCount + 1);
+          existing.independentEvidenceCount = Math.min(
+            50,
+            Math.max(existing.independentEvidenceCount, independentCount)
+          );
+        } else if (authority !== "PREDICTIVE_CONTEXT") {
+          existing.independentEvidenceCount = Math.min(
+            50,
+            existing.independentEvidenceCount + 1
+          );
         }
       }
 
       existing.lastObservedAt = Math.max(existing.lastObservedAt, currentTime);
       existing.confidence = Math.min(1.0, Math.max(existing.confidence, confidence));
 
-      // Check promotion for candidate: requires independentEvidenceCount >= 3 or explicit statement
-      if (existing.status === "CANDIDATE" && (isExplicit || existing.independentEvidenceCount >= 3)) {
-        existing.status = "CONFIRMED";
-        decisions.push({
+      // Re-evaluate candidate promotion gate
+      if (existing.status === "CANDIDATE") {
+        const promo = this.evaluateCandidatePromotion({
           key,
-          dimension,
-          decision: "UPDATED",
-          authority,
-          reason: `Candidate promoted to confirmed with ${existing.independentEvidenceCount} independent observations`,
+          dimension: existing.dimension,
+          normalizedValue: existing.normalizedValue,
+          confidence: existing.confidence,
+          independentEvidenceCount: existing.independentEvidenceCount,
+          evidenceCount: existing.evidenceCount,
+          isExplicit: isExplicit || existing.evidence.some((e) => e.isExplicit),
+          sourceClassification: existing.sourceClassification,
         });
+
+        if (promo.canPromote) {
+          existing.status = "CONFIRMED";
+          decisions.push({
+            key,
+            dimension: existing.dimension,
+            decision: "UPDATED",
+            authority: existing.sourceClassification,
+            reason: promo.reason,
+          });
+        }
       }
       return;
     }
@@ -1040,7 +1137,10 @@ export class LongTermUserModelEngine {
 
   private isForbiddenInferredIdentity(key: string): boolean {
     const k = key.toLowerCase();
-    return this.FORBIDDEN_INFERRED_IDENTITY_KEYS.some((f) => k.includes(f));
+    return this.FORBIDDEN_INFERRED_IDENTITY_KEYS.some((f) => {
+      const regex = new RegExp(`(^|_|\\b)${f}(_|$|\\b)`, "i");
+      return regex.test(k);
+    });
   }
 
   private sanitizeText(text: string): string {
@@ -1054,6 +1154,106 @@ export class LongTermUserModelEngine {
       .replace(/\b0\.\d{3,}\b/g, "")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  public evaluateCandidatePromotion(candidate: {
+    key: string;
+    dimension?: UserModelDimension;
+    normalizedValue?: string;
+    value?: string;
+    confidence: number;
+    independentEvidenceCount: number;
+    evidenceCount?: number;
+    isExplicit?: boolean;
+    sourceClassification?: UserModelEvidenceAuthority;
+  }): {
+    canPromote: boolean;
+    targetStatus: UserModelAttributeStatus;
+    reason: string;
+  } {
+    const val = candidate.value || candidate.normalizedValue || "";
+
+    // 1. Sensitive check
+    if (this.isSensitive(candidate.key) || this.isSensitive(val)) {
+      return {
+        canPromote: false,
+        targetStatus: "SUPPRESSED",
+        reason: "Sensitive credentials or secrets suppressed from promotion",
+      };
+    }
+
+    // 2. Forbidden inferred identity check
+    if (!candidate.isExplicit && this.isForbiddenInferredIdentity(candidate.key)) {
+      return {
+        canPromote: false,
+        targetStatus: "SUPPRESSED",
+        reason: "Unsupported inferred identity dimension strictly excluded from promotion",
+      };
+    }
+
+    // 3. Strict predictive context boundary check
+    if (candidate.sourceClassification === "PREDICTIVE_CONTEXT") {
+      return {
+        canPromote: false,
+        targetStatus: "CANDIDATE",
+        reason: "Predictive context signals are advisory only and cannot promote attributes",
+      };
+    }
+
+    // 4. Explicit user authorization
+    if (candidate.isExplicit === true) {
+      return {
+        canPromote: true,
+        targetStatus: "CONFIRMED",
+        reason: "Explicit user statement authorizes confirmed status",
+      };
+    }
+
+    // 5. Dual threshold check: independentEvidenceCount >= 3 AND confidence >= 0.75
+    if (candidate.independentEvidenceCount >= 3 && candidate.confidence >= 0.75) {
+      return {
+        canPromote: true,
+        targetStatus: "CONFIRMED",
+        reason: `Candidate met promotion threshold with ${candidate.independentEvidenceCount} independent observations and ${(candidate.confidence * 100).toFixed(0)}% confidence`,
+      };
+    }
+
+    if (candidate.independentEvidenceCount < 3) {
+      return {
+        canPromote: false,
+        targetStatus: "CANDIDATE",
+        reason: `Insufficient independent evidence count (${candidate.independentEvidenceCount} < 3)`,
+      };
+    }
+
+    return {
+      canPromote: false,
+      targetStatus: "CANDIDATE",
+      reason: `Confidence below threshold (${candidate.confidence.toFixed(2)} < 0.75)`,
+    };
+  }
+
+  public isDomainSpecific(dimension: UserModelDimension, key?: string): boolean {
+    if (
+      dimension === "DOMAIN_INTEREST" ||
+      dimension === "PROJECT_CONTEXT" ||
+      dimension === "USER_GOAL"
+    ) {
+      return true;
+    }
+    if (key) {
+      const k = key.toLowerCase();
+      if (
+        k.startsWith("domain_") ||
+        k.startsWith("project_") ||
+        k.includes("domain_interest") ||
+        k.includes("project_context") ||
+        k.includes("topic_")
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private deterministicHash(str: string): string {

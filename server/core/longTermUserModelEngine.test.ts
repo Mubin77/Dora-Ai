@@ -16,6 +16,7 @@ import {
 } from "./longTermUserModelTypes";
 import { MemoryGovernanceCandidate, MemoryGovernanceAnalysis } from "./memoryGovernanceTypes";
 import { LearningPattern, LearningAnalysis } from "./adaptiveLearningTypes";
+import { PredictiveContextAnalysis, ProactiveContextCandidate } from "./predictiveContextTypes";
 import { brainEngine } from "./brainEngine";
 
 let testsPassed = 0;
@@ -86,6 +87,63 @@ function makeGovAnalysis(
     directives: [],
     sanitizedMemoryContext: "",
     governanceConfidence: 0.95,
+    ...overrides,
+  };
+}
+
+function simpleHash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+}
+
+function makeLearningPat(
+  key: string,
+  value: string,
+  overrides?: Partial<LearningPattern>
+): LearningPattern {
+  return {
+    id: `pat_${key}_${Math.abs(simpleHash(key + value))}`,
+    userId: "test_user",
+    patternType: "USER_PREFERENCE",
+    category: "PREFERENCE",
+    key,
+    value,
+    status: "CONFIRMED",
+    confidence: 0.85,
+    reinforcementCount: 3,
+    independentEvidenceCount: 3,
+    firstObservedAt: 100,
+    lastObservedAt: 1000,
+    evidence: [],
+    source: "ADAPTIVE_LEARNING",
+    ...overrides,
+  };
+}
+
+function makePredictiveAnalysis(
+  candidates: ProactiveContextCandidate[],
+  overrides?: Partial<PredictiveContextAnalysis>
+): PredictiveContextAnalysis {
+  return {
+    predictions: candidates.map((c) => c.predictionType),
+    acceptedCandidates: candidates,
+    rejectedCandidates: [],
+    suppressionReasons: [],
+    confidence: candidates.length > 0 ? candidates[0].confidence : 0.8,
+    directives: candidates.map((c) => c.directive || "").filter(Boolean),
+    requiresConfirmation: false,
+    analysisStatus: "SUCCESS",
+    diagnostics: {
+      signalsEvaluated: candidates.length,
+      candidatesGenerated: candidates.length,
+      candidatesAccepted: candidates.length,
+      candidatesRejected: 0,
+      reasons: [],
+    },
     ...overrides,
   };
 }
@@ -862,6 +920,658 @@ runTest("TEST 33: Existing Phase 2 Steps 1–7 regression (Retrieval, Consolidat
   assert(res.adaptiveLearningAnalysis !== undefined, "Adaptive learning executed");
   assert(res.predictiveContextAnalysis !== undefined, "Predictive context executed");
   assert(res.responseAdaptationAnalysis !== undefined, "Response adaptation executed");
+});
+
+// ===========================================================================
+// TOPIC ISOLATION TEST SERIES (TI-1 to TI-7)
+// ===========================================================================
+
+runTest("TI-1: Domain interest attribute excluded from authoritative profile when isTopicIsolated: true", () => {
+  const domainCand = makeGovCand("domain_interest", "Machine Learning", {
+    memoryId: "mem_domain_01",
+    type: "FACT",
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([domainCand]),
+    options: { currentTime: 1000, isTopicIsolated: true },
+  });
+
+  assert(res.profile.attributes["domain_interest"] === undefined, "Domain interest must not enter attributesMap under topic isolation");
+  assert(res.profile.domainInterests.length === 0, "domainInterests collection must be empty under topic isolation");
+});
+
+runTest("TI-2: Global communication preferences retained when isTopicIsolated: true", () => {
+  const langCand = makeGovCand("preferred_language", "Bangla", { memoryId: "mem_lang_01" });
+  const verbCand = makeGovCand("preferred_verbosity", "Concise", { memoryId: "mem_verb_01" });
+  const domainCand = makeGovCand("domain_interest", "Quantum Physics", { memoryId: "mem_domain_02", type: "FACT" });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([langCand, verbCand, domainCand]),
+    options: { currentTime: 1000, isTopicIsolated: true },
+  });
+
+  assert(res.profile.attributes["language"] !== undefined, "Language preference must be retained");
+  assert(res.profile.attributes["verbosity"] !== undefined, "Verbosity preference must be retained");
+  assert(res.profile.attributes["domain_interest"] === undefined, "Domain interest must be excluded");
+  assert(res.profile.confirmedAttributes.some((a) => a.key === "language"), "Language must remain confirmed");
+});
+
+runTest("TI-3: profile.domainInterests and profile.projectContexts are strictly empty under isTopicIsolated: true", () => {
+  const pat1 = makeLearningPat("domain_web3", "Solidity Development", {
+    id: "pat_dom_01",
+    patternType: "DOMAIN_INTEREST",
+    category: "DOMAIN_INTEREST",
+    confidence: 0.9,
+    reinforcementCount: 5,
+    independentEvidenceCount: 4,
+    firstObservedAt: 500,
+    lastObservedAt: 1000,
+  });
+  const pat2 = makeLearningPat("project_finance", "Ledger Engine", {
+    id: "pat_proj_01",
+    patternType: "TASK_WORKFLOW",
+    category: "PROJECT_CONTEXT",
+    confidence: 0.85,
+    reinforcementCount: 4,
+    independentEvidenceCount: 3,
+    firstObservedAt: 500,
+    lastObservedAt: 1000,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat1, pat2]),
+    options: { currentTime: 1000, isTopicIsolated: true },
+  });
+
+  assert(res.profile.domainInterests.length === 0, "domainInterests must be empty");
+  assert(res.profile.projectContexts.length === 0, "projectContexts must be empty");
+  assert(res.profile.confirmedAttributes.length === 0, "No domain attributes confirmed under topic isolation");
+});
+
+runTest("TI-4: activeDirectives contains no domain interest directives under topic isolation", () => {
+  const domainCand = makeGovCand("domain_interest", "Cybersecurity", {
+    memoryId: "mem_cyber_01",
+    type: "FACT",
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([domainCand]),
+    options: { currentTime: 1000, isTopicIsolated: true },
+  });
+
+  assert(!res.activeDirectives.some((d) => d.includes("Cybersecurity")), "No domain directive generated under topic isolation");
+});
+
+runTest("TI-5: Cross-domain attribute leakage prevented across isolated sessions", () => {
+  const pat = makeLearningPat("domain_crypto", "Bitcoin Mining", {
+    id: "pat_crypto_01",
+    patternType: "DOMAIN_INTEREST",
+    category: "DOMAIN_INTEREST",
+    confidence: 0.95,
+    reinforcementCount: 8,
+    independentEvidenceCount: 5,
+    firstObservedAt: 100,
+    lastObservedAt: 1000,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000, isTopicIsolated: true },
+  });
+
+  assert(Object.keys(res.profile.attributes).length === 0, "No domain attributes in profile.attributes");
+  assert(res.activeDirectives.length === 0, "No active directives generated");
+});
+
+runTest("TI-6: Pre-synthesis gate produces EXCLUDED_UNSUPPORTED audit decisions", () => {
+  const domainCand = makeGovCand("domain_interest", "Astronomy", {
+    memoryId: "mem_astro_01",
+    type: "FACT",
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([domainCand]),
+    options: { currentTime: 1000, isTopicIsolated: true },
+  });
+
+  const exclusionDecision = res.decisions.find((d) => d.key === "domain_interest");
+  assert(exclusionDecision !== undefined, "Exclusion decision must be logged");
+  assert(exclusionDecision?.decision === "EXCLUDED_UNSUPPORTED", "Decision must be EXCLUDED_UNSUPPORTED");
+  assert(exclusionDecision?.reason.includes("topic isolation"), "Reason must mention topic isolation");
+});
+
+runTest("TI-7: Topic isolation flag in governanceAnalysis triggers hard topic isolation", () => {
+  const domainCand = makeGovCand("domain_interest", "Robotics", {
+    memoryId: "mem_robot_01",
+    type: "FACT",
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([domainCand], { topicIsolationApplied: true }),
+    options: { currentTime: 1000 },
+  });
+
+  assert(res.profile.domainInterests.length === 0, "domainInterests must be empty when governanceAnalysis.topicIsolationApplied is true");
+  assert(res.profile.attributes["domain_interest"] === undefined, "Attribute must be excluded");
+});
+
+// ===========================================================================
+// CANDIDATE PROMOTION GATE TEST SERIES (CP-1 to CP-15)
+// ===========================================================================
+
+runTest("CP-1: Candidate with independentEvidenceCount: 1, confidence: 0.70 remains CANDIDATE", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "verbosity",
+    confidence: 0.70,
+    independentEvidenceCount: 1,
+  });
+
+  assert(res.canPromote === false, "Must not promote with 1 count");
+  assert(res.targetStatus === "CANDIDATE", "Target status must be CANDIDATE");
+  assert(res.reason.includes("Insufficient independent evidence"), "Reason must cite insufficient count");
+});
+
+runTest("CP-2: Candidate with independentEvidenceCount: 2, confidence: 0.85 remains CANDIDATE", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "format",
+    confidence: 0.85,
+    independentEvidenceCount: 2,
+  });
+
+  assert(res.canPromote === false, "Must not promote with 2 counts");
+  assert(res.targetStatus === "CANDIDATE", "Target status must be CANDIDATE");
+});
+
+runTest("CP-3: Candidate with independentEvidenceCount: 3, confidence: 0.70 remains CANDIDATE", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "tone",
+    confidence: 0.70,
+    independentEvidenceCount: 3,
+  });
+
+  assert(res.canPromote === false, "Must not promote with confidence < 0.75");
+  assert(res.targetStatus === "CANDIDATE", "Target status must be CANDIDATE");
+  assert(res.reason.includes("Confidence below threshold"), "Reason must cite confidence below threshold");
+});
+
+runTest("CP-4: Candidate with independentEvidenceCount: 3, confidence: 0.75 promotes to CONFIRMED", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "verbosity",
+    confidence: 0.75,
+    independentEvidenceCount: 3,
+  });
+
+  assert(res.canPromote === true, "Must promote when thresholds met");
+  assert(res.targetStatus === "CONFIRMED", "Target status must be CONFIRMED");
+  assert(res.reason.includes("promotion threshold"), "Reason must cite promotion threshold met");
+});
+
+runTest("CP-5: Candidate with independentEvidenceCount: 5, confidence: 0.90 promotes to CONFIRMED", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "language",
+    confidence: 0.90,
+    independentEvidenceCount: 5,
+  });
+
+  assert(res.canPromote === true, "Must promote");
+  assert(res.targetStatus === "CONFIRMED", "Target status must be CONFIRMED");
+});
+
+runTest("CP-6: Explicit user confirmation immediately promotes attribute regardless of count", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "code_style",
+    confidence: 1.0,
+    independentEvidenceCount: 1,
+    isExplicit: true,
+  });
+
+  assert(res.canPromote === true, "Explicit confirmation authorizes promotion");
+  assert(res.targetStatus === "CONFIRMED", "Target status must be CONFIRMED");
+});
+
+runTest("CP-7: Candidate with sensitive key/value is blocked from promotion", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "api_key",
+    value: "sk-secret-1234567890abcdef",
+    confidence: 0.99,
+    independentEvidenceCount: 5,
+  });
+
+  assert(res.canPromote === false, "Sensitive candidate cannot be promoted");
+  assert(res.targetStatus === "SUPPRESSED", "Target status must be SUPPRESSED");
+  assert(res.reason.includes("Sensitive"), "Reason must state sensitive");
+});
+
+runTest("CP-8: Inferred candidate for forbidden identity is blocked from promotion", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "salary",
+    value: "100k",
+    confidence: 0.95,
+    independentEvidenceCount: 4,
+    isExplicit: false,
+  });
+
+  assert(res.canPromote === false, "Inferred identity dimension cannot be promoted");
+  assert(res.targetStatus === "SUPPRESSED", "Target status must be SUPPRESSED");
+  assert(res.reason.includes("Unsupported inferred identity"), "Reason must cite unsupported identity");
+});
+
+runTest("CP-9: Candidate from predictive context source cannot be promoted", () => {
+  const res = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "workflow",
+    confidence: 0.9,
+    independentEvidenceCount: 4,
+    sourceClassification: "PREDICTIVE_CONTEXT",
+  });
+
+  assert(res.canPromote === false, "Predictive context source cannot promote");
+  assert(res.targetStatus === "CANDIDATE", "Target status must remain CANDIDATE");
+});
+
+runTest("CP-10: Duplicate evidence within same turn does not increment independentEvidenceCount", () => {
+  const cand = makeGovCand("preferred_verbosity", "Concise", {
+    memoryId: "mem_verb_dup",
+    isCandidateInferred: true,
+    confidence: 0.8,
+  });
+
+  const res1 = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([cand]),
+    options: { currentTime: 1000 },
+  });
+
+  const attr1 = res1.profile.attributes["verbosity"];
+  assert(attr1.independentEvidenceCount === 1, "Initial count must be 1");
+  assert(attr1.status === "CANDIDATE", "Initial status must be CANDIDATE");
+});
+
+runTest("CP-11: Multi-turn distinct reinforcement increments independentEvidenceCount to trigger promotion", () => {
+  const pat = makeLearningPat("preferred_language", "Bangla", {
+    id: "pat_lang_01",
+    patternType: "USER_PREFERENCE",
+    category: "COMMUNICATION",
+    confidence: 0.82,
+    reinforcementCount: 4,
+    independentEvidenceCount: 3,
+    firstObservedAt: 200,
+    lastObservedAt: 1000,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const langAttr = res.profile.attributes["language"];
+  assert(langAttr !== undefined, "Language attribute must exist");
+  assert(langAttr.status === "CONFIRMED", "Attribute with count 3 & conf 0.82 must be CONFIRMED");
+  assert(res.profile.confirmedAttributes.some((a) => a.key === "language"), "Must be in confirmedAttributes");
+});
+
+runTest("CP-12: Candidate promotion records authoritative UPDATED decision", () => {
+  const pat = makeLearningPat("preferred_format", "Bullet Points", {
+    id: "pat_format_01",
+    patternType: "USER_PREFERENCE",
+    category: "FORMAT",
+    confidence: 0.88,
+    reinforcementCount: 5,
+    independentEvidenceCount: 3,
+    firstObservedAt: 100,
+    lastObservedAt: 1000,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const formatAttr = res.profile.attributes["format"];
+  assert(formatAttr.status === "CONFIRMED", "Format attribute must be confirmed");
+  assert(res.decisions.some((d) => d.key === "format"), "Decision for format must exist");
+});
+
+runTest("CP-13: Unpromoted candidates exist exclusively in candidateAttributes", () => {
+  const cand = makeGovCand("preferred_tone", "Casual", {
+    memoryId: "mem_tone_cand",
+    isCandidateInferred: true,
+    confidence: 0.7,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([cand]),
+    options: { currentTime: 1000 },
+  });
+
+  assert(res.profile.candidateAttributes.some((a) => a.key === "tone"), "Must be in candidateAttributes");
+  assert(!res.profile.confirmedAttributes.some((a) => a.key === "tone"), "Must NOT be in confirmedAttributes");
+});
+
+runTest("CP-14: Candidate promotion preserves firstObservedAt and lineage integrity", () => {
+  const pat = makeLearningPat("preferred_verbosity", "Concise", {
+    id: "pat_verb_01",
+    patternType: "USER_PREFERENCE",
+    category: "VERBOSITY",
+    confidence: 0.8,
+    reinforcementCount: 3,
+    independentEvidenceCount: 3,
+    firstObservedAt: 100,
+    lastObservedAt: 900,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const verbAttr = res.profile.attributes["verbosity"];
+  assert(verbAttr.firstObservedAt === 100, "firstObservedAt must be preserved");
+  assert(verbAttr.lastObservedAt === 900, "lastObservedAt must be preserved");
+});
+
+runTest("CP-15: Unconfirmed candidates never leak into activeDirectives", () => {
+  const cand = makeGovCand("preferred_tone", "Casual", {
+    memoryId: "mem_tone_unconfirmed",
+    isCandidateInferred: true,
+    confidence: 0.6,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([cand]),
+    options: { currentTime: 1000 },
+  });
+
+  assert(!res.activeDirectives.some((d) => d.includes("Casual")), "Unconfirmed candidate must not produce active directive");
+});
+
+// ===========================================================================
+// PREDICTIVE CONTEXT BOUNDARY TEST SERIES (PC-1 to PC-10)
+// ===========================================================================
+
+runTest("PC-1: Predictive context candidates are held strictly advisory", () => {
+  const predAnalysis = makePredictiveAnalysis([
+    {
+      id: "pred_01",
+      source: "USER_MODEL",
+      predictionType: "PREFERENCE_RELEVANT",
+      relevance: 0.85,
+      confidence: 0.8,
+      topic: "general",
+      reasonCategory: "ADVISORY",
+      expiresAt: 5000,
+      isSafeToInject: true,
+      requiresConfirmation: false,
+      contextSummary: "Predicts user might prefer concise code",
+      directive: "[PREDICTIVE: Concise code]",
+    },
+  ]);
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    predictiveContext: predAnalysis,
+    options: { currentTime: 1000 },
+  });
+
+  assert(res.profile.confirmedAttributes.length === 0, "Predictive context must not create confirmed attributes");
+  assert(res.decisions.some((d) => d.authority === "PREDICTIVE_CONTEXT" && d.decision === "HELD_AS_CANDIDATE"), "Decision must be HELD_AS_CANDIDATE");
+});
+
+runTest("PC-2: Predictive context cannot create confirmed attributes in profile", () => {
+  const predAnalysis = makePredictiveAnalysis([
+    {
+      id: "pred_02",
+      source: "TASK_WORKFLOW",
+      predictionType: "FOLLOW_UP_LIKELY",
+      relevance: 0.9,
+      confidence: 0.95,
+      topic: "workflow",
+      reasonCategory: "STEP_CONTINUATION",
+      expiresAt: 5000,
+      isSafeToInject: true,
+      requiresConfirmation: false,
+      contextSummary: "Step continuation",
+    },
+  ]);
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    predictiveContext: predAnalysis,
+    options: { currentTime: 1000 },
+  });
+
+  assert(res.profile.confirmedAttributes.length === 0, "Confirmed attributes must be empty");
+});
+
+runTest("PC-3: Predictive context cannot promote an existing candidate", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "workflow",
+    confidence: 0.99,
+    independentEvidenceCount: 10,
+    sourceClassification: "PREDICTIVE_CONTEXT",
+  });
+
+  assert(promo.canPromote === false, "Predictive context source must never promote candidate");
+  assert(promo.targetStatus === "CANDIDATE", "Target status must remain CANDIDATE");
+});
+
+runTest("PC-4: Predictive context cannot supersede higher-authority attributes", () => {
+  const govCand = makeGovCand("preferred_language", "Banglish", {
+    memoryId: "mem_lang_explicit",
+    source: "EXPLICIT_USER",
+    confidence: 1.0,
+  });
+
+  const predAnalysis = makePredictiveAnalysis([
+    {
+      id: "pred_lang_conflict",
+      source: "RECENT_INTERACTION",
+      predictionType: "PREFERENCE_RELEVANT",
+      relevance: 0.99,
+      confidence: 0.99,
+      topic: "language",
+      reasonCategory: "PREDICTION",
+      expiresAt: 5000,
+      isSafeToInject: true,
+      requiresConfirmation: false,
+      contextSummary: "English preferred",
+      directive: "English",
+    },
+  ]);
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([govCand]),
+    predictiveContext: predAnalysis,
+    options: { currentTime: 1000 },
+  });
+
+  const langAttr = res.profile.attributes["language"];
+  assert(langAttr.normalizedValue === "Banglish", "Explicit Banglish must not be superseded by predictive context");
+  assert(langAttr.status === "CONFIRMED", "Explicit memory remains CONFIRMED");
+});
+
+runTest("PC-5: Predictive context signals do not inflate independentEvidenceCount", () => {
+  const cand = makeGovCand("preferred_verbosity", "Concise", {
+    memoryId: "mem_verb_cand",
+    isCandidateInferred: true,
+    confidence: 0.7,
+  });
+
+  const predAnalysis = makePredictiveAnalysis([
+    {
+      id: "pred_verb",
+      source: "RECENT_INTERACTION",
+      predictionType: "PREFERENCE_RELEVANT",
+      relevance: 0.8,
+      confidence: 0.8,
+      topic: "verbosity",
+      reasonCategory: "PREDICTION",
+      expiresAt: 5000,
+      isSafeToInject: true,
+      requiresConfirmation: false,
+      contextSummary: "Concise",
+    },
+  ]);
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([cand]),
+    predictiveContext: predAnalysis,
+    options: { currentTime: 1000 },
+  });
+
+  const verbAttr = res.profile.attributes["verbosity"];
+  assert(verbAttr.independentEvidenceCount === 1, "Predictive context must not inflate independent count");
+  assert(verbAttr.status === "CANDIDATE", "Status must remain CANDIDATE");
+});
+
+runTest("PC-6: Predictive context cannot infer forbidden identity", () => {
+  const predAnalysis = makePredictiveAnalysis([
+    {
+      id: "pred_ident",
+      source: "CURRENT_CONTEXT",
+      predictionType: "CONTEXT_RELEVANT",
+      relevance: 0.9,
+      confidence: 0.9,
+      topic: "identity",
+      reasonCategory: "INFERENCE",
+      expiresAt: 5000,
+      isSafeToInject: true,
+      requiresConfirmation: false,
+      contextSummary: "User job_title is Chief Architect",
+      directive: "job_title: Chief Architect",
+    },
+  ]);
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    predictiveContext: predAnalysis,
+    options: { currentTime: 1000 },
+  });
+
+  assert(res.profile.attributes["job_title"] === undefined, "Forbidden identity must be excluded");
+});
+
+runTest("PC-7: Predictive context with sensitive tokens is suppressed", () => {
+  const predAnalysis = makePredictiveAnalysis([
+    {
+      id: "pred_sens",
+      source: "CURRENT_CONTEXT",
+      predictionType: "CONTEXT_RELEVANT",
+      relevance: 0.9,
+      confidence: 0.9,
+      topic: "credentials",
+      reasonCategory: "AUTH",
+      expiresAt: 5000,
+      isSafeToInject: true,
+      requiresConfirmation: false,
+      contextSummary: "api_key=sk-1234567890abcdef123456",
+      directive: "api_key=sk-1234567890abcdef123456",
+    },
+  ]);
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    predictiveContext: predAnalysis,
+    options: { currentTime: 1000 },
+  });
+
+  assert(res.safetyStatus === "SENSITIVE_SUPPRESSED", "Safety status must indicate sensitive suppressed");
+});
+
+runTest("PC-8: Directives from user model sanitize any predictive metadata", () => {
+  const govCand = makeGovCand("preferred_language", "Bangla", {
+    memoryId: "mem_lang_01",
+    source: "EXPLICIT_USER",
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([govCand]),
+    options: { currentTime: 1000 },
+  });
+
+  for (const d of res.activeDirectives) {
+    assert(!d.includes("pred_"), "Directives must not contain predictive ID");
+    assert(!d.includes("0.9"), "Directives must not contain raw floats");
+  }
+});
+
+runTest("PC-9: Precedence hierarchy strictly maintains EXPLICIT_USER_MEMORY > PREDICTIVE_CONTEXT", () => {
+  const govCand = makeGovCand("preferred_tone", "Professional", {
+    memoryId: "mem_tone_exp",
+    source: "EXPLICIT_USER",
+    confidence: 1.0,
+  });
+
+  const predAnalysis = makePredictiveAnalysis([
+    {
+      id: "pred_tone",
+      source: "RECENT_INTERACTION",
+      predictionType: "PREFERENCE_RELEVANT",
+      relevance: 0.95,
+      confidence: 0.95,
+      topic: "tone",
+      reasonCategory: "PREDICTION",
+      expiresAt: 5000,
+      isSafeToInject: true,
+      requiresConfirmation: false,
+      contextSummary: "Casual tone predicted",
+    },
+  ]);
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([govCand]),
+    predictiveContext: predAnalysis,
+    options: { currentTime: 1000 },
+  });
+
+  const toneAttr = res.profile.attributes["tone"];
+  assert(toneAttr.normalizedValue === "Professional", "Explicit tone wins over predictive tone");
+  assert(toneAttr.sourceClassification === "EXPLICIT_USER_MEMORY", "Authority is EXPLICIT_USER_MEMORY");
+});
+
+runTest("PC-10: Full lifecycle: Predictive context alone never alters stable user model", () => {
+  const predAnalysis = makePredictiveAnalysis([
+    {
+      id: "pred_task",
+      source: "ACTIVE_PLAN",
+      predictionType: "TASK_CONTINUATION",
+      relevance: 0.9,
+      confidence: 0.9,
+      topic: "plan",
+      reasonCategory: "PLAN_CONTINUATION",
+      expiresAt: 5000,
+      isSafeToInject: true,
+      requiresConfirmation: false,
+      contextSummary: "Continuation step 2",
+    },
+  ]);
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    predictiveContext: predAnalysis,
+    options: { currentTime: 1000 },
+  });
+
+  assert(res.profile.confirmedAttributes.length === 0, "No confirmed attributes in stable profile");
+  assert(res.profile.domainInterests.length === 0, "No domain interests in stable profile");
+  assert(res.profile.projectContexts.length === 0, "No project contexts in stable profile");
+  assert(res.profile.goals.length === 0, "No goals in stable profile");
 });
 
 // ---------------------------------------------------------------------------
