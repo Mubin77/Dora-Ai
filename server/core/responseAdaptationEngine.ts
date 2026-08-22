@@ -85,7 +85,7 @@ export class ResponseAdaptationEngine {
 
   // Sensitive patterns for privacy filtering
   private readonly SENSITIVE_REGEX =
-    /\b(?:password|passwd|pin|secret|api[_-]?key|auth[_-]?token|bearer\s+[a-zA-Z0-9_\-\.]+|cvv|cvc|ssn|nid|credit\s*card|bank\s*account)\b/i;
+    /\b(?:password|passwd|pin|secret|api[_-]?key|auth[_-]?token|bearer\s+[a-zA-Z0-9_\-\.]+|cvv|cvc|ssn|nid|credit\s*card|debit\s*card|bank\s*account|routing\s*number|access[_-]?token|private[_-]?key)\b|\b(?:\d{4}[ -]?){3}\d{4}\b|\bsk-[a-zA-Z0-9_-]{16,}\b|\bAIza[0-9A-Za-z-_]{35}\b|\bghp_[0-9a-zA-Z]{36}\b/i;
 
   // Explicit Regex Patterns for Current Turn
   private readonly BANGLA_LANG_REGEX =
@@ -153,7 +153,6 @@ export class ResponseAdaptationEngine {
    * Main evaluation entry point for Response Adaptation & Personalization
    */
   public evaluate(input: ResponseAdaptationInput): ResponseAdaptationAnalysis {
-    const startTime = Date.now();
     const {
       message = "",
       context,
@@ -177,7 +176,7 @@ export class ResponseAdaptationEngine {
 
     // Evaluate caution from Verification Engine & Governance
     if (verification) {
-      if (verification.verificationStatus === "FAILED" || verification.confidence?.calibratedScore < 0.60) {
+      if (verification.verificationStatus === "FAILED" || (verification.confidence && verification.confidence.calibratedScore < 0.60)) {
         cautionApplied = true;
         cautionReason = verification.clarificationReason || "Truth calibration confidence below threshold";
       }
@@ -283,8 +282,6 @@ export class ResponseAdaptationEngine {
       safetyStatus = "CAUTION_APPLIED";
     }
 
-    const duration = Date.now() - startTime;
-
     return {
       styleProfile,
       language: resolvedLanguage.value,
@@ -304,7 +301,7 @@ export class ResponseAdaptationEngine {
         suppressedCount: suppressedAttributes.length,
         sensitiveBlockedCount,
         cautionApplied,
-        timingMs: duration,
+        timingMs: 0,
       },
     };
   }
@@ -470,7 +467,7 @@ export class ResponseAdaptationEngine {
     // 7. Confirmed Preference / Governed Memory
     if (input.governanceAnalysis?.governedCandidates) {
       const approvedLangMemory = input.governanceAnalysis.governedCandidates.find(
-        (c) => c.usageDecision === "ALLOW" && (c.key === "preferred_language" || c.key === "language")
+        (c) => c.usageDecision === "ALLOW" && c.status === "ACTIVE" && !c.isCandidateInferred && (c.key === "preferred_language" || c.key === "language")
       );
       if (approvedLangMemory) {
         const parsed = this.parseLanguage(approvedLangMemory.value);
@@ -592,7 +589,7 @@ export class ResponseAdaptationEngine {
     // 7. Confirmed Preference / Governed Memory
     if (input.governanceAnalysis?.governedCandidates) {
       const approvedVerbMemory = input.governanceAnalysis.governedCandidates.find(
-        (c) => c.usageDecision === "ALLOW" && (c.key === "preferred_verbosity" || c.key === "verbosity")
+        (c) => c.usageDecision === "ALLOW" && c.status === "ACTIVE" && !c.isCandidateInferred && (c.key === "preferred_verbosity" || c.key === "verbosity")
       );
       if (approvedVerbMemory) {
         const parsed = this.parseVerbosity(approvedVerbMemory.value);
@@ -691,7 +688,7 @@ export class ResponseAdaptationEngine {
     // 7. Confirmed Preference / Governed Memory
     if (input.governanceAnalysis?.governedCandidates) {
       const approvedToneMemory = input.governanceAnalysis.governedCandidates.find(
-        (c) => c.usageDecision === "ALLOW" && (c.key === "preferred_tone" || c.key === "tone")
+        (c) => c.usageDecision === "ALLOW" && c.status === "ACTIVE" && !c.isCandidateInferred && (c.key === "preferred_tone" || c.key === "tone")
       );
       if (approvedToneMemory) {
         const parsed = this.parseTone(approvedToneMemory.value);
@@ -979,13 +976,60 @@ export class ResponseAdaptationEngine {
   // Personalization Extraction & Sanitization
   // ==========================================
 
+  private isGlobalPreference(key: string, category?: string): boolean {
+    const k = (key || "").toLowerCase().trim();
+    const c = (category || "").toLowerCase().trim();
+    return (
+      k.includes("language") ||
+      k.includes("bhasha") ||
+      k.includes("verbosity") ||
+      k.includes("tone") ||
+      k.includes("format") ||
+      k.includes("style") ||
+      k.includes("theme") ||
+      k.includes("code_density") ||
+      k.includes("depth") ||
+      c === "language" ||
+      c === "verbosity" ||
+      c === "tone" ||
+      c === "format" ||
+      c === "style"
+    );
+  }
+
+  private sanitizeDirectiveText(text: string): string {
+    if (!text) return "";
+    return text
+      .replace(/\b(?:mem|pat|cand|evi|rule|db)_[a-zA-Z0-9_-]+\b/gi, "")
+      .replace(/\b0x[a-fA-F0-9]{8,}\b/g, "")
+      .replace(/\bsha256:[a-f0-9]+\b/gi, "")
+      .replace(/\b\d{10,13}\b/g, "")
+      .replace(/\b(?:confidence|score)\s*[:=]?\s*0\.\d+\b/gi, "")
+      .replace(/\b0\.\d{3,}\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   private extractPersonalizationItems(input: ResponseAdaptationInput): PersonalizationContextItem[] {
     const items: PersonalizationContextItem[] = [];
+    const isTopicIsolated = Boolean(input.governanceAnalysis?.topicIsolationApplied);
 
     // 1. From Governance-Approved Memories
     if (input.governanceAnalysis?.governedCandidates) {
       for (const candidate of input.governanceAnalysis.governedCandidates) {
-        if (candidate.usageDecision === "ALLOW" && candidate.canPersonalize) {
+        // Must be explicitly ALLOWed, ACTIVE status, and NOT inferred candidate
+        if (
+          candidate.usageDecision === "ALLOW" &&
+          candidate.status === "ACTIVE" &&
+          !candidate.isCandidateInferred &&
+          candidate.canPersonalize
+        ) {
+          if (isTopicIsolated) {
+            const isGlobal = this.isGlobalPreference(candidate.key, candidate.type);
+            if (!isGlobal) {
+              continue; // Exclude domain-specific memory when topic isolation is active
+            }
+          }
           items.push({
             key: candidate.key,
             value: candidate.value,
@@ -1001,6 +1045,12 @@ export class ResponseAdaptationEngine {
     if (input.adaptiveLearning?.patterns) {
       for (const pattern of input.adaptiveLearning.patterns) {
         if (pattern.status === "CONFIRMED" && (pattern.patternType === "DOMAIN_INTEREST" || pattern.patternType === "USER_PREFERENCE")) {
+          if (isTopicIsolated) {
+            const isGlobal = this.isGlobalPreference(pattern.key, pattern.category);
+            if (!isGlobal) {
+              continue; // Exclude domain-specific pattern when topic isolation is active
+            }
+          }
           // Avoid duplicate keys
           if (!items.some((it) => it.key === pattern.key)) {
             items.push({
@@ -1110,14 +1160,19 @@ export class ResponseAdaptationEngine {
 
     // Personalization Directives
     for (const item of personalization) {
-      if (item.category === "USER_PREFERENCE" || item.category === "DOMAIN_INTEREST" || item.category === "tech_stack") {
-        directives.push(`[PERSONALIZATION_DIRECTIVE: User context: ${item.key} is ${item.value}]`);
+      if (item.category === "USER_PREFERENCE" || item.category === "DOMAIN_INTEREST" || item.category === "tech_stack" || item.category === "PREFERENCE") {
+        const cleanKey = this.sanitizeDirectiveText(item.key);
+        const cleanVal = this.sanitizeDirectiveText(item.value);
+        if (cleanKey && cleanVal && !this.isSensitive(cleanKey) && !this.isSensitive(cleanVal)) {
+          directives.push(`[PERSONALIZATION_DIRECTIVE: User context: ${cleanKey} is ${cleanVal}]`);
+        }
       }
     }
 
     // Caution Directives
     if (cautionRequired) {
-      directives.push(`[CAUTION_DIRECTIVE: State assumptions clearly; factual confidence is low${cautionReason ? ` (${cautionReason})` : ""}]`);
+      const cleanReason = cautionReason ? this.sanitizeDirectiveText(cautionReason) : undefined;
+      directives.push(`[CAUTION_DIRECTIVE: State assumptions clearly; factual confidence is low${cleanReason ? ` (${cleanReason})` : ""}]`);
     }
 
     return directives;
@@ -1129,6 +1184,38 @@ export class ResponseAdaptationEngine {
 
   private isSensitive(text: string): boolean {
     if (!text) return false;
+    const lower = text.toLowerCase();
+    const sensitiveKeywords = [
+      "password",
+      "passwd",
+      "pin",
+      "secret",
+      "api_key",
+      "apikey",
+      "api-key",
+      "auth_token",
+      "authtoken",
+      "auth-token",
+      "bearer",
+      "cvv",
+      "cvc",
+      "ssn",
+      "nid",
+      "credit_card",
+      "credit card",
+      "creditcard",
+      "debit_card",
+      "debit card",
+      "debitcard",
+      "bank_account",
+      "bank account",
+      "routing_number",
+      "access_token",
+      "private_key",
+    ];
+    if (sensitiveKeywords.some((kw) => lower.includes(kw))) {
+      return true;
+    }
     return this.SENSITIVE_REGEX.test(text);
   }
 

@@ -78,6 +78,8 @@ import {
 } from "./predictiveContextTypes";
 import { responseAdaptationEngine } from "./responseAdaptationEngine";
 import { ResponseAdaptationAnalysis } from "./responseAdaptationTypes";
+import { longTermUserModelEngine } from "./longTermUserModelEngine";
+import { UserModelAnalysis } from "./longTermUserModelTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -91,6 +93,7 @@ export * from "./memoryRetrievalTypes";
 export * from "./memoryConsolidationTypes";
 export * from "./memoryGovernanceTypes";
 export * from "./adaptiveLearningTypes";
+export * from "./longTermUserModelTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./memoryStore";
@@ -103,6 +106,7 @@ export { memoryRetrievalEngine } from "./memoryRetrievalEngine";
 export { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 export { memoryGovernanceEngine } from "./memoryGovernanceEngine";
 export { adaptiveLearningEngine } from "./adaptiveLearningEngine";
+export { longTermUserModelEngine } from "./longTermUserModelEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { memoryStore } from "./memoryStore";
@@ -133,6 +137,7 @@ export interface BrainAnalysis {
   memoryConsolidation?: MemoryConsolidationAnalysis;
   memoryGovernanceAnalysis?: MemoryGovernanceAnalysis;
   adaptiveLearningAnalysis?: LearningAnalysis;
+  longTermUserModelAnalysis?: UserModelAnalysis;
   predictiveContextAnalysis?: PredictiveContextAnalysis;
   responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
   activeTaskPlan?: TaskPlan;
@@ -434,8 +439,32 @@ export class BrainEngine {
       }
     }
 
+    // Step 10.5 / Phase 2: Long-Term User Model Synthesis & Identity-Aware Context Engine
+    // Downstream of AdaptiveLearningEngine — synthesizes stable, bounded characteristics without hallucination
+    const longTermUserModelAnalysis = longTermUserModelEngine.synthesize({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      governanceAnalysis: memoryGovernanceAnalysis,
+      adaptiveLearning: adaptiveLearningAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        isTopicIsolated: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+      },
+    });
+
+    // Add safe sanitized user model directives to promptDirectives
+    for (const d of longTermUserModelAnalysis.activeDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Step 11 / Phase 2: Predictive Context & Proactive Memory Orchestration Engine
-    // Downstream of AdaptiveLearningEngine — safely prepares context for active plans & confirmed preferences
+    // Downstream of AdaptiveLearningEngine & UserModelEngine — safely prepares context for active plans & confirmed preferences
     const predictiveContextAnalysis = predictiveContextEngine.evaluate({
       message,
       context: contextResult.context,
@@ -460,7 +489,7 @@ export class BrainEngine {
     }
 
     // Step 12 / Phase 2: Response Adaptation & Personalization Engine (Deterministic, Bounded, Non-LLM)
-    // Downstream of PredictiveContextEngine — resolves multi-layer style profiling, format constraints, & safe personalization
+    // Downstream of PredictiveContextEngine & UserModelEngine — resolves multi-layer style profiling, format constraints, & safe personalization
     const responseAdaptationAnalysis = responseAdaptationEngine.evaluate({
       message: trimmed,
       context: contextResult.context,
@@ -470,6 +499,7 @@ export class BrainEngine {
       verification: verificationAnalysis,
       governanceAnalysis: memoryGovernanceAnalysis,
       adaptiveLearning: adaptiveLearningAnalysis,
+      longTermUserModel: longTermUserModelAnalysis,
       predictiveContext: predictiveContextAnalysis,
       history: recentHistory,
       options: {
@@ -499,6 +529,7 @@ export class BrainEngine {
       memoryConsolidation,
       memoryGovernanceAnalysis,
       adaptiveLearningAnalysis,
+      longTermUserModelAnalysis,
       predictiveContextAnalysis,
       responseAdaptationAnalysis,
       activeTaskPlan: planningAnalysis.plan,

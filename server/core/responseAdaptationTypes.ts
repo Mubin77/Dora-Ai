@@ -24,6 +24,7 @@ import { PlanningAnalysis } from "./planningTypes";
 import { VerificationAnalysis } from "./verificationTypes";
 import { MemoryGovernanceAnalysis } from "./memoryGovernanceTypes";
 import { LearningAnalysis } from "./adaptiveLearningTypes";
+import { UserModelAnalysis } from "./longTermUserModelTypes";
 import { PredictiveContextAnalysis } from "./predictiveContextTypes";
 
 export type ResponseLanguage = "ENGLISH" | "BANGLA" | "BANGLISH" | "MIXED";
@@ -141,6 +142,7 @@ export interface ResponseAdaptationInput {
   verification?: VerificationAnalysis;
   governanceAnalysis?: MemoryGovernanceAnalysis;
   adaptiveLearning?: LearningAnalysis;
+  longTermUserModel?: UserModelAnalysis;
   predictiveContext?: PredictiveContextAnalysis;
   history?: ConversationTurn[];
   options?: {

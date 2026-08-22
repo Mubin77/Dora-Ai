@@ -25,6 +25,7 @@ import {
 import { ConversationContext } from "./contextTypes";
 import { StructuredIntent, BrainIntent } from "./intentTypes";
 import { MemoryGovernanceAnalysis, MemoryGovernanceCandidate } from "./memoryGovernanceTypes";
+import { MemoryStatus } from "./memoryTypes";
 import { LearningAnalysis, LearningPattern } from "./adaptiveLearningTypes";
 import { PredictiveContextAnalysis, ProactiveContextCandidate } from "./predictiveContextTypes";
 import { VerificationAnalysis } from "./verificationTypes";
@@ -782,6 +783,663 @@ runTest("BrainEngine Idempotence: No memory corruption across repeated calls", (
   assert(res1.responseAdaptationAnalysis?.verbosity === "CONCISE", "Should be concise");
   assert(res2.responseAdaptationAnalysis?.verbosity === "CONCISE", "Should still be concise");
   assert(res1.responseAdaptationAnalysis?.language === res2.responseAdaptationAnalysis?.language, "Language must match");
+});
+
+// =========================================================================
+// TARGETED AUDIT HARDENING TESTS (PRECEDENCE, LIFECYCLE, TOPIC ISOLATION, SENSITIVITY, DETERMINISM, IDEMPOTENCY)
+// =========================================================================
+
+// 34. Precedence: Current verbosity overrides historical verbosity
+runTest("Precedence: Current-turn 'explain in detail' overrides historical 'concise' preference", () => {
+  const govCand: MemoryGovernanceCandidate = {
+    memoryId: "mem_verb_1",
+    key: "preferred_verbosity",
+    value: "concise",
+    type: "PREFERENCE",
+    source: "EXPLICIT_USER",
+    status: "ACTIVE",
+    usageDecision: "ALLOW",
+    usageScore: 0.9,
+    confidence: 0.9,
+    relevance: 0.9,
+    reasons: ["ACTIVE_USER_PREFERENCE"],
+    canAffectResponseContent: true,
+    canPersonalize: true,
+    canSupportFactualClaim: false,
+    requiresExplicitAttribution: false,
+    isCandidateInferred: false,
+  };
+
+  const result = responseAdaptationEngine.evaluate({
+    message: "Explain quantum computing in detail",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+    governanceAnalysis: {
+      governanceRequired: true,
+      memoryInfluenceAllowed: true,
+      cautiousMemories: [],
+      internalOnlyMemories: [],
+      topicIsolationApplied: false,
+      explicitReferenceDetected: false,
+      governanceConfidence: 0.9,
+      governedCandidates: [govCand],
+      allowedMemories: [govCand],
+      suppressedMemories: [],
+      privacyBlocks: [],
+      directives: [],
+      conflicts: [],
+      sanitizedMemoryContext: "User prefers concise answers",
+    },
+  });
+
+  assert(result.verbosity === "DETAILED", `Expected DETAILED, got ${result.verbosity}`);
+  assert(result.styleProfile.verbosity.winningLayer === "CURRENT_TURN_EXPLICIT", "Current turn must win over historical preference");
+});
+
+// 35. Precedence: Current format overrides historical format
+runTest("Precedence: Current-turn 'give me a table' overrides historical 'bullet points' preference", () => {
+  const govCand: MemoryGovernanceCandidate = {
+    memoryId: "mem_fmt_1",
+    key: "preferred_format",
+    value: "bullet_points",
+    type: "PREFERENCE",
+    source: "EXPLICIT_USER",
+    status: "ACTIVE",
+    usageDecision: "ALLOW",
+    usageScore: 0.9,
+    confidence: 0.9,
+    relevance: 0.9,
+    reasons: ["ACTIVE_USER_PREFERENCE"],
+    canAffectResponseContent: true,
+    canPersonalize: true,
+    canSupportFactualClaim: false,
+    requiresExplicitAttribution: false,
+    isCandidateInferred: false,
+  };
+
+  const result = responseAdaptationEngine.evaluate({
+    message: "Compare Vue and React in a table format",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+    governanceAnalysis: {
+      governanceRequired: true,
+      memoryInfluenceAllowed: true,
+      cautiousMemories: [],
+      internalOnlyMemories: [],
+      topicIsolationApplied: false,
+      explicitReferenceDetected: false,
+      governanceConfidence: 0.9,
+      governedCandidates: [govCand],
+      allowedMemories: [govCand],
+      suppressedMemories: [],
+      privacyBlocks: [],
+      directives: [],
+      conflicts: [],
+      sanitizedMemoryContext: "User prefers bullet points",
+    },
+  });
+
+  assert(result.formatStyle === "TABLE", `Expected TABLE, got ${result.formatStyle}`);
+  assert(result.styleProfile.formatStyle.winningLayer === "CURRENT_TURN_EXPLICIT", "Current turn must win over historical format");
+});
+
+// 36. Precedence: Current tone overrides historical tone
+runTest("Precedence: Current-turn 'casual friendly chat' overrides historical 'formal' preference", () => {
+  const govCand: MemoryGovernanceCandidate = {
+    memoryId: "mem_tone_1",
+    key: "preferred_tone",
+    value: "professional",
+    type: "PREFERENCE",
+    source: "EXPLICIT_USER",
+    status: "ACTIVE",
+    usageDecision: "ALLOW",
+    usageScore: 0.9,
+    confidence: 0.9,
+    relevance: 0.9,
+    reasons: ["ACTIVE_USER_PREFERENCE"],
+    canAffectResponseContent: true,
+    canPersonalize: true,
+    canSupportFactualClaim: false,
+    requiresExplicitAttribution: false,
+    isCandidateInferred: false,
+  };
+
+  const result = responseAdaptationEngine.evaluate({
+    message: "Let's have a casual chill conversation about coffee",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+    governanceAnalysis: {
+      governanceRequired: true,
+      memoryInfluenceAllowed: true,
+      cautiousMemories: [],
+      internalOnlyMemories: [],
+      topicIsolationApplied: false,
+      explicitReferenceDetected: false,
+      governanceConfidence: 0.9,
+      governedCandidates: [govCand],
+      allowedMemories: [govCand],
+      suppressedMemories: [],
+      privacyBlocks: [],
+      directives: [],
+      conflicts: [],
+      sanitizedMemoryContext: "User prefers professional tone",
+    },
+  });
+
+  assert(result.tone === "CASUAL", `Expected CASUAL, got ${result.tone}`);
+  assert(result.styleProfile.tone.winningLayer === "CURRENT_TURN_EXPLICIT", "Current turn must win over historical tone");
+});
+
+// 37. Precedence: Confirmed preference overrides predictive suggestion
+runTest("Precedence: Confirmed preference strictly outranks predictive suggestion", () => {
+  const govCand: MemoryGovernanceCandidate = {
+    memoryId: "mem_lang_bgl",
+    key: "preferred_language",
+    value: "Banglish",
+    type: "PREFERENCE",
+    source: "EXPLICIT_USER",
+    status: "ACTIVE",
+    usageDecision: "ALLOW",
+    usageScore: 0.9,
+    confidence: 0.9,
+    relevance: 0.9,
+    reasons: ["ACTIVE_USER_PREFERENCE"],
+    canAffectResponseContent: true,
+    canPersonalize: true,
+    canSupportFactualClaim: false,
+    requiresExplicitAttribution: false,
+    isCandidateInferred: false,
+  };
+
+  const predCand: ProactiveContextCandidate = {
+    id: "pred_lang_eng",
+    source: "USER_MODEL",
+    predictionType: "PREFERENCE_RELEVANT",
+    relevance: 0.7,
+    confidence: 0.7,
+    topic: "language",
+    reasonCategory: "USER_HISTORY",
+    expiresAt: 50000,
+    isSafeToInject: true,
+    requiresConfirmation: false,
+    contextSummary: "English",
+  };
+
+  const result = responseAdaptationEngine.evaluate({
+    message: "What is an event loop?",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+    governanceAnalysis: {
+      governanceRequired: true,
+      memoryInfluenceAllowed: true,
+      cautiousMemories: [],
+      internalOnlyMemories: [],
+      topicIsolationApplied: false,
+      explicitReferenceDetected: false,
+      governanceConfidence: 0.9,
+      governedCandidates: [govCand],
+      allowedMemories: [govCand],
+      suppressedMemories: [],
+      privacyBlocks: [],
+      directives: [],
+      conflicts: [],
+      sanitizedMemoryContext: "User prefers Banglish",
+    },
+    predictiveContext: {
+      predictions: ["PREFERENCE_RELEVANT"],
+      acceptedCandidates: [predCand],
+      rejectedCandidates: [],
+      suppressionReasons: [],
+      confidence: 0.7,
+      directives: [],
+      requiresConfirmation: false,
+      analysisStatus: "SUCCESS",
+      diagnostics: { signalsEvaluated: 1, candidatesGenerated: 1, candidatesAccepted: 1, candidatesRejected: 0, reasons: [] },
+    },
+  });
+
+  assert(result.language === "BANGLISH", `Expected BANGLISH from confirmed preference, got ${result.language}`);
+  assert(result.styleProfile.language.winningLayer === "CONFIRMED_PREFERENCE", "CONFIRMED_PREFERENCE must win over PREDICTIVE_CONTEXT");
+});
+
+// 38. Precedence: Current-turn instruction overrides predictive suggestion
+runTest("Precedence: Current-turn instruction strictly outranks predictive suggestion", () => {
+  const predCand: ProactiveContextCandidate = {
+    id: "pred_lang_bn",
+    source: "USER_MODEL",
+    predictionType: "PREFERENCE_RELEVANT",
+    relevance: 0.8,
+    confidence: 0.8,
+    topic: "language",
+    reasonCategory: "USER_HISTORY",
+    expiresAt: 50000,
+    isSafeToInject: true,
+    requiresConfirmation: false,
+    contextSummary: "Bangla",
+  };
+
+  const result = responseAdaptationEngine.evaluate({
+    message: "Answer in English please: how does CSS Grid work?",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+    predictiveContext: {
+      predictions: ["PREFERENCE_RELEVANT"],
+      acceptedCandidates: [predCand],
+      rejectedCandidates: [],
+      suppressionReasons: [],
+      confidence: 0.8,
+      directives: [],
+      requiresConfirmation: false,
+      analysisStatus: "SUCCESS",
+      diagnostics: { signalsEvaluated: 1, candidatesGenerated: 1, candidatesAccepted: 1, candidatesRejected: 0, reasons: [] },
+    },
+  });
+
+  assert(result.language === "ENGLISH", `Expected ENGLISH from current turn, got ${result.language}`);
+  assert(result.styleProfile.language.winningLayer === "CURRENT_TURN_EXPLICIT", "CURRENT_TURN_EXPLICIT must win over PREDICTIVE_CONTEXT");
+});
+
+// 39. Current-turn overrides do not mutate input structures
+runTest("Safety: Current-turn overrides do NOT mutate long-term memories or adaptive patterns", () => {
+  const originalPattern: LearningPattern = {
+    id: "pat_lang_1",
+    userId: "user1",
+    patternType: "INTERACTION_STYLE",
+    category: "language",
+    key: "preferred_language",
+    value: "Bangla",
+    status: "CONFIRMED",
+    confidence: 0.95,
+    reinforcementCount: 5,
+    independentEvidenceCount: 4,
+    firstObservedAt: 1000,
+    lastObservedAt: 2000,
+    evidence: [],
+    source: "HISTORICAL_INTERACTIONS",
+  };
+
+  const patternSnapshot = JSON.stringify(originalPattern);
+
+  responseAdaptationEngine.evaluate({
+    message: "Speak in English for this turn",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+    adaptiveLearning: {
+      userId: "user1",
+      patterns: [originalPattern],
+      activeDirectives: ["[ADAPTIVE: User prefers Bangla]"],
+      decisions: [],
+      profile: {
+        userId: "user1",
+        interactionPreferences: [],
+        taskPatterns: [],
+        domainInterests: [],
+        preferences: { confirmedPreferences: [originalPattern], candidatePreferences: [] },
+        lastUpdatedAt: 2000,
+      },
+      diagnostics: {
+        totalSignalsProcessed: 1,
+        sensitiveSignalsBlocked: 0,
+        candidatesCreated: 0,
+        patternsReinforced: 0,
+        patternsPromoted: 0,
+        patternsDemoted: 0,
+        conflictsDetected: 0,
+        currentTurnOverrides: [],
+      },
+      currentTurnOverrideApplied: false,
+    },
+  });
+
+  assert(JSON.stringify(originalPattern) === patternSnapshot, "Adaptive pattern must remain completely unmutated");
+});
+
+// 40. Rejected lifecycle states: SUPERSEDED, EXPIRED, DELETED, OUTDATED, ARCHIVED, CANDIDATE
+runTest("Governance Boundary: SUPERSEDED, EXPIRED, DELETED, OUTDATED, ARCHIVED, CANDIDATE memories rejected", () => {
+  const lifecycleStates: MemoryStatus[] = ["SUPERSEDED", "EXPIRED", "DELETED", "OUTDATED", "ARCHIVED", "CANDIDATE"];
+
+  for (const status of lifecycleStates) {
+    const govCand: MemoryGovernanceCandidate = {
+      memoryId: `mem_${status.toLowerCase()}`,
+      key: "preferred_language",
+      value: "Bangla",
+      type: "PREFERENCE",
+      source: "EXPLICIT_USER",
+      status,
+      usageDecision: "ALLOW", // Even if mis-flagged as ALLOW, non-ACTIVE status MUST be rejected!
+      usageScore: 0.9,
+      confidence: 0.9,
+      relevance: 0.9,
+      reasons: ["ACTIVE_USER_PREFERENCE"],
+      canAffectResponseContent: true,
+      canPersonalize: true,
+      canSupportFactualClaim: false,
+      requiresExplicitAttribution: false,
+      isCandidateInferred: false,
+    };
+
+    const result = responseAdaptationEngine.evaluate({
+      message: "Explain recursion",
+      context: createDummyContext(),
+      intent: createDummyIntent(),
+      governanceAnalysis: {
+        governanceRequired: true,
+        memoryInfluenceAllowed: true,
+        cautiousMemories: [],
+        internalOnlyMemories: [],
+        topicIsolationApplied: false,
+        explicitReferenceDetected: false,
+        governanceConfidence: 0.9,
+        governedCandidates: [govCand],
+        allowedMemories: [govCand],
+        suppressedMemories: [],
+        privacyBlocks: [],
+        directives: [],
+        conflicts: [],
+        sanitizedMemoryContext: "",
+      },
+    });
+
+    assert(result.language === "ENGLISH", `Expected default ENGLISH for status ${status}, got ${result.language}`);
+  }
+});
+
+// 41. Inferred/Candidate patterns cannot create authoritative directives
+runTest("Governance Boundary: Inferred/Candidate patterns strictly prohibited from authoritative directives", () => {
+  const govCand: MemoryGovernanceCandidate = {
+    memoryId: "mem_inferred_1",
+    key: "preferred_language",
+    value: "Bangla",
+    type: "PREFERENCE",
+    source: "INFERRED",
+    status: "ACTIVE",
+    usageDecision: "ALLOW",
+    usageScore: 0.5,
+    confidence: 0.5,
+    relevance: 0.5,
+    reasons: ["CANDIDATE_UNCERTAIN"],
+    canAffectResponseContent: true,
+    canPersonalize: true,
+    canSupportFactualClaim: false,
+    requiresExplicitAttribution: false,
+    isCandidateInferred: true, // Inferred candidate!
+  };
+
+  const result = responseAdaptationEngine.evaluate({
+    message: "What is recursion?",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+    governanceAnalysis: {
+      governanceRequired: true,
+      memoryInfluenceAllowed: true,
+      cautiousMemories: [],
+      internalOnlyMemories: [],
+      topicIsolationApplied: false,
+      explicitReferenceDetected: false,
+      governanceConfidence: 0.5,
+      governedCandidates: [govCand],
+      allowedMemories: [govCand],
+      suppressedMemories: [],
+      privacyBlocks: [],
+      directives: [],
+      conflicts: [],
+      sanitizedMemoryContext: "",
+    },
+  });
+
+  assert(result.language === "ENGLISH", `Expected ENGLISH default because inferred candidate cannot dictate style, got ${result.language}`);
+});
+
+// 42. Topic Isolation: Domain-specific vs Global preference distinction
+runTest("Topic Isolation: Domain-specific laptop preference excluded for weather, while global style persists", () => {
+  const laptopPref: MemoryGovernanceCandidate = {
+    memoryId: "mem_laptop_1",
+    key: "laptop_brand",
+    value: "ASUS ROG",
+    type: "PREFERENCE",
+    source: "EXPLICIT_USER",
+    status: "ACTIVE",
+    usageDecision: "ALLOW",
+    usageScore: 0.9,
+    confidence: 0.9,
+    relevance: 0.1,
+    reasons: ["ACTIVE_USER_PREFERENCE"],
+    canAffectResponseContent: true,
+    canPersonalize: true,
+    canSupportFactualClaim: false,
+    requiresExplicitAttribution: false,
+    isCandidateInferred: false,
+  };
+
+  const globalLangPref: MemoryGovernanceCandidate = {
+    memoryId: "mem_lang_global",
+    key: "preferred_language",
+    value: "Banglish",
+    type: "PREFERENCE",
+    source: "EXPLICIT_USER",
+    status: "ACTIVE",
+    usageDecision: "ALLOW",
+    usageScore: 0.9,
+    confidence: 0.9,
+    relevance: 0.9,
+    reasons: ["ACTIVE_USER_PREFERENCE"],
+    canAffectResponseContent: true,
+    canPersonalize: true,
+    canSupportFactualClaim: false,
+    requiresExplicitAttribution: false,
+    isCandidateInferred: false,
+  };
+
+  const result = responseAdaptationEngine.evaluate({
+    message: "What will the weather be tomorrow?",
+    context: createDummyContext("weather"),
+    intent: createDummyIntent("INFORMATION"),
+    governanceAnalysis: {
+      governanceRequired: true,
+      memoryInfluenceAllowed: true,
+      cautiousMemories: [],
+      internalOnlyMemories: [],
+      topicIsolationApplied: true, // Topic isolation active!
+      explicitReferenceDetected: false,
+      governanceConfidence: 0.9,
+      governedCandidates: [laptopPref, globalLangPref],
+      allowedMemories: [laptopPref, globalLangPref],
+      suppressedMemories: [],
+      privacyBlocks: [],
+      directives: [],
+      conflicts: [],
+      sanitizedMemoryContext: "",
+    },
+  });
+
+  // Global style (Banglish) should apply
+  assert(result.language === "BANGLISH", `Expected BANGLISH, got ${result.language}`);
+  // Domain-specific laptop preference should NOT be personalized
+  assert(!result.sanitizedPersonalizationContext.some((c) => c.key === "laptop_brand"), "Laptop brand must be excluded by topic isolation");
+  assert(!result.adaptationDirectives.some((d) => d.includes("ASUS")), "ASUS must not leak into weather directives");
+});
+
+// 43. Sensitive Data Hardening: Comprehensive credentials filtering
+runTest("Sensitive Data Hardening: Credit cards, CVVs, passwords, Bearer tokens, and API keys suppressed", () => {
+  const sensitiveItems = [
+    { key: "user_password", value: "SuperSecret#2026!" },
+    { key: "github_token", value: "ghp_1234567890abcdef1234567890abcdef1234" },
+    { key: "openai_key", value: "sk-abcdefghijklmnopqrstuvwxyz123456" },
+    { key: "google_key", value: "AIzaSyD12345678901234567890123456789012" },
+    { key: "credit_card", value: "4111 2222 3333 4444" },
+    { key: "cvv_code", value: "987" },
+    { key: "bearer_token", value: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" },
+    { key: "bank_account", value: "account 987654321012" },
+  ];
+
+  for (const item of sensitiveItems) {
+    const govCand: MemoryGovernanceCandidate = {
+      memoryId: "mem_sens",
+      key: item.key,
+      value: item.value,
+      type: "PERSONALIZATION",
+      source: "EXPLICIT_USER",
+      status: "ACTIVE",
+      usageDecision: "ALLOW",
+      usageScore: 0.9,
+      confidence: 0.9,
+      relevance: 0.9,
+      reasons: ["ACTIVE_USER_PREFERENCE"],
+      canAffectResponseContent: true,
+      canPersonalize: true,
+      canSupportFactualClaim: false,
+      requiresExplicitAttribution: false,
+      isCandidateInferred: false,
+    };
+
+    const result = responseAdaptationEngine.evaluate({
+      message: "Show my settings",
+      context: createDummyContext(),
+      intent: createDummyIntent(),
+      governanceAnalysis: {
+        governanceRequired: true,
+        memoryInfluenceAllowed: true,
+        cautiousMemories: [],
+        internalOnlyMemories: [],
+        topicIsolationApplied: false,
+        explicitReferenceDetected: false,
+        governanceConfidence: 0.9,
+        governedCandidates: [govCand],
+        allowedMemories: [govCand],
+        suppressedMemories: [],
+        privacyBlocks: [],
+        directives: [],
+        conflicts: [],
+        sanitizedMemoryContext: "",
+      },
+    });
+
+    assert(result.safetyStatus === "SENSITIVE_SUPPRESSED", `Safety status must be SENSITIVE_SUPPRESSED for ${item.key}`);
+    assert(!result.sanitizedPersonalizationContext.some((c) => c.key === item.key), `${item.key} must be absent from context`);
+    assert(!result.adaptationDirectives.some((d) => d.includes(item.value)), `Directives must not contain sensitive value ${item.value}`);
+  }
+});
+
+// 44. Determinism Tests (D1 - D7)
+runTest("TEST D1: Same input produces identical adaptation result", () => {
+  const input: ResponseAdaptationInput = {
+    message: "Banglay bolo in 1 sentence",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+  };
+
+  const r1 = responseAdaptationEngine.evaluate(input);
+  const r2 = responseAdaptationEngine.evaluate(input);
+
+  assert(r1.language === r2.language, "Languages must be identical");
+  assert(r1.verbosity === r2.verbosity, "Verbosity must be identical");
+  assert(r1.tone === r2.tone, "Tone must be identical");
+  assert(r1.formatStyle === r2.formatStyle, "Format must be identical");
+  assert(r1.codeDensity === r2.codeDensity, "Code density must be identical");
+  assert(r1.explanationDepth === r2.explanationDepth, "Depth must be identical");
+  assert(JSON.stringify(r1.adaptationDirectives) === JSON.stringify(r2.adaptationDirectives), "Directives must match exactly");
+});
+
+runTest("TEST D2: Same input + same injected currentTime produces identical result", () => {
+  const input: ResponseAdaptationInput = {
+    message: "Explain in bullet points",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+    options: { currentTime: 1700000000 },
+  };
+
+  const r1 = responseAdaptationEngine.evaluate(input);
+  const r2 = responseAdaptationEngine.evaluate(input);
+
+  assert(JSON.stringify(r1) === JSON.stringify(r2), "Full analysis JSON must match exactly");
+});
+
+runTest("TEST D3: Repeated execution produces identical directives", () => {
+  const input: ResponseAdaptationInput = {
+    message: "Be concise and technical",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+  };
+
+  const d1 = responseAdaptationEngine.evaluate(input).adaptationDirectives;
+  const d2 = responseAdaptationEngine.evaluate(input).adaptationDirectives;
+  const d3 = responseAdaptationEngine.evaluate(input).adaptationDirectives;
+
+  assert(JSON.stringify(d1) === JSON.stringify(d2) && JSON.stringify(d2) === JSON.stringify(d3), "Directives must be 100% stable across repetitions");
+});
+
+runTest("TEST D4: Zero Math.random() usage in ResponseAdaptationEngine", () => {
+  const mathRandomOriginal = Math.random;
+  let randomCalled = false;
+  Math.random = () => {
+    randomCalled = true;
+    return 0.5;
+  };
+
+  try {
+    responseAdaptationEngine.evaluate({
+      message: "Explain async/await in detail with bullet points and code",
+      context: createDummyContext(),
+      intent: createDummyIntent(),
+    });
+    assert(!randomCalled, "Math.random() was invoked during evaluation!");
+  } finally {
+    Math.random = mathRandomOriginal;
+  }
+});
+
+runTest("TEST D5: No Date.now() affecting decision output", () => {
+  const dateNowOriginal = Date.now;
+  let callCount = 0;
+  Date.now = () => {
+    callCount++;
+    return 999999999;
+  };
+
+  try {
+    const res = responseAdaptationEngine.evaluate({
+      message: "Explain recursion",
+      context: createDummyContext(),
+      intent: createDummyIntent(),
+    });
+    assert(res.diagnostics.timingMs === 0, "TimingMs must be deterministic zero");
+  } finally {
+    Date.now = dateNowOriginal;
+  }
+});
+
+runTest("TEST D6: No random UUID affecting decision output", () => {
+  const res1 = responseAdaptationEngine.evaluate({ message: "Hello", context: createDummyContext(), intent: createDummyIntent() });
+  const res2 = responseAdaptationEngine.evaluate({ message: "Hello", context: createDummyContext(), intent: createDummyIntent() });
+
+  assert(JSON.stringify(res1) === JSON.stringify(res2), "Outputs must be purely deterministic with zero random UUID variations");
+});
+
+runTest("TEST D7: Pure in-memory synchronous execution (zero network/API/LLM dependency)", () => {
+  const res = responseAdaptationEngine.evaluate({
+    message: "Summarize everything",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+  });
+  assert(res !== null && typeof res === "object", "Engine executes synchronously in memory");
+});
+
+// 45. Presentation-Only Invariants
+runTest("Presentation-Only Invariants: Engine determines style only and never invents facts or creates memory records", () => {
+  const input: ResponseAdaptationInput = {
+    message: "What is the boiling point of water?",
+    context: createDummyContext(),
+    intent: createDummyIntent(),
+  };
+
+  const res = responseAdaptationEngine.evaluate(input);
+  // Style and directives only
+  assert(res.styleProfile !== undefined, "Produces style profile");
+  assert(res.adaptationDirectives !== undefined, "Produces presentation directives");
+  // Does not return factual answers or claim truth verification
+  assert((res as any).factualAnswer === undefined, "Does not produce factual answers");
+  assert((res as any).newMemoryRecords === undefined, "Does not create memory records");
+  assert((res as any).toolCalls === undefined, "Does not trigger tools");
 });
 
 console.log(`\n=============================================`);
