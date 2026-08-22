@@ -1,6 +1,6 @@
 /**
  * Dora Cross-Session Context Continuity & Intelligent Recall Orchestration Engine
- * Phase 2 — Step 11
+ * Phase 2 — Step 11 (Hardened Architecture)
  * 
  * Deterministic, bounded, non-LLM engine that safely selects, ranks, filters,
  * deduplicates, compresses, and presents already-authorized historical context,
@@ -25,6 +25,7 @@ import {
 } from "./contextContinuityTypes";
 import { Project, Goal, Commitment, ProjectTask } from "./goalProjectTypes";
 import { UserModelAttribute } from "./longTermUserModelTypes";
+import { MemoryGovernanceAnalysis } from "./memoryGovernanceTypes";
 
 /**
  * Strict Authority Precedence Weights (Higher = Greater Authority).
@@ -69,6 +70,7 @@ export class ContextContinuityEngine {
 
   /**
    * Main evaluation entry point for Cross-Session Context Continuity & Intelligent Recall.
+   * Pure read-only orchestrator with zero mutation of persistent structures.
    */
   public evaluate(input: ContextContinuityEvaluationInput): ContextContinuityAnalysis {
     const message = input.message || "";
@@ -92,7 +94,7 @@ export class ContextContinuityEngine {
     // 3. Extract Candidates from all authoritative sources
     const allCandidates: ContextContinuityItem[] = [];
 
-    // 3a. Ingest Governed Memories & Retrieved Records
+    // 3a. Ingest Governed Memories & Retrieved Records (FIX #1: Strict Governance Boundary)
     const candidateMemories = (input.retrievedMemories as any)?.memories ||
       input.retrievedMemories?.retrievedMemories ||
       input.retrievedMemories?.candidates ||
@@ -105,14 +107,18 @@ export class ContextContinuityEngine {
         const val = mem.value || mem.content || rawMem.content || "";
         const cat = mem.category || rawMem.category || "GENERAL";
         const status = ((mem.status || rawMem.status || "ACTIVE") as string).toUpperCase();
-        if (status === "SUPERSEDED" || status === "EXPIRED" || status === "DELETED" || status === "OUTDATED") {
+        
+        // Strict lifecycle gate
+        if (status === "SUPERSEDED" || status === "EXPIRED" || status === "DELETED" || status === "OUTDATED" || status === "QUARANTINED" || status === "ARCHIVED") {
           continue;
         }
 
-        const isExplicit = mem.source === "EXPLICIT_USER" || mem.isExplicit === true || rawMem.source === "EXPLICIT_USER";
-        const authority: ContinuitySourceAuthority = isExplicit
-          ? "GOVERNANCE_APPROVED_MEMORY"
-          : "CONFIRMED_ADAPTIVE_PATTERN";
+        // FIX #1 & FIX #9: Deterministic Authority Resolution via Governance Gate
+        const authRes = this.resolveContinuityAuthority("MEMORY", rawMem, input.governanceAnalysis);
+        if (!authRes.isAllowed) {
+          // Governance rejected or unauthorized
+          continue;
+        }
 
         const scope = this.determineScope(key, cat);
         const isGlobal = scope === "GLOBAL";
@@ -124,8 +130,8 @@ export class ContextContinuityEngine {
           title: key,
           content: val,
           normalizedKey: this.normalizeKey(key),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: authRes.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authRes.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, `${key} ${val}`, activeTopic, isGlobal),
           recencyScore: this.calculateRecencyScore(mem.updatedAt || mem.createdAt || currentTime, currentTime),
           compositeScore: 0,
@@ -144,8 +150,9 @@ export class ContextContinuityEngine {
     // 3b. Ingest Confirmed Long-Term User Model Attributes (Step 8)
     if (input.longTermUserModel?.profile?.confirmedAttributes) {
       for (const attr of input.longTermUserModel.profile.confirmedAttributes) {
-        const isGlobal = attr.dimension === "COMMUNICATION" || attr.dimension === "LANGUAGE" || attr.dimension === "VERBOSITY" || attr.dimension === "TONE" || attr.dimension === "CODE_STYLE";
-        const authority: ContinuitySourceAuthority = "CONFIRMED_USER_MODEL";
+        const scope = this.determineScope(attr.key, attr.dimension);
+        const isGlobal = scope === "GLOBAL";
+        const authRes = this.resolveContinuityAuthority("USER_MODEL_ATTRIBUTE", attr);
 
         allCandidates.push({
           id: `cc_um_${attr.key}`,
@@ -154,12 +161,12 @@ export class ContextContinuityEngine {
           title: attr.key,
           content: attr.normalizedValue,
           normalizedKey: this.normalizeKey(attr.key),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: authRes.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authRes.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, `${attr.key} ${attr.normalizedValue}`, activeTopic, isGlobal),
           recencyScore: this.calculateRecencyScore(attr.lastObservedAt || currentTime, currentTime),
           compositeScore: 0,
-          scope: isGlobal ? "GLOBAL" : (attr.dimension === "PROJECT_CONTEXT" ? "PROJECT" : "TOPIC"),
+          scope,
           topic: attr.dimension,
           timestamp: attr.lastObservedAt || currentTime,
           isExplicitlyRecalled: recallSignal.isExplicitRecall,
@@ -178,8 +185,9 @@ export class ContextContinuityEngine {
           continue;
         }
 
-        const isGlobal = pat.scope === "GLOBAL";
-        const authority: ContinuitySourceAuthority = "TEMPORAL_CONTEXT";
+        const scope = pat.scope || this.determineScope(pat.attributeKey, pat.dimension);
+        const isGlobal = scope === "GLOBAL";
+        const authRes = this.resolveContinuityAuthority("TEMPORAL_PATTERN", pat);
 
         allCandidates.push({
           id: `cc_temp_${pat.patternId}`,
@@ -188,12 +196,12 @@ export class ContextContinuityEngine {
           title: pat.attributeKey,
           content: pat.currentValue,
           normalizedKey: this.normalizeKey(pat.attributeKey),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: authRes.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authRes.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, `${pat.attributeKey} ${pat.currentValue}`, activeTopic, isGlobal),
           recencyScore: this.calculateRecencyScore(pat.lastObservedAt || currentTime, currentTime),
           compositeScore: 0,
-          scope: pat.scope || (isGlobal ? "GLOBAL" : "TOPIC"),
+          scope,
           topic: pat.dimension,
           timestamp: pat.lastObservedAt || currentTime,
           isExplicitlyRecalled: recallSignal.isExplicitRecall,
@@ -213,7 +221,7 @@ export class ContextContinuityEngine {
       candidateProjects = input.goalProjectAnalysis.state.activeProjects;
     }
 
-    // Also collect historical/completed projects if explicit recall requested
+    // Historical/completed projects retrieved ONLY during explicit recall
     if (recallSignal.isExplicitRecall && input.goalProjectAnalysis?.state?.completedProjects) {
       candidateProjects = [...candidateProjects, ...input.goalProjectAnalysis.state.completedProjects];
     }
@@ -224,7 +232,7 @@ export class ContextContinuityEngine {
         continue;
       }
 
-      const authority: ContinuitySourceAuthority = "ACTIVE_GOAL_PROJECT_COMMITMENT";
+      const authRes = this.resolveContinuityAuthority("PROJECT", proj);
       allCandidates.push({
         id: `cc_proj_${proj.projectId}`,
         type: "PROJECT",
@@ -232,8 +240,8 @@ export class ContextContinuityEngine {
         title: proj.name,
         content: `Project: ${proj.name} [Status: ${proj.status}]${proj.description ? ` - ${proj.description}` : ""}`,
         normalizedKey: this.normalizeKey(`project_${proj.name}`),
-        authority,
-        authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+        authority: authRes.authority,
+        authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authRes.authority],
         relevanceScore: this.calculateProjectRelevance(lowerMessage, proj, activeTopic),
         recencyScore: this.calculateRecencyScore(proj.updatedAt || proj.createdAt || currentTime, currentTime),
         compositeScore: 0,
@@ -248,9 +256,10 @@ export class ContextContinuityEngine {
         isSuppressed: false,
       });
 
-      // Ingest Project Goals
+      // Project Goals
       for (const g of proj.goals || []) {
         if (!recallSignal.isExplicitRecall && g.status === "COMPLETED") continue;
+        const gAuth = this.resolveContinuityAuthority("GOAL", g);
         allCandidates.push({
           id: `cc_goal_${g.goalId}`,
           type: "GOAL",
@@ -258,8 +267,8 @@ export class ContextContinuityEngine {
           title: g.title,
           content: `Goal: ${g.title} [Status: ${g.status}]`,
           normalizedKey: this.normalizeKey(`goal_${g.title}`),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: gAuth.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[gAuth.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, `Goal: ${g.title}`, activeTopic),
           recencyScore: this.calculateRecencyScore(g.updatedAt || g.createdAt || currentTime, currentTime),
           compositeScore: 0,
@@ -274,9 +283,10 @@ export class ContextContinuityEngine {
         });
       }
 
-      // Ingest Project Commitments
+      // Project Commitments
       for (const c of proj.commitments || []) {
         if (c.isExpired || c.status === "EXPIRED" || (!recallSignal.isExplicitRecall && c.status === "COMPLETED")) continue;
+        const cAuth = this.resolveContinuityAuthority("COMMITMENT", c);
         allCandidates.push({
           id: `cc_commit_${c.commitmentId}`,
           type: "COMMITMENT",
@@ -284,8 +294,8 @@ export class ContextContinuityEngine {
           title: c.title,
           content: `Commitment: ${c.title} [Status: ${c.status}]`,
           normalizedKey: this.normalizeKey(`commit_${c.title}`),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: cAuth.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[cAuth.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, `Commitment: ${c.title}`, activeTopic),
           recencyScore: this.calculateRecencyScore(c.updatedAt || c.createdAt || currentTime, currentTime),
           compositeScore: 0,
@@ -300,9 +310,10 @@ export class ContextContinuityEngine {
         });
       }
 
-      // Ingest Project Tasks
+      // Project Tasks
       for (const t of proj.tasks || []) {
         if (!recallSignal.isExplicitRecall && t.status === "COMPLETED") continue;
+        const tAuth = this.resolveContinuityAuthority("TASK", t);
         allCandidates.push({
           id: `cc_task_${t.taskId}`,
           type: "TASK",
@@ -310,8 +321,8 @@ export class ContextContinuityEngine {
           title: t.title,
           content: `Task: ${t.title} [Status: ${t.status}]`,
           normalizedKey: this.normalizeKey(`task_${t.title}`),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: tAuth.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[tAuth.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, `Task: ${t.title}`, activeTopic),
           recencyScore: this.calculateRecencyScore(t.updatedAt || t.createdAt || currentTime, currentTime),
           compositeScore: 0,
@@ -331,7 +342,7 @@ export class ContextContinuityEngine {
     if (input.goalProjectAnalysis?.activeGoals) {
       for (const g of input.goalProjectAnalysis.activeGoals) {
         if (allCandidates.some((c) => c.sourceId === g.goalId)) continue;
-        const authority: ContinuitySourceAuthority = "ACTIVE_GOAL_PROJECT_COMMITMENT";
+        const gAuth = this.resolveContinuityAuthority("GOAL", g);
         allCandidates.push({
           id: `cc_goal_${g.goalId}`,
           type: "GOAL",
@@ -339,8 +350,8 @@ export class ContextContinuityEngine {
           title: g.title,
           content: `Goal: ${g.title} [Status: ${g.status}]`,
           normalizedKey: this.normalizeKey(`goal_${g.title}`),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: gAuth.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[gAuth.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, `Goal: ${g.title}`, activeTopic),
           recencyScore: this.calculateRecencyScore(g.updatedAt || g.createdAt || currentTime, currentTime),
           compositeScore: 0,
@@ -359,7 +370,7 @@ export class ContextContinuityEngine {
       for (const c of input.goalProjectAnalysis.activeCommitments) {
         if (c.isExpired || c.status === "EXPIRED") continue;
         if (allCandidates.some((cand) => cand.sourceId === c.commitmentId)) continue;
-        const authority: ContinuitySourceAuthority = "ACTIVE_GOAL_PROJECT_COMMITMENT";
+        const cAuth = this.resolveContinuityAuthority("COMMITMENT", c);
         allCandidates.push({
           id: `cc_commit_${c.commitmentId}`,
           type: "COMMITMENT",
@@ -367,8 +378,8 @@ export class ContextContinuityEngine {
           title: c.title,
           content: `Commitment: ${c.title} [Status: ${c.status}]`,
           normalizedKey: this.normalizeKey(`commit_${c.title}`),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: cAuth.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[cAuth.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, `Commitment: ${c.title}`, activeTopic),
           recencyScore: this.calculateRecencyScore(c.updatedAt || c.createdAt || currentTime, currentTime),
           compositeScore: 0,
@@ -383,13 +394,13 @@ export class ContextContinuityEngine {
       }
     }
 
-    // 3f. Ingest Predictive Suggestions (Advisory only — Capped low authority)
+    // 3f. Ingest Predictive Suggestions (FIX #3: Advisory only — strictly non-authoritative)
     const suggestions = (input.predictiveContext as any)?.candidateSuggestions ||
       input.predictiveContext?.acceptedCandidates ||
       [];
     if (suggestions && Array.isArray(suggestions)) {
       for (const sug of suggestions) {
-        const authority: ContinuitySourceAuthority = "PREDICTIVE_CONTEXT";
+        const authRes = this.resolveContinuityAuthority("PREDICTIVE_SUGGESTION", sug);
         const sugId = sug.id || "pred";
         const sugType = sug.type || sug.predictionType || "predictive_suggestion";
         const sugDesc = sug.description || sug.contextSummary || sug.directive || sug.promptDirective || "";
@@ -400,8 +411,8 @@ export class ContextContinuityEngine {
           title: sugType,
           content: sugDesc,
           normalizedKey: this.normalizeKey(sugType),
-          authority,
-          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authority],
+          authority: authRes.authority,
+          authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[authRes.authority],
           relevanceScore: this.calculateLexicalRelevance(lowerMessage, sugDesc, activeTopic),
           recencyScore: 0.5,
           compositeScore: 0,
@@ -416,7 +427,7 @@ export class ContextContinuityEngine {
       }
     }
 
-    // 4. Ambiguity Resolution & Project Continuity Target
+    // 4. Ambiguity Resolution & Project Continuity Target (FIX #8)
     const ambiguityCheck = this.resolveContinuityTarget(
       lowerMessage,
       candidateProjects,
@@ -445,6 +456,11 @@ export class ContextContinuityEngine {
       };
     }
 
+    // Determine continuity status (Predictive suggestions CANNOT establish continuity status)
+    const hasAuthoritativeRelevance = allCandidates.some(
+      (c) => c.type !== "PREDICTIVE_SUGGESTION" && c.relevanceScore > 0.40
+    );
+
     if (ambiguityCheck.isAmbiguous) {
       continuityStatus = "AMBIGUOUS";
       requiresClarification = true;
@@ -457,11 +473,11 @@ export class ContextContinuityEngine {
       continuityStatus = "ISOLATED";
     } else if (ambiguityCheck.resolvedProject) {
       continuityStatus = ambiguityCheck.isResumed ? "RESUMED" : "ACTIVE";
-    } else if (allCandidates.some((c) => c.relevanceScore > 0.4)) {
+    } else if (hasAuthoritativeRelevance) {
       continuityStatus = "ACTIVE";
     }
 
-    // 5. Evaluate Gates, Suppression, and Filtering for All Candidates
+    // 5. Evaluate Gates, Suppression, and Filtering for All Candidates (FIX #4 & FIX #5)
     let suppressedConflictCount = 0;
     let suppressedTopicCount = 0;
     let suppressedSensitiveCount = 0;
@@ -469,13 +485,23 @@ export class ContextContinuityEngine {
     let suppressedDuplicateCount = 0;
     let suppressedPredictiveCount = 0;
 
+    // Build map of higher-authority keys to suppress predictive items if higher authority exists (FIX #3)
+    const nonPredictiveKeys = new Set(
+      allCandidates
+        .filter((c) => c.type !== "PREDICTIVE_SUGGESTION")
+        .map((c) => c.normalizedKey)
+    );
+
     for (const item of allCandidates) {
+      const isPred = item.type === "PREDICTIVE_SUGGESTION";
+
       // 5a. SENSITIVE DATA GATE (Final defense boundary)
       if (this.isSensitivePayload(item.content) || this.isSensitivePayload(item.title)) {
         item.isSensitive = true;
         item.isSuppressed = true;
         item.suppressionReason = "SENSITIVE_DATA_SUPPRESSED";
-        suppressedSensitiveCount++;
+        if (isPred) suppressedPredictiveCount++;
+        else suppressedSensitiveCount++;
         continue;
       }
 
@@ -483,75 +509,88 @@ export class ContextContinuityEngine {
       if (this.isForbiddenIdentityInference(item.content, item.title, item.authority)) {
         item.isSuppressed = true;
         item.suppressionReason = "FORBIDDEN_IDENTITY_INFERENCE";
-        suppressedSensitiveCount++;
+        if (isPred) suppressedPredictiveCount++;
+        else suppressedSensitiveCount++;
         continue;
       }
 
-      // 5c. CURRENT-TURN CONFLICT GATE
+      // 5c. CURRENT-TURN CONFLICT GATE (FIX #7)
       if (this.hasCurrentTurnConflict(item, currentTurnOverrides, lowerMessage)) {
         item.isCurrentTurnConflict = true;
         item.isSuppressed = true;
         item.suppressionReason = "CURRENT_TURN_CONFLICT";
-        suppressedConflictCount++;
+        if (isPred) suppressedPredictiveCount++;
+        else suppressedConflictCount++;
         continue;
       }
 
-      // 5d. AMBIGUITY SUPPRESSION: If ambiguous, suppress competing project items to prevent false assumptions
+      // 5d. PREDICTIVE SUPPRESSION: If a higher-authority representation already exists for key (FIX #3)
+      if (isPred && nonPredictiveKeys.has(item.normalizedKey)) {
+        item.isSuppressed = true;
+        item.suppressionReason = "PREDICTIVE_OVERRIDDEN_BY_AUTHORITATIVE";
+        suppressedPredictiveCount++;
+        continue;
+      }
+
+      // 5e. AMBIGUITY SUPPRESSION: If ambiguous, suppress competing project items to prevent false assumptions
       if (ambiguityCheck.isAmbiguous && item.scope === "PROJECT") {
         item.isSuppressed = true;
         item.suppressionReason = "AMBIGUOUS_PROJECT_REFERENCE";
+        if (isPred) suppressedPredictiveCount++;
         continue;
       }
 
-      // 5e. PROJECT ISOLATION GATE: If specific project is active/switched, suppress other projects
+      // 5f. PROJECT ISOLATION GATE: If specific project is active/switched, suppress other projects
       if (ambiguityCheck.resolvedProject && item.scope === "PROJECT" && item.projectId && item.projectId !== ambiguityCheck.resolvedProject.projectId) {
         item.isSuppressed = true;
         item.suppressionReason = "UNRELATED_PROJECT_SUPPRESSED";
+        if (isPred) suppressedPredictiveCount++;
         continue;
       } else if (currentTurnOverrides.switchedToProject && item.scope === "PROJECT" && item.topic && !item.topic.toLowerCase().includes(currentTurnOverrides.switchedToProject.toLowerCase())) {
         item.isSuppressed = true;
         item.suppressionReason = "PROJECT_SWITCH_OVERRIDE";
+        if (isPred) suppressedPredictiveCount++;
         continue;
       }
 
-      // 5f. TOPIC ISOLATION GATE: If topic is isolated, suppress non-global items that don't match active topic
-      if (isTopicIsolated && item.scope !== "GLOBAL") {
-        const itemTopic = (item.topic || "").toLowerCase();
-        if (!activeTopic || !itemTopic.includes(activeTopic)) {
-          item.isTopicIsolated = true;
-          item.isSuppressed = true;
-          item.suppressionReason = "TOPIC_ISOLATED";
-          suppressedTopicCount++;
-          continue;
-        }
+      // 5g. HARD TOPIC ISOLATION GATE (FIX #5)
+      if (!this.isTopicCompatible(item, activeTopic, isTopicIsolated, lowerMessage)) {
+        item.isTopicIsolated = true;
+        item.isSuppressed = true;
+        item.suppressionReason = "TOPIC_ISOLATED";
+        if (isPred) suppressedPredictiveCount++;
+        else suppressedTopicCount++;
+        continue;
       }
 
-      // 5g. STALE CONTEXT GATE (Unless explicitly recalled)
+      // 5h. STALE CONTEXT GATE (Unless explicitly recalled)
       const elapsedMs = Math.max(0, currentTime - item.timestamp);
       const isStale = elapsedMs > 30 * 24 * 3600 * 1000;
       if (isStale && !recallSignal.isExplicitRecall && !input.options?.allowStaleRecall) {
         item.isSuppressed = true;
         item.suppressionReason = "STALE_CONTEXT_SUPPRESSED";
-        suppressedStaleCount++;
+        if (isPred) suppressedPredictiveCount++;
+        else suppressedStaleCount++;
         continue;
       }
 
-      // 5h. NEW SESSION NON-RELEVANT SUPPRESSION: New session != automatic full dump
+      // 5i. NEW SESSION NON-RELEVANT SUPPRESSION: New session != automatic full dump
       if (isNewSession && !recallSignal.isExplicitRecall && !ambiguityCheck.resolvedProject && item.relevanceScore < 0.35 && item.scope !== "GLOBAL") {
         item.isSuppressed = true;
         item.suppressionReason = "NEW_SESSION_IRRELEVANT_SUPPRESSED";
+        if (isPred) suppressedPredictiveCount++;
         continue;
       }
 
-      // 5i. GENERAL IRRELEVANCE SUPPRESSION (For simple non-recall turns)
+      // 5j. GENERAL IRRELEVANCE SUPPRESSION (For simple non-recall turns)
       if (!recallSignal.isExplicitRecall && item.scope !== "GLOBAL" && item.relevanceScore < 0.20 && !ambiguityCheck.resolvedProject) {
         item.isSuppressed = true;
         item.suppressionReason = "IRRELEVANT_CONTEXT_SUPPRESSED";
+        if (isPred) suppressedPredictiveCount++;
         continue;
       }
 
-      // 5j. Calculate Final Composite Score
-      // Authority heavily weighted (0.45) over Relevance (0.30), Recency (0.15), and Scope (0.10)
+      // 5k. Purely diagnostic composite score
       const scopeBonus = item.scope === "GLOBAL" || (ambiguityCheck.resolvedProject && item.projectId === ambiguityCheck.resolvedProject.projectId) ? 1.0 : 0.5;
       item.compositeScore = Number(
         (
@@ -563,19 +602,14 @@ export class ContextContinuityEngine {
       );
     }
 
-    // 6. Deduplication & Collapse across layers
+    // 6. Deduplication & Collapse across layers (FIX #2 & FIX #6: Lexicographic Ranking)
     const deduplicatedCandidates: ContextContinuityItem[] = [];
     const keyToItemMap = new Map<string, ContextContinuityItem>();
 
-    // Sort all non-suppressed candidates by authorityWeight DESC, then compositeScore DESC, then timestamp DESC
+    // Sort using strict lexicographic authority comparison
     const activeCandidates = allCandidates
       .filter((c) => !c.isSuppressed)
-      .sort((a, b) => {
-        if (b.authorityWeight !== a.authorityWeight) return b.authorityWeight - a.authorityWeight;
-        if (b.compositeScore !== a.compositeScore) return b.compositeScore - a.compositeScore;
-        if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
-        return a.id.localeCompare(b.id); // Stable tie-breaker
-      });
+      .sort((a, b) => this.compareContinuityItems(a, b));
 
     for (const item of activeCandidates) {
       const existing = keyToItemMap.get(item.normalizedKey);
@@ -583,14 +617,18 @@ export class ContextContinuityEngine {
         // Suppress the lower-authority duplicate
         item.isSuppressed = true;
         item.suppressionReason = "DUPLICATE_LOWER_AUTHORITY";
-        suppressedDuplicateCount++;
+        if (item.type === "PREDICTIVE_SUGGESTION") {
+          suppressedPredictiveCount++;
+        } else {
+          suppressedDuplicateCount++;
+        }
       } else {
         keyToItemMap.set(item.normalizedKey, item);
         deduplicatedCandidates.push(item);
       }
     }
 
-    // 7. Context Budgeting & Truncation
+    // 7. Context Budgeting & Truncation (Applied strictly AFTER deduplication and eligibility)
     const selectedMemories: ContextContinuityItem[] = [];
     const selectedProjects: ContextContinuityItem[] = [];
     const selectedGoals: ContextContinuityItem[] = [];
@@ -598,12 +636,14 @@ export class ContextContinuityEngine {
     const otherSelectedItems: ContextContinuityItem[] = [];
 
     for (const item of deduplicatedCandidates) {
+      const isPred = item.type === "PREDICTIVE_SUGGESTION";
       if (item.type === "MEMORY" || item.type === "USER_MODEL_ATTRIBUTE" || item.type === "TEMPORAL_PATTERN") {
         if (selectedMemories.length < budgetConfig.maxMemories) {
           selectedMemories.push(item);
         } else {
           item.isSuppressed = true;
           item.suppressionReason = "BUDGET_MEMORY_EXCEEDED";
+          if (isPred) suppressedPredictiveCount++;
         }
       } else if (item.type === "PROJECT") {
         if (selectedProjects.length < budgetConfig.maxProjects) {
@@ -611,6 +651,7 @@ export class ContextContinuityEngine {
         } else {
           item.isSuppressed = true;
           item.suppressionReason = "BUDGET_PROJECT_EXCEEDED";
+          if (isPred) suppressedPredictiveCount++;
         }
       } else if (item.type === "GOAL") {
         if (selectedGoals.length < budgetConfig.maxGoals) {
@@ -618,6 +659,7 @@ export class ContextContinuityEngine {
         } else {
           item.isSuppressed = true;
           item.suppressionReason = "BUDGET_GOAL_EXCEEDED";
+          if (isPred) suppressedPredictiveCount++;
         }
       } else if (item.type === "COMMITMENT") {
         if (selectedCommitments.length < budgetConfig.maxCommitments) {
@@ -625,6 +667,7 @@ export class ContextContinuityEngine {
         } else {
           item.isSuppressed = true;
           item.suppressionReason = "BUDGET_COMMITMENT_EXCEEDED";
+          if (isPred) suppressedPredictiveCount++;
         }
       } else {
         if (otherSelectedItems.length + selectedMemories.length + selectedProjects.length + selectedGoals.length + selectedCommitments.length < budgetConfig.maxTotalContextItems) {
@@ -632,6 +675,7 @@ export class ContextContinuityEngine {
         } else {
           item.isSuppressed = true;
           item.suppressionReason = "BUDGET_TOTAL_EXCEEDED";
+          if (isPred) suppressedPredictiveCount++;
         }
       }
     }
@@ -694,7 +738,7 @@ export class ContextContinuityEngine {
       rawDirectives.push("Providing requested recall of previous conversation decisions and context.");
     }
 
-    // 9. Directive Sanitization Gate (Strict stripping of internal IDs, floats, timestamps)
+    // 9. Directive Sanitization Gate (Strict stripping of internal IDs, floats, timestamps - FIX #12)
     const sanitizedDirectives: string[] = [];
     for (const dir of rawDirectives.slice(0, budgetConfig.maxDirectives)) {
       const sanitized = this.sanitizeDirective(dir);
@@ -704,7 +748,6 @@ export class ContextContinuityEngine {
     }
 
     // 10. Compile Final Diagnostics
-    // Include both standalone and project-level selected goals and commitments
     const activeGoals = [
       ...(activeProjectSummary?.activeGoals || []),
       ...selectedGoals.map((g) => g.title),
@@ -749,6 +792,185 @@ export class ContextContinuityEngine {
   }
 
   /**
+   * Deterministic Authority Resolution (FIX #1 & FIX #9).
+   * Maps already-authorized inputs into the strict authority hierarchy.
+   * Step 11 is NOT an authority engine and NEVER promotes records locally.
+   */
+  public resolveContinuityAuthority(
+    itemType: ContinuityItemType,
+    sourceData: any,
+    governanceAnalysis?: MemoryGovernanceAnalysis
+  ): { authority: ContinuitySourceAuthority; isAllowed: boolean; reason?: string } {
+    if (itemType === "MEMORY") {
+      const mem = sourceData.memory || sourceData;
+      const memId = mem.id || sourceData.memoryId || "unknown";
+
+      // If Governance Analysis is provided, it is the sole authoritative eligibility gate
+      if (governanceAnalysis) {
+        const allowedCandidate = (governanceAnalysis.allowedMemories || []).find(
+          (m) => m.memoryId === memId || m.key === mem.key
+        );
+        const cautiousCandidate = (governanceAnalysis.cautiousMemories || []).find(
+          (m) => m.memoryId === memId || m.key === mem.key
+        );
+        const suppressedCandidate = (governanceAnalysis.suppressedMemories || []).find(
+          (m) => m.memoryId === memId || m.key === mem.key
+        );
+
+        if (suppressedCandidate || (!allowedCandidate && !cautiousCandidate)) {
+          return {
+            authority: "SYSTEM_DEFAULT",
+            isAllowed: false,
+            reason: "GOVERNANCE_SUPPRESSED_OR_UNAUTHORIZED",
+          };
+        }
+
+        return {
+          authority: "GOVERNANCE_APPROVED_MEMORY",
+          isAllowed: true,
+        };
+      }
+
+      // If Governance Analysis is not provided (standalone unit tests)
+      const isExplicit = mem.source === "EXPLICIT_USER" || mem.isExplicit === true || sourceData.source === "EXPLICIT_USER";
+      if (isExplicit && (mem.status === "ACTIVE" || !mem.status)) {
+        return {
+          authority: "GOVERNANCE_APPROVED_MEMORY",
+          isAllowed: true,
+        };
+      }
+
+      // Non-explicit memories without governance cannot promote to GOVERNANCE_APPROVED_MEMORY or CONFIRMED_ADAPTIVE_PATTERN
+      return {
+        authority: "SYSTEM_DEFAULT",
+        isAllowed: false,
+        reason: "NON_EXPLICIT_MEMORY_UNAUTHORIZED",
+      };
+    }
+
+    if (itemType === "USER_MODEL_ATTRIBUTE") {
+      return { authority: "CONFIRMED_USER_MODEL", isAllowed: true };
+    }
+
+    if (itemType === "TEMPORAL_PATTERN") {
+      return { authority: "TEMPORAL_CONTEXT", isAllowed: true };
+    }
+
+    if (itemType === "PROJECT" || itemType === "GOAL" || itemType === "COMMITMENT" || itemType === "TASK") {
+      return { authority: "ACTIVE_GOAL_PROJECT_COMMITMENT", isAllowed: true };
+    }
+
+    if (itemType === "ADAPTIVE_PATTERN") {
+      return { authority: "CONFIRMED_ADAPTIVE_PATTERN", isAllowed: true };
+    }
+
+    if (itemType === "PREDICTIVE_SUGGESTION") {
+      return { authority: "PREDICTIVE_CONTEXT", isAllowed: true };
+    }
+
+    return { authority: "SYSTEM_DEFAULT", isAllowed: true };
+  }
+
+  /**
+   * Strict Lexicographic Ranking Comparator (FIX #2).
+   * Enforces: Authority > Governance Eligibility > Scope > Relevance > Recency > Stable Tie-breaker.
+   * Authority strictly outweighs lexical relevance.
+   */
+  public compareContinuityItems(a: ContextContinuityItem, b: ContextContinuityItem): number {
+    // 1. Authority Tier (Primary Ordering Dimension)
+    const weightDiff = CONTINUITY_AUTHORITY_WEIGHTS[b.authority] - CONTINUITY_AUTHORITY_WEIGHTS[a.authority];
+    if (Math.abs(weightDiff) > 0.0001) {
+      return weightDiff;
+    }
+
+    // 2. Scope match (Global or active project matching > other)
+    const scopeScoreA = a.scope === "GLOBAL" ? 2 : (a.scope === "PROJECT" ? 1 : 0);
+    const scopeScoreB = b.scope === "GLOBAL" ? 2 : (b.scope === "PROJECT" ? 1 : 0);
+    if (scopeScoreB !== scopeScoreA) {
+      return scopeScoreB - scopeScoreA;
+    }
+
+    // 3. Relevance Score
+    if (b.relevanceScore !== a.relevanceScore) {
+      return b.relevanceScore - a.relevanceScore;
+    }
+
+    // 4. Recency Score
+    if (b.recencyScore !== a.recencyScore) {
+      return b.recencyScore - a.recencyScore;
+    }
+
+    // 5. Stable Timestamp
+    if (b.timestamp !== a.timestamp) {
+      return b.timestamp - a.timestamp;
+    }
+
+    // 6. Stable ID & Normalized Key Tie-breaker
+    const keyComp = a.normalizedKey.localeCompare(b.normalizedKey);
+    if (keyComp !== 0) return keyComp;
+    return a.id.localeCompare(b.id);
+  }
+
+  /**
+   * Deterministic Topic Compatibility (FIX #5).
+   * Global communication preferences cross topic boundaries.
+   * Domain-specific preferences cross only when explicitly referenced or compatible.
+   */
+  public isTopicCompatible(
+    item: ContextContinuityItem,
+    activeTopic: string,
+    isTopicIsolatedOption: boolean,
+    currentMessage: string
+  ): boolean {
+    // Global communication preferences are universally compatible across all topics
+    if (item.scope === "GLOBAL") {
+      return true;
+    }
+
+    // If explicit recall is in flight, allow domain recall
+    if (item.isExplicitlyRecalled) {
+      return true;
+    }
+
+    const itemTopic = (item.topic || "").toLowerCase();
+    const itemContent = item.content.toLowerCase();
+    const itemTitle = item.title.toLowerCase();
+    const activeTop = (activeTopic || "").toLowerCase();
+
+    // If current message explicitly mentions domain/entity/brand/project
+    const messageTokens = currentMessage.split(/\s+/).filter((t) => t.length > 2);
+    const hasExplicitEntityMention = messageTokens.some(
+      (t) => itemTitle.includes(t) || itemContent.includes(t) || (itemTopic && itemTopic.includes(t))
+    );
+    if (hasExplicitEntityMention) {
+      return true;
+    }
+
+    // If topic is isolated or an active topic is set
+    if (isTopicIsolatedOption || activeTop) {
+      if (!activeTop) return !isTopicIsolatedOption;
+
+      // Direct substring match
+      if (itemTopic && (itemTopic.includes(activeTop) || activeTop.includes(itemTopic))) {
+        return true;
+      }
+      if (item.projectId && activeTop.includes(item.projectId.toLowerCase())) {
+        return true;
+      }
+
+      // Word-level match between active topic and item metadata
+      const activeTopicWords = activeTop.split(/\s+/).filter((w) => w.length > 2);
+      if (activeTopicWords.some((w) => itemTitle.includes(w) || itemContent.includes(w) || itemTopic.includes(w))) {
+        return true;
+      }
+
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
    * Detect explicit user recall requests across English, Bangla, and Banglish.
    */
   private detectExplicitRecall(message: string): ExplicitRecallSignal {
@@ -789,7 +1011,7 @@ export class ContextContinuityEngine {
   }
 
   /**
-   * Detect current-turn overrides and conflict triggers.
+   * Detect current-turn overrides and conflict triggers (FIX #7).
    */
   private detectCurrentTurnOverrides(message: string): {
     languageOverride?: string;
@@ -868,7 +1090,7 @@ export class ContextContinuityEngine {
   }
 
   /**
-   * Determine if an item conflicts with current-turn explicit instructions.
+   * Determine if an item conflicts with current-turn explicit instructions (FIX #7).
    */
   private hasCurrentTurnConflict(
     item: ContextContinuityItem,
@@ -922,7 +1144,7 @@ export class ContextContinuityEngine {
   }
 
   /**
-   * Resolve anaphora, pronouns, and explicit project references across sessions.
+   * Resolve anaphora, pronouns, and explicit project references across sessions (FIX #8).
    */
   private resolveContinuityTarget(
     message: string,
@@ -957,7 +1179,7 @@ export class ContextContinuityEngine {
       /\b(?:oita continue koro|shei kajta|ager project)\b/i.test(message);
 
     if (isGenericContinuityReference || isExplicitRecall) {
-      // If there's an active topic matching one project exactly
+      // 1. If there's an active topic matching one project exactly
       if (activeTopic) {
         const topicMatch = candidateProjects.find((p) => p.name.toLowerCase().includes(activeTopic.toLowerCase()));
         if (topicMatch) {
@@ -965,13 +1187,13 @@ export class ContextContinuityEngine {
         }
       }
 
-      // If exactly ONE active project exists, resolve unambiguously
+      // 2. If exactly ONE active project exists, resolve unambiguously
       const activeProjects = candidateProjects.filter((p) => p.status === "ACTIVE");
       if (activeProjects.length === 1) {
         return { resolvedProject: activeProjects[0], isAmbiguous: false, isResumed: true };
       }
 
-      // If MULTIPLE active projects exist and no specific context disambiguates
+      // 3. If MULTIPLE active projects exist and no specific context disambiguates -> AMBIGUOUS
       if (activeProjects.length > 1) {
         const projectNames = activeProjects.map((p) => `"${p.name}"`).join(" and ");
         return {
@@ -981,7 +1203,7 @@ export class ContextContinuityEngine {
         };
       }
 
-      // If exactly one project in list overall
+      // 4. If exactly one project in list overall
       if (candidateProjects.length === 1) {
         return { resolvedProject: candidateProjects[0], isAmbiguous: false, isResumed: true };
       }
@@ -1075,7 +1297,7 @@ export class ContextContinuityEngine {
   }
 
   /**
-   * Determine item scope.
+   * Determine item scope (FIX #5: Hardware/tools are TOPIC, global is strictly universal style/UI).
    */
   private determineScope(key: string, category?: string): ContinuityScope {
     const lowerKey = key.toLowerCase();
@@ -1083,14 +1305,17 @@ export class ContextContinuityEngine {
       lowerKey.includes("language") ||
       lowerKey.includes("lang_pref") ||
       lowerKey.includes("theme") ||
+      lowerKey.includes("ui_mode") ||
       lowerKey.includes("verbosity") ||
       lowerKey.includes("tone") ||
-      lowerKey.includes("laptop") ||
-      lowerKey.includes("brand") ||
-      lowerKey.includes("hardware") ||
+      lowerKey.includes("communication_style") ||
       category === "COMMUNICATION" ||
       category === "PREFERENCES"
     ) {
+      // Exclude hardware/device from global scope
+      if (lowerKey.includes("laptop") || lowerKey.includes("hardware") || lowerKey.includes("brand")) {
+        return "TOPIC";
+      }
       return "GLOBAL";
     }
     if (lowerKey.includes("proj") || lowerKey.includes("task") || category === "PROJECT_CONTEXT") {
@@ -1190,13 +1415,13 @@ export class ContextContinuityEngine {
   }
 
   /**
-   * Strict directive sanitization to strip internal IDs, confidence floats, and raw timestamps.
+   * Strict directive sanitization to strip internal IDs, confidence floats, and raw timestamps (FIX #12).
    */
   private sanitizeDirective(directive: string): string {
     let d = directive;
 
     // Strip raw entity/model IDs (e.g. mem_..., proj_..., goal_..., task_..., cc_...)
-    d = d.replace(/\b(?:cc_|mem_|proj_|goal_|task_|commit_|evt_|evi_)[a-f0-9_]{4,}\b/gi, "");
+    d = d.replace(/\b(?:cc_|mem_|proj_|goal_|task_|commit_|evt_|evi_|pat_|um_)[a-f0-9_]{4,}\b/gi, "");
 
     // Strip confidence floats (e.g. score=0.91, 0.85)
     d = d.replace(/\b(?:confidence|score|authority)\s*[:=]\s*0\.\d+\b/gi, "");
