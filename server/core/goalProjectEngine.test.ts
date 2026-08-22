@@ -1467,6 +1467,701 @@ runTest("GP-50: Idempotent repeated analysis produces identical results", () => 
   );
 });
 
+// ===========================================================================
+// TARGETED ARCHITECTURAL HARDENING TESTS (GP-T1 through GP-T32)
+// ===========================================================================
+
+// GP-T1: Question containing "I need to" does not create commitment
+runTest("GP-T1: Question containing 'I need to' does not create commitment", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "Do I need to finish this report by Friday?",
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeCommitments.length === 0, "Question with 'need to' must not create commitment");
+});
+
+// GP-T2: Question containing "I will" does not create commitment
+runTest("GP-T2: Question containing 'I will' does not create commitment", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "Will I finish this today?",
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeCommitments.length === 0, "Question with 'will I' must not create commitment");
+});
+
+// GP-T3: Hypothetical "if I..." does not create commitment
+runTest("GP-T3: Hypothetical 'if I...' does not create commitment", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "If I work on the memory engine tomorrow, what should I start with?",
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeCommitments.length === 0, "Hypothetical 'if I...' must not create commitment");
+});
+
+// GP-T4: "maybe I'll..." does not create authoritative commitment
+runTest("GP-T4: 'maybe I'll...' does not create authoritative commitment", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "Maybe I'll finish Step 10 someday.",
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeCommitments.length === 0, "Speculative 'maybe I'll...' must not create commitment");
+});
+
+// GP-T5: Assistant statement does not create user commitment
+runTest("GP-T5: Assistant statement does not create user commitment", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "The assistant said I will finish the task tomorrow.",
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeCommitments.length === 0, "Assistant attribution must not create user commitment");
+});
+
+// GP-T6: Predictive Context does not create goal
+runTest("GP-T6: Predictive Context does not create goal", () => {
+  const userModel = makeUserModel({
+    predictedGoal: {
+      key: "predicted_goal",
+      value: "Learn Rust",
+      dimension: "USER_GOAL",
+      sourceClassification: "PREDICTIVE_CONTEXT",
+      status: "CONFIRMED",
+    },
+  });
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    longTermUserModel: userModel,
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeGoals.length === 0, "Predictive Context must not create durable goal");
+});
+
+// GP-T7: Predictive Context does not create project
+runTest("GP-T7: Predictive Context does not create project", () => {
+  const userModel = makeUserModel({
+    predictedProj: {
+      key: "predicted_project",
+      value: "Rust Compiler",
+      dimension: "PROJECT_CONTEXT",
+      sourceClassification: "PREDICTIVE_CONTEXT",
+      status: "CONFIRMED",
+    },
+  });
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    longTermUserModel: userModel,
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeProjects.length === 0, "Predictive Context must not create durable project");
+});
+
+// GP-T8: Predictive Context does not create commitment
+runTest("GP-T8: Predictive Context does not create commitment", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "Can you suggest a project for me?",
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeCommitments.length === 0, "Project suggestion query must not create commitment");
+});
+
+// GP-T9: Repeated generic mention of a topic does not create a project
+runTest("GP-T9: Repeated generic mention of a topic does not create a project", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "Python is great. I love Python. Can you explain Python decorators?",
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeProjects.length === 0, "Generic topic mentions must not create a project");
+});
+
+// GP-T10: Repeated technical questions do not imply project ownership
+runTest("GP-T10: Repeated technical questions do not imply project ownership", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "How does async/await work in Node.js event loop?",
+    options: { currentTime: 1000 },
+  });
+  assert(res.activeProjects.length === 0, "Technical questions must not create project ownership");
+});
+
+// GP-T11: 'secret project' is not automatically classified as credential data
+runTest("GP-T11: 'secret project' is not automatically classified as credential data", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I am working on the secret project",
+    options: { currentTime: 1000 },
+  });
+  assert(res.diagnostics.suppressedSensitiveCount === 0, "'secret project' should not trigger sensitive suppression");
+  assert(res.activeProjects.length === 1, "'secret project' should be extracted as project");
+  assert(res.activeProjects[0].name === "secret project", "Project name matches");
+});
+
+// GP-T12: 'token budget' is not automatically suppressed
+runTest("GP-T12: 'token budget' is not automatically suppressed", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I will allocate the token budget for the project",
+    options: { currentTime: 1000 },
+  });
+  assert(res.diagnostics.suppressedSensitiveCount === 0, "'token budget' should not trigger sensitive suppression");
+  assert(res.activeCommitments.length === 1, "'token budget' commitment is extracted");
+});
+
+// GP-T13: Actual API key is suppressed
+runTest("GP-T13: Actual API key is suppressed", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "My api_key=sk-1234567890abcdef1234567890 for the project",
+    options: { currentTime: 1000 },
+  });
+  assert(res.diagnostics.suppressedSensitiveCount === 1, "Actual API key must trigger sensitive suppression");
+  assert(res.activeProjects.length === 0, "No project created from sensitive payload");
+});
+
+// GP-T14: Actual bearer token is suppressed
+runTest("GP-T14: Actual bearer token is suppressed", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    options: { currentTime: 1000 },
+  });
+  assert(res.diagnostics.suppressedSensitiveCount === 1, "Actual bearer token must trigger sensitive suppression");
+});
+
+// GP-T15: Actual password value is suppressed
+runTest("GP-T15: Actual password value is suppressed", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "My database password: superSecretPassword123",
+    options: { currentTime: 1000 },
+  });
+  assert(res.diagnostics.suppressedSensitiveCount === 1, "Actual password must trigger sensitive suppression");
+});
+
+// GP-T16: Current-turn project switch overrides historical project context
+runTest("GP-T16: Current-turn project switch overrides historical project context", () => {
+  const existingProjects: Project[] = [
+    {
+      projectId: "proj_dora",
+      name: "Dora Memory System",
+      normalizedName: "dora memory system",
+      status: "ACTIVE",
+      priority: "MEDIUM",
+      createdAt: 1000,
+      updatedAt: 1000,
+      goals: [],
+      milestones: [],
+      tasks: [],
+      commitments: [],
+      dependencies: [],
+      events: [],
+      sourceAuthority: "EXPLICIT_USER_MEMORY",
+      confidence: 1.0,
+      lineage: [],
+    },
+  ];
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "Forget Dora for now, let's switch to my website.",
+    existingProjects,
+    options: { currentTime: 2000 },
+  });
+  assert(res.currentTurnOverrides.isProjectPaused === true, "Current turn pause detected");
+  assert(
+    res.directives.some((d) => d.includes("Current-turn instruction")),
+    "Current-turn override directive generated"
+  );
+});
+
+// GP-T17: Temporary current-turn switch does not mutate historical project state
+runTest("GP-T17: Temporary current-turn switch does not mutate historical project state", () => {
+  const existingProjects: Project[] = [
+    {
+      projectId: "proj_dora",
+      name: "Dora Memory System",
+      normalizedName: "dora memory system",
+      status: "ACTIVE",
+      priority: "MEDIUM",
+      createdAt: 1000,
+      updatedAt: 1000,
+      goals: [],
+      milestones: [],
+      tasks: [],
+      commitments: [],
+      dependencies: [],
+      events: [],
+      sourceAuthority: "EXPLICIT_USER_MEMORY",
+      confidence: 1.0,
+      lineage: [],
+    },
+  ];
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "Forget Dora for now, let's work on my website.",
+    existingProjects,
+    options: { currentTime: 2000 },
+  });
+  // Durable state in project map remains ACTIVE (not destroyed)
+  assert(res.state.activeProjects.some((p) => p.projectId === "proj_dora"), "Durable project remains preserved");
+});
+
+// GP-T18: Explicit durable project update does mutate project state
+runTest("GP-T18: Explicit durable project update does mutate project state", () => {
+  const existingProjects: Project[] = [
+    {
+      projectId: "proj_dora",
+      name: "Dora Memory System",
+      normalizedName: "dora memory system",
+      status: "ACTIVE",
+      priority: "MEDIUM",
+      createdAt: 1000,
+      updatedAt: 1000,
+      goals: [],
+      milestones: [],
+      tasks: [],
+      commitments: [],
+      dependencies: [],
+      events: [],
+      sourceAuthority: "EXPLICIT_USER_MEMORY",
+      confidence: 1.0,
+      lineage: [],
+    },
+  ];
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I completed the Dora Memory System",
+    existingProjects,
+    options: { currentTime: 3000 },
+  });
+  assert(res.state.completedProjects.some((p) => p.projectId === "proj_dora"), "Project is marked COMPLETED");
+  assert(res.state.activeProjects.length === 0, "No active projects remaining");
+});
+
+// GP-T19: Ambiguous project names are not merged
+runTest("GP-T19: Ambiguous project names are not merged", () => {
+  const existingProjects: Project[] = [
+    {
+      projectId: "proj_alpha",
+      name: "Alpha Compiler",
+      normalizedName: "alpha compiler",
+      status: "ACTIVE",
+      priority: "MEDIUM",
+      createdAt: 1000,
+      updatedAt: 1000,
+      goals: [],
+      milestones: [],
+      tasks: [],
+      commitments: [],
+      dependencies: [],
+      events: [],
+      sourceAuthority: "EXPLICIT_USER_MEMORY",
+      confidence: 1.0,
+      lineage: [],
+    },
+  ];
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I am working on the Beta Engine project",
+    existingProjects,
+    options: { currentTime: 2000 },
+  });
+  assert(res.activeProjects.length === 2, "Distinct projects must not be merged");
+});
+
+// GP-T20: 'Dora', 'Dora AI', and 'Dora project' resolve only when contextual identity evidence is sufficient
+runTest("GP-T20: 'Dora', 'Dora AI', and 'Dora project' resolve when contextual identity evidence matches", () => {
+  const existingProjects: Project[] = [
+    {
+      projectId: "proj_dora",
+      name: "Dora AI",
+      normalizedName: "dora ai",
+      status: "ACTIVE",
+      priority: "MEDIUM",
+      createdAt: 1000,
+      updatedAt: 1000,
+      goals: [],
+      milestones: [],
+      tasks: [],
+      commitments: [],
+      dependencies: [],
+      events: [],
+      sourceAuthority: "EXPLICIT_USER_MEMORY",
+      confidence: 1.0,
+      lineage: [],
+    },
+  ];
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I am working on the Dora project",
+    existingProjects,
+    options: { currentTime: 2000 },
+  });
+  assert(res.activeProjects.length === 1, "Should resolve to existing Dora project without duplicate");
+  assert(res.activeProjects[0].projectId === "proj_dora", "Resolved to existing project ID");
+});
+
+// GP-T21: Unknown dependency blocks task readiness
+runTest("GP-T21: Unknown dependency blocks task readiness", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    planning: {
+      requiresPlanning: true,
+      directives: [],
+      plan: {
+        id: "plan_1",
+        objective: "Test Objective",
+        goal: "Deploy to cloud",
+        status: "IN_PROGRESS",
+        priority: "NORMAL",
+        complexity: "MEDIUM",
+        executionStrategy: "SEQUENTIAL",
+        failureStrategy: "RETRY",
+        dependencies: {},
+        requiredInputs: [],
+        availableInputs: [],
+        missingInputs: [],
+        toolRequirements: [],
+        completionCriteria: ["Done"],
+        createdAt: 1000,
+        updatedAt: 1000,
+        sourceIntent: "PLANNING",
+        sourceReasoning: "PLANNING",
+        isCancellable: true,
+        steps: [
+          {
+            id: "task_1",
+            title: "Deploy to cloud",
+            description: "Deploy to cloud",
+            order: 1,
+            status: "NOT_STARTED",
+            dependencies: ["non_existent_step_99"],
+            requiredInputs: [],
+            expectedOutput: "Done",
+            canRunInParallel: false,
+            completionCriteria: "Done",
+          },
+        ],
+      },
+    },
+    options: { currentTime: 1000 },
+  });
+  assert(res.blockedTasks.length === 1, "Task with unknown dependency must be BLOCKED");
+  assert(res.readyTasks.length === 0, "Task must not be ready");
+});
+
+// GP-T22: Completed dependency enables dependent task
+runTest("GP-T22: Completed dependency enables dependent task", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    planning: {
+      requiresPlanning: true,
+      directives: [],
+      plan: {
+        id: "plan_1",
+        objective: "Test Objective",
+        goal: "Build and run",
+        status: "IN_PROGRESS",
+        priority: "NORMAL",
+        complexity: "MEDIUM",
+        executionStrategy: "SEQUENTIAL",
+        failureStrategy: "RETRY",
+        dependencies: {},
+        requiredInputs: [],
+        availableInputs: [],
+        missingInputs: [],
+        toolRequirements: [],
+        completionCriteria: ["Done"],
+        createdAt: 1000,
+        updatedAt: 1000,
+        sourceIntent: "PLANNING",
+        sourceReasoning: "PLANNING",
+        isCancellable: true,
+        steps: [
+          {
+            id: "task_1",
+            title: "Build binary",
+            description: "Build binary",
+            order: 1,
+            status: "COMPLETED",
+            dependencies: [],
+            requiredInputs: [],
+            expectedOutput: "Done",
+            canRunInParallel: false,
+            completionCriteria: "Done",
+          },
+          {
+            id: "task_2",
+            title: "Run binary",
+            description: "Run binary",
+            order: 2,
+            status: "NOT_STARTED",
+            dependencies: ["task_1"],
+            requiredInputs: [],
+            expectedOutput: "Done",
+            canRunInParallel: false,
+            completionCriteria: "Done",
+          },
+        ],
+      },
+    },
+    options: { currentTime: 1000 },
+  });
+  assert(res.readyTasks.some((t) => t.taskId === "task_2"), "Dependent task is enabled and READY");
+  assert(res.blockedTasks.length === 0, "No tasks blocked");
+});
+
+// GP-T23: Silence does not mark task completed
+runTest("GP-T23: Silence does not mark task completed", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "",
+    planning: {
+      requiresPlanning: true,
+      directives: [],
+      plan: {
+        id: "plan_1",
+        objective: "Test Objective",
+        goal: "Active task",
+        status: "IN_PROGRESS",
+        priority: "NORMAL",
+        complexity: "MEDIUM",
+        executionStrategy: "SEQUENTIAL",
+        failureStrategy: "RETRY",
+        dependencies: {},
+        requiredInputs: [],
+        availableInputs: [],
+        missingInputs: [],
+        toolRequirements: [],
+        completionCriteria: ["Done"],
+        createdAt: 1000,
+        updatedAt: 1000,
+        sourceIntent: "PLANNING",
+        sourceReasoning: "PLANNING",
+        isCancellable: true,
+        steps: [
+          {
+            id: "task_1",
+            title: "Active task",
+            description: "Active task",
+            order: 1,
+            status: "IN_PROGRESS",
+            dependencies: [],
+            requiredInputs: [],
+            expectedOutput: "Done",
+            canRunInParallel: false,
+            completionCriteria: "Done",
+          },
+        ],
+      },
+    },
+    options: { currentTime: 2000 },
+  });
+  assert(res.readyTasks.some((t) => t.taskId === "task_1"), "Silence must not mark task completed");
+});
+
+// GP-T24: Assistant prediction does not mark task completed
+runTest("GP-T24: Assistant prediction does not mark task completed", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "The assistant predicts I completed the task",
+    planning: {
+      requiresPlanning: true,
+      directives: [],
+      plan: {
+        id: "plan_1",
+        objective: "Test Objective",
+        goal: "Active task",
+        status: "IN_PROGRESS",
+        priority: "NORMAL",
+        complexity: "MEDIUM",
+        executionStrategy: "SEQUENTIAL",
+        failureStrategy: "RETRY",
+        dependencies: {},
+        requiredInputs: [],
+        availableInputs: [],
+        missingInputs: [],
+        toolRequirements: [],
+        completionCriteria: ["Done"],
+        createdAt: 1000,
+        updatedAt: 1000,
+        sourceIntent: "PLANNING",
+        sourceReasoning: "PLANNING",
+        isCancellable: true,
+        steps: [
+          {
+            id: "task_1",
+            title: "Active task",
+            description: "Active task",
+            order: 1,
+            status: "IN_PROGRESS",
+            dependencies: [],
+            requiredInputs: [],
+            expectedOutput: "Done",
+            canRunInParallel: false,
+            completionCriteria: "Done",
+          },
+        ],
+      },
+    },
+    options: { currentTime: 2000 },
+  });
+  assert(res.readyTasks.some((t) => t.taskId === "task_1"), "Assistant prediction cannot mark task completed");
+});
+
+// GP-T25: Temporal recurrence does not create unsupported project
+runTest("GP-T25: Temporal recurrence does not create unsupported project", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    temporalMemory: {
+      userId: "u1",
+      analyzedAt: 5000,
+      patterns: [],
+      activePatterns: [],
+      historicalPatterns: [],
+      evolutions: [],
+      relations: [],
+      directives: ["User asks frequent JavaScript questions on Mondays"],
+      diagnostics: {
+        totalPatternsAnalyzed: 0,
+        stableCount: 0,
+        recurringCount: 0,
+        evolvingCount: 0,
+        historicalCount: 0,
+        staleCount: 0,
+        suppressedSensitiveCount: 0,
+        topicIsolatedCount: 0,
+        evolutionTransitions: [],
+      },
+    },
+    options: { currentTime: 5000 },
+  });
+  assert(res.activeProjects.length === 0, "Temporal recurrence cannot create a project");
+});
+
+// GP-T26: Adaptive preference does not create unsupported commitment
+runTest("GP-T26: Adaptive preference does not create unsupported commitment", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    adaptiveLearning: {
+      userId: "u1",
+      patterns: [],
+      activeDirectives: ["User prefers dark mode UI"],
+      decisions: [],
+      profile: {
+        userId: "u1",
+        interactionPreferences: [],
+        taskPatterns: [],
+        domainInterests: [],
+        preferences: { confirmedPreferences: [], candidatePreferences: [] },
+        lastUpdatedAt: 5000,
+      },
+      diagnostics: {
+        totalSignalsProcessed: 0,
+        sensitiveSignalsBlocked: 0,
+        candidatesCreated: 0,
+        patternsReinforced: 0,
+        patternsPromoted: 0,
+        patternsDemoted: 0,
+        conflictsDetected: 0,
+        currentTurnOverrides: [],
+      },
+      currentTurnOverrideApplied: false,
+    },
+    options: { currentTime: 5000 },
+  });
+  assert(res.activeCommitments.length === 0, "Adaptive preference cannot create a commitment");
+});
+
+// GP-T27: Same input produces identical output
+runTest("GP-T27: Same input produces identical output", () => {
+  const eval1 = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I want to finish Dora's memory system.",
+    options: { currentTime: 1000 },
+  });
+  const eval2 = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I want to finish Dora's memory system.",
+    options: { currentTime: 1000 },
+  });
+  assert(eval1.activeGoals.length === eval2.activeGoals.length, "Goal count matches");
+  assert(eval1.directives[0] === eval2.directives[0], "Directive matches");
+});
+
+// GP-T28: Same input + same currentTime produces identical output
+runTest("GP-T28: Same input + same currentTime produces identical output", () => {
+  const eval1 = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I will deploy the cluster by Friday",
+    options: { currentTime: 15000 },
+  });
+  const eval2 = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I will deploy the cluster by Friday",
+    options: { currentTime: 15000 },
+  });
+  assert(eval1.activeCommitments[0].deadline === eval2.activeCommitments[0].deadline, "Deadline matches");
+  assert(eval1.activeCommitments[0].commitmentId === eval2.activeCommitments[0].commitmentId, "Commitment ID matches");
+});
+
+// GP-T29: No internal IDs appear in directives
+runTest("GP-T29: No internal IDs appear in directives", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I want to finish Dora memory system",
+    options: { currentTime: 1000 },
+  });
+  for (const d of res.directives) {
+    assert(!/\b(?:proj|goal|commit|task|evt|evi)_[a-f0-9_]{6,}\b/i.test(d), `No internal ID in directive: "${d}"`);
+  }
+});
+
+// GP-T30: No confidence floats appear in directives
+runTest("GP-T30: No confidence floats appear in directives", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I want to finish Dora memory system",
+    options: { currentTime: 1000 },
+  });
+  for (const d of res.directives) {
+    assert(!/\b0\.\d+\b/.test(d), `No confidence float in directive: "${d}"`);
+  }
+});
+
+// GP-T31: No raw timestamps appear in directives
+runTest("GP-T31: No raw timestamps appear in directives", () => {
+  const res = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I will finish Dora memory system tomorrow",
+    options: { currentTime: 1700000000000 },
+  });
+  for (const d of res.directives) {
+    assert(!/\b1700000000000\b/.test(d), `No raw timestamp in directive: "${d}"`);
+  }
+});
+
+// GP-T32: Repeated identical evidence is idempotent
+runTest("GP-T32: Repeated identical evidence is idempotent", () => {
+  const res1 = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I am working on the Dora project",
+    options: { currentTime: 1000 },
+  });
+  const res2 = goalProjectEngine.evaluate({
+    userId: "u1",
+    message: "I am working on the Dora project",
+    existingProjects: res1.activeProjects,
+    options: { currentTime: 1000 },
+  });
+  assert(res2.activeProjects.length === 1, "Idempotent project evaluation maintains single project record");
+  assert(res2.activeProjects[0].projectId === res1.activeProjects[0].projectId, "Project ID is consistent");
+});
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------

@@ -9,6 +9,21 @@
 import { UserModelEvidenceAuthority } from "./longTermUserModelTypes";
 
 /**
+ * Deterministic intent classification for evidence sources.
+ */
+export type EvidenceIntentType =
+  | "DIRECT_USER_DECLARATION"
+  | "DIRECT_USER_COMMITMENT"
+  | "EXPLICIT_PROJECT_REFERENCE"
+  | "EXPLICIT_STATUS_UPDATE"
+  | "QUESTION"
+  | "HYPOTHETICAL"
+  | "QUOTED_TEXT"
+  | "ASSISTANT_STATEMENT"
+  | "PREDICTIVE_SUGGESTION"
+  | "UNCERTAIN";
+
+/**
  * Standard lifecycle states for Goals, Projects, Commitments, and Milestones.
  */
 export type GoalProjectStatus =

@@ -20,6 +20,7 @@
  * 10. Topic/Project Isolation: Project-scoped context does not leak into unrelated projects.
  * 11. Privacy & Identity: Sensitive credentials and unsupported identity inferences are strictly suppressed.
  * 12. Sanitized Directives: Natural language only; zero internal IDs, raw floats, or epoch timestamps.
+ * 13. Intent-Aware Extraction: Rejects questions, hypotheticals, quotes, and assistant statements from creating authoritative records.
  */
 
 import { ConversationContext, ConversationTurn } from "./contextTypes";
@@ -33,6 +34,7 @@ import { UserModelAnalysis, UserModelEvidenceAuthority } from "./longTermUserMod
 import { TemporalMemoryAnalysis } from "./temporalMemoryTypes";
 import {
   Commitment,
+  EvidenceIntentType,
   Goal,
   GoalProjectAnalysis,
   GoalProjectDiagnostics,
@@ -64,13 +66,20 @@ export class GoalProjectEngine {
     PREDICTIVE_CONTEXT: 10,
   };
 
-  // Sensitive Patterns
+  // Precise Sensitive Credential Patterns (Avoid suppressing ordinary terms like "token budget" or "secret project")
   private readonly SENSITIVE_PATTERNS = [
-    /(password|passwd|pwd)/i,
-    /(secret|api[_-]?key|bearer\s+[a-z0-9_\-\.]+)/i,
-    /(token|auth[_-]?token|access[_-]?token|refresh[_-]?token)/i,
-    /(credit[_-]?card|card[_-]?number|cvv|cvc|\bpin\b|\bssn\b)/i,
-    /(bank[_-]?account|routing[_-]?number|private[_-]?key)/i,
+    /\bsk-[a-zA-Z0-9_\-]{10,}\b/,
+    /\bghp_[a-zA-Z0-9]{10,}\b/,
+    /\bAIza[0-9A-Za-z-_]{20,}\b/,
+    /\bBearer\s+[a-zA-Z0-9_\-\.]{15,}\b/i,
+    /\b(?:password|passwd|pwd)\s*[:=]\s*\S+/i,
+    /\b(?:api[_-]?key|secret[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token)\s*[:=]\s*\S+/i,
+    /\b(?:\d{4}[- ]?){3}\d{4}\b/, // Credit card numbers
+    /\b(?:cvv|cvc)\s*[:=]?\s*\d{3,4}\b/i,
+    /\bpin\s*[:=]?\s*\d{4,6}\b/i,
+    /\b\d{3}-\d{2}-\d{4}\b/, // SSN
+    /\b(?:bank[_-]?account|routing[_-]?number)\s*[:=]?\s*\d{6,}\b/i,
+    /-----BEGIN [A-Z ]+PRIVATE KEY-----/,
   ];
 
   // Forbidden Identity Patterns (Cannot infer profession, employment, enrollment)
@@ -82,22 +91,39 @@ export class GoalProjectEngine {
     /\b(diagnosed with|medical condition|prescription|illness)\b/i,
   ];
 
+  // Negative Framing Regexes
+  private readonly QUESTION_PATTERNS = [
+    /\?$/,
+    /\b(?:do i|should i|will i|how do i|how to|how can i|can i|can you|could you|would you|is it|what if|why do i|why should i|when will i|where do i|is there a|are we)\b/i,
+    /\b(?:suggest|recommend)\s+(?:a|any|some)?\s*(?:project|goal|task|commitment|step)\b/i,
+  ];
+
+  private readonly HYPOTHETICAL_PATTERNS = [
+    /\b(?:if i|suppose i|supposing|maybe i|maybe we|i might|i could|what if|imagine i|maybe i should|in case i|could potentially|perhaps i|someday|eventually)\b/i,
+  ];
+
+  private readonly ASSISTANT_STATEMENT_PATTERNS = [
+    /\b(?:the assistant said|you said|assistant suggested|you told me|system said|according to the assistant|you should|you must|assistant stated)\b/i,
+  ];
+
   // Goal Detection Regexes (Bangla, English, Banglish)
   private readonly EXPLICIT_GOAL_PATTERNS = [
-    /(?:i want to|my goal is to|aiming to|planning to|plan to|i intend to|goal is to|target is to)\s+([^.,;!?\n]+)/i,
-    /(?:amar goal|amader goal|amar target|amader target|target holo|target hocche|plan hocche)\s+([^.,;!?\n]+)/i,
+    /(?:i want to|my goal is to|aiming to|i aim to|i intend to|my target is to)\s+([^.,;!?\n]+)/i,
+    /(?:amar goal|amader goal|amar target|amader target|target holo|target hocche)\s+([^.,;!?\n]+)/i,
     /(?:sesh korte chai|complete korte chai|build korte chai|banate chai)\s+([^.,;!?\n]+)/i,
   ];
 
   // Project Detection Regexes
   private readonly EXPLICIT_PROJECT_PATTERNS = [
-    /(?:working on(?: project)?|project:?|building(?: the)?|developing(?: the)?)\s+([a-z0-9_\-\s]{2,40})/i,
+    /(?:i am working on(?: the)?|i'm working on(?: the)?|working on(?: the)? project:?|my project is(?: the)?)\s+([a-z0-9_\-\s]{2,40})/i,
     /(?:amar project|amader project|project er naam|project hocche)\s+([a-z0-9_\-\s]{2,40})/i,
+    /(?:working on)\s+([a-z0-9_\-\s]{2,40}\s+project)/i,
   ];
 
   // Commitment Detection Regexes
   private readonly EXPLICIT_COMMITMENT_PATTERNS = [
-    /(?:i'll|i will|i need to|i must|i have to|i promise to|i commit to|i plan to)\s+([^.,;!?\n]+)/i,
+    /(?:i'll|i will|i promise to|i commit to|i plan to finish)\s+([^.,;!?\n]+)/i,
+    /(?:i need to finish|i must finish|i have to finish)\s+([^.,;!?\n]+)/i,
     /(?:ami kal|ami pore|ami sesh korbo|ami review korbo|ami submit korbo|ami push korbo)\s+([^.,;!?\n]+)/i,
   ];
 
@@ -109,21 +135,27 @@ export class GoalProjectEngine {
 
   // Completion Detection Regexes
   private readonly EXPLICIT_COMPLETION_PATTERNS = [
-    /(?:i finished|i have finished|i completed|i have completed|done with|all done with|successfully completed)\s+([^.,;!?\n]+)/i,
+    /(?:i finished|i have finished|i completed|i have completed|done with|all done with|successfully completed|i've completed)\s+([^.,;!?\n]+)/i,
     /(?:sesh korechi|sesh hoyeche|complete korechi|done hoye geche)\s+([^.,;!?\n]+)/i,
     /(?:(?:marked|mark)\s+([^.,;!?\n]+)\s+(?:as completed|as done))/i,
   ];
 
   // Current-turn Pause / Override Regexes
   private readonly CURRENT_TURN_OVERRIDE_PATTERNS = [
-    /(?:pause|hold off on|stop working on|switch away from|leave|postpone)\s+([^.,;!?\n]+)/i,
-    /(?:actually switch to|let's switch to|instead work on|eita ekhon thak|ekhon pause rakho)\s+([^.,;!?\n]+)/i,
+    /(?:pause|hold off on|stop working on|switch away from|leave for now|postpone)\s+([^.,;!?\n]+)/i,
+    /(?:actually switch to|let's switch to|instead work on|forget\s+([^.,;!?\n]+?)\s+for now|eita ekhon thak|ekhon pause rakho)\s+([^.,;!?\n]+)?/i,
   ];
 
   // Reopen Project / Goal Regexes
   private readonly EXPLICIT_REOPEN_PATTERNS = [
     /(?:reopen|resume|restart|continue working on|reactivate)\s+([^.,;!?\n]+)/i,
     /(?:abar shuru korbo|reopen koro|restart koro|resume koro)\s+([^.,;!?\n]+)/i,
+  ];
+
+  // Explicit Abandon Regexes
+  private readonly EXPLICIT_ABANDON_PATTERNS = [
+    /(?:i abandoned|i give up on|dropping|abandoned)\s+([^.,;!?\n]+)/i,
+    /(?:ar korbo na|bad diyechi)\s+([^.,;!?\n]+)/i,
   ];
 
   private constructor() {}
@@ -169,6 +201,17 @@ export class GoalProjectEngine {
   }
 
   /**
+   * Extracts the core project identifier from a name or alias.
+   * e.g., "the Dora project" -> "dora", "Dora AI" -> "dora", "my website" -> "website"
+   */
+  public extractCoreProjectIdentifier(name: string): string {
+    return this.normalizeTitle(name)
+      .replace(/^(the|my|our|a)\s+/i, "")
+      .replace(/\s+(project|app|system|ai|platform)$/i, "")
+      .trim();
+  }
+
+  /**
    * Checks if an evidence authority is considered authoritative.
    */
   public isAuthoritative(authority: UserModelEvidenceAuthority): boolean {
@@ -180,7 +223,7 @@ export class GoalProjectEngine {
   }
 
   /**
-   * Checks if a string contains sensitive credentials.
+   * Checks if a string contains sensitive credentials contextually.
    */
   public containsSensitiveData(text: string): boolean {
     if (!text) return false;
@@ -193,6 +236,288 @@ export class GoalProjectEngine {
   public containsForbiddenIdentity(text: string): boolean {
     if (!text) return false;
     return this.FORBIDDEN_IDENTITY_DIMENSIONS.some((pattern) => pattern.test(text));
+  }
+
+  /**
+   * Classifies Goal Evidence using intent-aware validation.
+   */
+  public classifyGoalEvidence(text: string): {
+    intentType: EvidenceIntentType;
+    extractedTitle?: string;
+    isValid: boolean;
+  } {
+    if (!text || this.containsSensitiveData(text) || this.containsForbiddenIdentity(text)) {
+      return { intentType: "UNCERTAIN", isValid: false };
+    }
+
+    const trimmed = text.trim();
+
+    // 1. Quoted check
+    if (/^["'].*["']$/.test(trimmed)) {
+      return { intentType: "QUOTED_TEXT", isValid: false };
+    }
+
+    // 2. Assistant statement check
+    if (this.ASSISTANT_STATEMENT_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "ASSISTANT_STATEMENT", isValid: false };
+    }
+
+    // 3. Question check
+    if (this.QUESTION_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "QUESTION", isValid: false };
+    }
+
+    // 4. Hypothetical check
+    if (this.HYPOTHETICAL_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "HYPOTHETICAL", isValid: false };
+    }
+
+    // 5. Explicit Goal Patterns
+    for (const pattern of this.EXPLICIT_GOAL_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (match && match[1]) {
+        const raw = match[1].trim();
+        if (this.isValidGoalExpression(raw)) {
+          return {
+            intentType: "DIRECT_USER_DECLARATION",
+            extractedTitle: this.cleanTitle(raw),
+            isValid: true,
+          };
+        }
+      }
+    }
+
+    return { intentType: "UNCERTAIN", isValid: false };
+  }
+
+  /**
+   * Classifies Project Evidence using intent-aware validation.
+   */
+  public classifyProjectEvidence(text: string): {
+    intentType: EvidenceIntentType;
+    extractedName?: string;
+    isValid: boolean;
+  } {
+    if (!text || this.containsSensitiveData(text) || this.containsForbiddenIdentity(text)) {
+      return { intentType: "UNCERTAIN", isValid: false };
+    }
+
+    const trimmed = text.trim();
+
+    // 1. Quoted check
+    if (/^["'].*["']$/.test(trimmed)) {
+      return { intentType: "QUOTED_TEXT", isValid: false };
+    }
+
+    // 2. Assistant statement check
+    if (this.ASSISTANT_STATEMENT_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "ASSISTANT_STATEMENT", isValid: false };
+    }
+
+    // 3. Question check
+    if (this.QUESTION_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "QUESTION", isValid: false };
+    }
+
+    // 4. Hypothetical check
+    if (this.HYPOTHETICAL_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "HYPOTHETICAL", isValid: false };
+    }
+
+    // 5. Explicit Project Patterns
+    for (const pattern of this.EXPLICIT_PROJECT_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (match && match[1]) {
+        const raw = match[1].trim();
+        if (this.isValidProjectExpression(raw)) {
+          return {
+            intentType: "EXPLICIT_PROJECT_REFERENCE",
+            extractedName: this.cleanTitle(raw),
+            isValid: true,
+          };
+        }
+      }
+    }
+
+    return { intentType: "UNCERTAIN", isValid: false };
+  }
+
+  /**
+   * Classifies Commitment Evidence using intent-aware validation.
+   */
+  public classifyCommitmentEvidence(text: string): {
+    intentType: EvidenceIntentType;
+    extractedTitle?: string;
+    isValid: boolean;
+  } {
+    if (!text || this.containsSensitiveData(text) || this.containsForbiddenIdentity(text)) {
+      return { intentType: "UNCERTAIN", isValid: false };
+    }
+
+    const trimmed = text.trim();
+
+    // 1. Quoted check
+    if (/^["'].*["']$/.test(trimmed)) {
+      return { intentType: "QUOTED_TEXT", isValid: false };
+    }
+
+    // 2. Assistant statement check
+    if (this.ASSISTANT_STATEMENT_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "ASSISTANT_STATEMENT", isValid: false };
+    }
+
+    // 3. Question check (Questions MUST NOT create commitments)
+    if (this.QUESTION_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "QUESTION", isValid: false };
+    }
+
+    // 4. Hypothetical check ("maybe I'll...", "if I...", "suppose I...")
+    if (this.HYPOTHETICAL_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "HYPOTHETICAL", isValid: false };
+    }
+
+    // 5. Explicit Commitment Patterns
+    for (const pattern of this.EXPLICIT_COMMITMENT_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (match && match[1]) {
+        const raw = match[1].trim();
+        if (this.isValidCommitmentExpression(raw)) {
+          return {
+            intentType: "DIRECT_USER_COMMITMENT",
+            extractedTitle: this.cleanTitle(raw),
+            isValid: true,
+          };
+        }
+      }
+    }
+
+    return { intentType: "UNCERTAIN", isValid: false };
+  }
+
+  /**
+   * Classifies Status Updates (Completion, Blocker, Pause, Reopen, Abandon).
+   */
+  public classifyStatusUpdateEvidence(text: string): {
+    intentType: EvidenceIntentType;
+    status?: GoalProjectStatus;
+    target?: string;
+    blockerReason?: string;
+    isValid: boolean;
+  } {
+    if (!text || this.containsSensitiveData(text) || this.containsForbiddenIdentity(text)) {
+      return { intentType: "UNCERTAIN", isValid: false };
+    }
+
+    const trimmed = text.trim();
+
+    // Reject questions and hypotheticals
+    if (this.QUESTION_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "QUESTION", isValid: false };
+    }
+    if (this.HYPOTHETICAL_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "HYPOTHETICAL", isValid: false };
+    }
+    if (this.ASSISTANT_STATEMENT_PATTERNS.some((p) => p.test(trimmed))) {
+      return { intentType: "ASSISTANT_STATEMENT", isValid: false };
+    }
+
+    // Completion
+    for (const pattern of this.EXPLICIT_COMPLETION_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (match && match[1]) {
+        return {
+          intentType: "EXPLICIT_STATUS_UPDATE",
+          status: "COMPLETED",
+          target: this.cleanTitle(match[1].trim()),
+          isValid: true,
+        };
+      }
+    }
+
+    // Blocker
+    for (const pattern of this.EXPLICIT_BLOCKER_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (match && match[1]) {
+        return {
+          intentType: "EXPLICIT_STATUS_UPDATE",
+          status: "BLOCKED",
+          blockerReason: match[1].trim(),
+          isValid: true,
+        };
+      }
+    }
+
+    // Pause
+    for (const pattern of this.CURRENT_TURN_OVERRIDE_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (match && (match[1] || match[2])) {
+        const target = (match[1] || match[2] || "").trim();
+        return {
+          intentType: "EXPLICIT_STATUS_UPDATE",
+          status: "PAUSED",
+          target: this.cleanTitle(target),
+          isValid: true,
+        };
+      }
+    }
+
+    // Reopen
+    for (const pattern of this.EXPLICIT_REOPEN_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (match && match[1]) {
+        return {
+          intentType: "EXPLICIT_STATUS_UPDATE",
+          status: "ACTIVE",
+          target: this.cleanTitle(match[1].trim()),
+          isValid: true,
+        };
+      }
+    }
+
+    // Abandon
+    for (const pattern of this.EXPLICIT_ABANDON_PATTERNS) {
+      const match = trimmed.match(pattern);
+      if (match && match[1]) {
+        return {
+          intentType: "EXPLICIT_STATUS_UPDATE",
+          status: "ABANDONED",
+          target: this.cleanTitle(match[1].trim()),
+          isValid: true,
+        };
+      }
+    }
+
+    return { intentType: "UNCERTAIN", isValid: false };
+  }
+
+  /**
+   * Resolves or finds an existing project matching name or aliases deterministically.
+   */
+  public findMatchingProject(
+    nameOrAlias: string,
+    projectMap: Map<string, Project>
+  ): Project | undefined {
+    const norm = this.normalizeTitle(nameOrAlias);
+    const core = this.extractCoreProjectIdentifier(nameOrAlias);
+
+    // 1. Exact normalized name match
+    for (const p of projectMap.values()) {
+      if (p.normalizedName === norm) {
+        return p;
+      }
+    }
+
+    // 2. Core project identity match with sufficient evidence (do not merge ambiguous short words)
+    if (core && core.length >= 3) {
+      for (const p of projectMap.values()) {
+        const pCore = this.extractCoreProjectIdentifier(p.name);
+        if (pCore && pCore === core) {
+          return p;
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -216,7 +541,6 @@ export class GoalProjectEngine {
     existingCommitments?: Commitment[];
     options?: GoalProjectEvaluationOptions;
   }): GoalProjectAnalysis {
-    const startTime = 0; // Pure deterministic profiling
     const userId = params.options?.userId || params.userId || "default";
     const currentTime = params.options?.currentTime ?? 1000000;
     const message = (params.message || "").trim();
@@ -444,18 +768,23 @@ export class GoalProjectEngine {
   ): void {
     if (!message) return;
 
+    // Check for explicit current-turn override/pause pattern
     for (const pattern of this.CURRENT_TURN_OVERRIDE_PATTERNS) {
       const match = message.match(pattern);
-      if (match && match[1]) {
+      if (match) {
+        const target = (match[1] || match[2] || "").trim();
         overrides.isProjectPaused = true;
-        overrides.overrideReason = `User explicitly instructed to pause/switch: "${match[1].trim()}"`;
+        overrides.overrideReason = `User explicitly instructed to pause/switch: "${target || "current focus"}"`;
+        if (target) {
+          overrides.switchedProject = target;
+        }
         break;
       }
     }
   }
 
   /**
-   * Processes current turn message to extract explicit goals, projects, commitments, and completions.
+   * Processes current turn message to extract explicit goals, projects, commitments, and status updates.
    */
   private processCurrentTurnMessage(
     message: string,
@@ -469,7 +798,6 @@ export class GoalProjectEngine {
     overrides: GoalProjectAnalysis["currentTurnOverrides"],
     diagnostics: GoalProjectDiagnostics
   ): void {
-    // Check sensitive / forbidden identity
     if (this.containsSensitiveData(message)) {
       diagnostics.suppressedSensitiveCount++;
       return;
@@ -478,14 +806,13 @@ export class GoalProjectEngine {
       return;
     }
 
-    // 1. Explicit Reopening of Project / Goal
-    for (const pattern of this.EXPLICIT_REOPEN_PATTERNS) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        const rawTarget = match[1].trim();
-        const normTarget = this.normalizeTitle(rawTarget);
-        // Find existing completed/paused project or goal
-        for (const [id, p] of projectMap.entries()) {
+    // 1. Status Update Classification (Completion, Blocker, Reopen, Abandon)
+    const statusUpdate = this.classifyStatusUpdateEvidence(message);
+    if (statusUpdate.isValid) {
+      if (statusUpdate.status === "ACTIVE" && statusUpdate.target) {
+        // Reopening
+        const normTarget = this.normalizeTitle(statusUpdate.target);
+        for (const p of projectMap.values()) {
           if (p.normalizedName.includes(normTarget) || normTarget.includes(p.normalizedName)) {
             p.status = "ACTIVE";
             p.updatedAt = currentTime;
@@ -497,12 +824,12 @@ export class GoalProjectEngine {
               targetType: "PROJECT",
               targetId: p.projectId,
               timestamp: currentTime,
-              description: `Project reopened by explicit user instruction: "${rawTarget}"`,
+              description: `Project reopened by explicit user instruction: "${statusUpdate.target}"`,
               sourceAuthority: "CURRENT_TURN_EXPLICIT",
             });
           }
         }
-        for (const [id, g] of goalMap.entries()) {
+        for (const g of goalMap.values()) {
           if (g.normalizedTitle.includes(normTarget) || normTarget.includes(g.normalizedTitle)) {
             g.status = "ACTIVE";
             g.updatedAt = currentTime;
@@ -510,46 +837,32 @@ export class GoalProjectEngine {
             g.lineage.push(`reopened_at_${currentTime}`);
           }
         }
-      }
-    }
-
-    // 2. Explicit Completion Detection
-    for (const pattern of this.EXPLICIT_COMPLETION_PATTERNS) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        const rawCompleted = match[1].trim();
-        const normCompleted = this.normalizeTitle(rawCompleted);
-
-        // Mark matching task
-        for (const [id, t] of taskMap.entries()) {
-          if (t.normalizedTitle.includes(normCompleted) || normCompleted.includes(t.normalizedTitle)) {
+      } else if (statusUpdate.status === "COMPLETED" && statusUpdate.target) {
+        // Explicit completion
+        const normTarget = this.normalizeTitle(statusUpdate.target);
+        for (const t of taskMap.values()) {
+          if (t.normalizedTitle.includes(normTarget) || normTarget.includes(t.normalizedTitle)) {
             t.status = "COMPLETED";
             t.completedAt = currentTime;
             t.updatedAt = currentTime;
           }
         }
-
-        // Mark matching goal
-        for (const [id, g] of goalMap.entries()) {
-          if (g.normalizedTitle.includes(normCompleted) || normCompleted.includes(g.normalizedTitle)) {
+        for (const g of goalMap.values()) {
+          if (g.normalizedTitle.includes(normTarget) || normTarget.includes(g.normalizedTitle)) {
             g.status = "COMPLETED";
             g.completedAt = currentTime;
             g.updatedAt = currentTime;
           }
         }
-
-        // Mark matching commitment
-        for (const [id, c] of commitmentMap.entries()) {
-          if (c.normalizedTitle.includes(normCompleted) || normCompleted.includes(c.normalizedTitle)) {
+        for (const c of commitmentMap.values()) {
+          if (c.normalizedTitle.includes(normTarget) || normTarget.includes(c.normalizedTitle)) {
             c.status = "COMPLETED";
             c.completedAt = currentTime;
             c.updatedAt = currentTime;
           }
         }
-
-        // Mark matching project if fully completed
-        for (const [id, p] of projectMap.entries()) {
-          if (p.normalizedName.includes(normCompleted) || normCompleted.includes(p.normalizedName)) {
+        for (const p of projectMap.values()) {
+          if (p.normalizedName.includes(normTarget) || normTarget.includes(p.normalizedName)) {
             p.status = "COMPLETED";
             p.completedAt = currentTime;
             p.updatedAt = currentTime;
@@ -559,21 +872,15 @@ export class GoalProjectEngine {
               targetType: "PROJECT",
               targetId: p.projectId,
               timestamp: currentTime,
-              description: `Project completed by explicit confirmation: "${rawCompleted}"`,
+              description: `Project completed by explicit confirmation: "${statusUpdate.target}"`,
               sourceAuthority: "CURRENT_TURN_EXPLICIT",
             });
           }
         }
-      }
-    }
-
-    // 3. Explicit Blocker Detection
-    for (const pattern of this.EXPLICIT_BLOCKER_PATTERNS) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        const rawBlocker = match[1].trim();
+      } else if (statusUpdate.status === "BLOCKED" && statusUpdate.blockerReason) {
+        // Explicit blocker
+        const rawBlocker = statusUpdate.blockerReason;
         if (this.isValidEntity(rawBlocker)) {
-          // Attach blocker to active projects / goals
           for (const p of projectMap.values()) {
             if (p.status === "ACTIVE") {
               p.status = "BLOCKED";
@@ -601,129 +908,120 @@ export class GoalProjectEngine {
       }
     }
 
-    // 4. Explicit Goal Extraction
-    for (const pattern of this.EXPLICIT_GOAL_PATTERNS) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        const rawGoal = match[1].trim();
-        if (this.isValidGoalExpression(rawGoal)) {
-          const normGoal = this.normalizeTitle(rawGoal);
-          const goalId = this.generateDeterministicId("goal", userId, normGoal);
+    // 2. Explicit Goal Extraction (passes classifyGoalEvidence)
+    const goalClass = this.classifyGoalEvidence(message);
+    if (goalClass.isValid && goalClass.extractedTitle) {
+      const rawGoal = goalClass.extractedTitle;
+      const normGoal = this.normalizeTitle(rawGoal);
+      const goalId = this.generateDeterministicId("goal", userId, normGoal);
 
-          const existing = goalMap.get(goalId);
-          if (!existing) {
-            goalMap.set(goalId, {
-              goalId,
-              title: this.cleanTitle(rawGoal),
-              normalizedTitle: normGoal,
-              scope: "PROJECT",
-              status: "ACTIVE",
-              priority: "MEDIUM",
-              createdAt: currentTime,
-              updatedAt: currentTime,
-              evidence: [
-                {
-                  evidenceId: this.generateDeterministicId("evi", goalId, String(currentTime)),
-                  source: "CURRENT_TURN_MESSAGE",
-                  authority: "CURRENT_TURN_EXPLICIT",
-                  textSnippet: rawGoal,
-                  timestamp: currentTime,
-                },
-              ],
-              sourceAuthority: "CURRENT_TURN_EXPLICIT",
-              confidence: 1.0,
-              projectIds: [],
-              milestoneIds: [],
-              lineage: [`created_at_${currentTime}`],
-            });
-          }
-        }
+      const existing = goalMap.get(goalId);
+      if (!existing) {
+        goalMap.set(goalId, {
+          goalId,
+          title: rawGoal,
+          normalizedTitle: normGoal,
+          scope: "PROJECT",
+          status: "ACTIVE",
+          priority: "MEDIUM",
+          createdAt: currentTime,
+          updatedAt: currentTime,
+          evidence: [
+            {
+              evidenceId: this.generateDeterministicId("evi", goalId, String(currentTime)),
+              source: "CURRENT_TURN_MESSAGE",
+              authority: "CURRENT_TURN_EXPLICIT",
+              textSnippet: rawGoal,
+              timestamp: currentTime,
+            },
+          ],
+          sourceAuthority: "CURRENT_TURN_EXPLICIT",
+          confidence: 1.0,
+          projectIds: [],
+          milestoneIds: [],
+          lineage: [`created_at_${currentTime}`],
+        });
       }
     }
 
-    // 5. Explicit Project Extraction
-    for (const pattern of this.EXPLICIT_PROJECT_PATTERNS) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        const rawProj = match[1].trim();
-        if (this.isValidProjectExpression(rawProj)) {
-          const normProj = this.normalizeTitle(rawProj);
-          const projectId = this.generateDeterministicId("proj", userId, normProj);
+    // 3. Explicit Project Extraction (passes classifyProjectEvidence with identity resolution)
+    const projClass = this.classifyProjectEvidence(message);
+    if (projClass.isValid && projClass.extractedName) {
+      const rawProj = projClass.extractedName;
+      const normProj = this.normalizeTitle(rawProj);
 
-          const existing = projectMap.get(projectId);
-          if (!existing) {
-            projectMap.set(projectId, {
-              projectId,
-              name: this.cleanTitle(rawProj),
-              normalizedName: normProj,
-              status: "ACTIVE",
-              priority: "MEDIUM",
-              createdAt: currentTime,
-              updatedAt: currentTime,
-              goals: [],
-              milestones: [],
-              tasks: [],
-              commitments: [],
-              dependencies: [],
-              events: [
-                {
-                  eventId: this.generateDeterministicId("evt", projectId, "created", String(currentTime)),
-                  eventType: "CREATED",
-                  targetType: "PROJECT",
-                  targetId: projectId,
-                  timestamp: currentTime,
-                  description: `Project created from user turn: "${rawProj}"`,
-                  sourceAuthority: "CURRENT_TURN_EXPLICIT",
-                },
-              ],
+      // Check if matches an existing project (e.g. "Dora", "Dora AI", "the Dora project")
+      const matched = this.findMatchingProject(rawProj, projectMap);
+      if (matched) {
+        matched.updatedAt = currentTime;
+      } else {
+        const projectId = this.generateDeterministicId("proj", userId, normProj);
+        projectMap.set(projectId, {
+          projectId,
+          name: rawProj,
+          normalizedName: normProj,
+          status: "ACTIVE",
+          priority: "MEDIUM",
+          createdAt: currentTime,
+          updatedAt: currentTime,
+          goals: [],
+          milestones: [],
+          tasks: [],
+          commitments: [],
+          dependencies: [],
+          events: [
+            {
+              eventId: this.generateDeterministicId("evt", projectId, "created", String(currentTime)),
+              eventType: "CREATED",
+              targetType: "PROJECT",
+              targetId: projectId,
+              timestamp: currentTime,
+              description: `Project created from user turn: "${rawProj}"`,
               sourceAuthority: "CURRENT_TURN_EXPLICIT",
-              confidence: 1.0,
-              lineage: [`created_at_${currentTime}`],
-            });
-          }
-        }
+            },
+          ],
+          sourceAuthority: "CURRENT_TURN_EXPLICIT",
+          confidence: 1.0,
+          lineage: [`created_at_${currentTime}`],
+        });
       }
     }
 
-    // 6. Explicit Commitment Extraction
-    for (const pattern of this.EXPLICIT_COMMITMENT_PATTERNS) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        const rawCommitment = match[1].trim();
-        if (this.isValidCommitmentExpression(rawCommitment)) {
-          const normCommitment = this.normalizeTitle(rawCommitment);
-          const commitmentId = this.generateDeterministicId("commit", userId, normCommitment);
+    // 4. Explicit Commitment Extraction (passes classifyCommitmentEvidence)
+    const commitClass = this.classifyCommitmentEvidence(message);
+    if (commitClass.isValid && commitClass.extractedTitle) {
+      const rawCommitment = commitClass.extractedTitle;
+      const normCommitment = this.normalizeTitle(rawCommitment);
+      const commitmentId = this.generateDeterministicId("commit", userId, normCommitment);
 
-          // Extract explicit deadline if mentioned (e.g. "tomorrow", "by Friday")
-          const deadline = this.parseExplicitDeadline(rawCommitment, currentTime);
+      // Extract explicit deadline if mentioned (e.g. "tomorrow", "by Friday")
+      const deadline = this.parseExplicitDeadline(rawCommitment, currentTime);
 
-          const existing = commitmentMap.get(commitmentId);
-          if (!existing) {
-            commitmentMap.set(commitmentId, {
-              commitmentId,
-              title: this.cleanTitle(rawCommitment),
-              normalizedTitle: normCommitment,
-              status: "ACTIVE",
-              createdAt: currentTime,
-              updatedAt: currentTime,
-              deadline: deadline?.timestamp,
-              deadlineString: deadline?.label,
-              isExpired: false,
-              evidence: [
-                {
-                  evidenceId: this.generateDeterministicId("evi", commitmentId, String(currentTime)),
-                  source: "CURRENT_TURN_MESSAGE",
-                  authority: "CURRENT_TURN_EXPLICIT",
-                  textSnippet: rawCommitment,
-                  timestamp: currentTime,
-                },
-              ],
-              sourceAuthority: "CURRENT_TURN_EXPLICIT",
-              confidence: 1.0,
-              isUserInitiated: true,
-            });
-          }
-        }
+      const existing = commitmentMap.get(commitmentId);
+      if (!existing) {
+        commitmentMap.set(commitmentId, {
+          commitmentId,
+          title: rawCommitment,
+          normalizedTitle: normCommitment,
+          status: "ACTIVE",
+          createdAt: currentTime,
+          updatedAt: currentTime,
+          deadline: deadline?.timestamp,
+          deadlineString: deadline?.label,
+          isExpired: false,
+          evidence: [
+            {
+              evidenceId: this.generateDeterministicId("evi", commitmentId, String(currentTime)),
+              source: "CURRENT_TURN_MESSAGE",
+              authority: "CURRENT_TURN_EXPLICIT",
+              textSnippet: rawCommitment,
+              timestamp: currentTime,
+            },
+          ],
+          sourceAuthority: "CURRENT_TURN_EXPLICIT",
+          confidence: 1.0,
+          isUserInitiated: true,
+        });
       }
     }
   }
@@ -769,51 +1067,55 @@ export class GoalProjectEngine {
       const normKey = this.normalizeTitle(attr.key);
       const normVal = this.normalizeTitle(valStr);
 
-      if (normKey.includes("project") || attr.dimension === "PROJECT_CONTEXT" || attr.dimension === "TASK_WORKFLOW" && normKey.includes("project")) {
-        const projectId = this.generateDeterministicId("proj", modelAnalysis.userId, normVal);
-        if (!projectMap.has(projectId)) {
-          const status: GoalProjectStatus =
-            attr.status === "OUTDATED" ? "ARCHIVED" : "ACTIVE";
-          projectMap.set(projectId, {
-            projectId,
-            name: this.cleanTitle(valStr),
-            normalizedName: normVal,
-            status,
-            priority: "MEDIUM",
-            createdAt: attr.firstObservedAt,
-            updatedAt: attr.lastObservedAt,
-            goals: [],
-            milestones: [],
-            tasks: [],
-            commitments: [],
-            dependencies: [],
-            events: [],
-            sourceAuthority: attr.sourceClassification || "EXPLICIT_USER_MEMORY",
-            confidence: attr.confidence,
-            lineage: [`imported_from_user_model`],
-          });
+      if (normKey.includes("project") || attr.dimension === "PROJECT_CONTEXT") {
+        // Only ingest if it's actually an explicit project reference or context
+        if (this.isValidProjectExpression(valStr)) {
+          const matched = this.findMatchingProject(valStr, projectMap);
+          if (!matched) {
+            const projectId = this.generateDeterministicId("proj", modelAnalysis.userId, normVal);
+            const status: GoalProjectStatus = attr.status === "OUTDATED" ? "ARCHIVED" : "ACTIVE";
+            projectMap.set(projectId, {
+              projectId,
+              name: this.cleanTitle(valStr),
+              normalizedName: normVal,
+              status,
+              priority: "MEDIUM",
+              createdAt: attr.firstObservedAt,
+              updatedAt: attr.lastObservedAt,
+              goals: [],
+              milestones: [],
+              tasks: [],
+              commitments: [],
+              dependencies: [],
+              events: [],
+              sourceAuthority: attr.sourceClassification || "EXPLICIT_USER_MEMORY",
+              confidence: attr.confidence,
+              lineage: [`imported_from_user_model`],
+            });
+          }
         }
       } else if (normKey.includes("goal") || normKey.includes("target") || attr.dimension === "USER_GOAL") {
-        const goalId = this.generateDeterministicId("goal", modelAnalysis.userId, normVal);
-        if (!goalMap.has(goalId)) {
-          const status: GoalProjectStatus =
-            attr.status === "OUTDATED" ? "ARCHIVED" : "ACTIVE";
-          goalMap.set(goalId, {
-            goalId,
-            title: this.cleanTitle(valStr),
-            normalizedTitle: normVal,
-            scope: "PROJECT",
-            status,
-            priority: "MEDIUM",
-            createdAt: attr.firstObservedAt,
-            updatedAt: attr.lastObservedAt,
-            evidence: [],
-            sourceAuthority: attr.sourceClassification || "EXPLICIT_USER_MEMORY",
-            confidence: attr.confidence,
-            projectIds: [],
-            milestoneIds: [],
-            lineage: [`imported_from_user_model`],
-          });
+        if (this.isValidGoalExpression(valStr)) {
+          const goalId = this.generateDeterministicId("goal", modelAnalysis.userId, normVal);
+          if (!goalMap.has(goalId)) {
+            const status: GoalProjectStatus = attr.status === "OUTDATED" ? "ARCHIVED" : "ACTIVE";
+            goalMap.set(goalId, {
+              goalId,
+              title: this.cleanTitle(valStr),
+              normalizedTitle: normVal,
+              scope: "PROJECT",
+              status,
+              priority: "MEDIUM",
+              createdAt: attr.firstObservedAt,
+              updatedAt: attr.lastObservedAt,
+              evidence: [],
+              sourceAuthority: attr.sourceClassification || "EXPLICIT_USER_MEMORY",
+              confidence: attr.confidence,
+              projectIds: [],
+              milestoneIds: [],
+              lineage: [`imported_from_user_model`],
+            });
+          }
         }
       }
     }
@@ -841,59 +1143,70 @@ export class GoalProjectEngine {
         continue;
       }
 
+      // Suppress unverified candidate memories
+      if (mem.isCandidateInferred) {
+        diagnostics.suppressedCandidateCount++;
+        continue;
+      }
+
       const normKey = this.normalizeTitle(mem.key);
       const valStr = (mem.value || "").trim();
       const normVal = this.normalizeTitle(valStr);
 
       if ((mem.type as string) === "GOAL" || (mem.type as string) === "USER_GOAL" || normKey.includes("goal") || normKey.includes("target")) {
-        const goalId = this.generateDeterministicId("goal", "gov", normVal);
-        if (!goalMap.has(goalId)) {
-          goalMap.set(goalId, {
-            goalId,
-            title: this.cleanTitle(valStr),
-            normalizedTitle: normVal,
-            scope: "PROJECT",
-            status: "ACTIVE",
-            priority: "MEDIUM",
-            createdAt: currentTime,
-            updatedAt: currentTime,
-            evidence: [
-              {
-                evidenceId: this.generateDeterministicId("evi", goalId, String(currentTime)),
-                source: "MEMORY_GOVERNANCE",
-                authority: "EXPLICIT_USER_MEMORY",
-                textSnippet: valStr,
-                timestamp: currentTime,
-              },
-            ],
-            sourceAuthority: "EXPLICIT_USER_MEMORY",
-            confidence: mem.confidence || 0.9,
-            projectIds: [],
-            milestoneIds: [],
-            lineage: [`imported_from_governance`],
-          });
+        if (this.isValidGoalExpression(valStr)) {
+          const goalId = this.generateDeterministicId("goal", "gov", normVal);
+          if (!goalMap.has(goalId)) {
+            goalMap.set(goalId, {
+              goalId,
+              title: this.cleanTitle(valStr),
+              normalizedTitle: normVal,
+              scope: "PROJECT",
+              status: "ACTIVE",
+              priority: "MEDIUM",
+              createdAt: currentTime,
+              updatedAt: currentTime,
+              evidence: [
+                {
+                  evidenceId: this.generateDeterministicId("evi", goalId, String(currentTime)),
+                  source: "MEMORY_GOVERNANCE",
+                  authority: "EXPLICIT_USER_MEMORY",
+                  textSnippet: valStr,
+                  timestamp: currentTime,
+                },
+              ],
+              sourceAuthority: "EXPLICIT_USER_MEMORY",
+              confidence: mem.confidence || 0.9,
+              projectIds: [],
+              milestoneIds: [],
+              lineage: [`imported_from_governance`],
+            });
+          }
         }
       } else if (mem.type === "PROJECT_CONTEXT" || (mem.type as string) === "PROJECT" || normKey.includes("project")) {
-        const projectId = this.generateDeterministicId("proj", "gov", normVal);
-        if (!projectMap.has(projectId)) {
-          projectMap.set(projectId, {
-            projectId,
-            name: this.cleanTitle(valStr),
-            normalizedName: normVal,
-            status: "ACTIVE",
-            priority: "MEDIUM",
-            createdAt: currentTime,
-            updatedAt: currentTime,
-            goals: [],
-            milestones: [],
-            tasks: [],
-            commitments: [],
-            dependencies: [],
-            events: [],
-            sourceAuthority: "EXPLICIT_USER_MEMORY",
-            confidence: mem.confidence || 0.9,
-            lineage: [`imported_from_governance`],
-          });
+        if (this.isValidProjectExpression(valStr)) {
+          const matched = this.findMatchingProject(valStr, projectMap);
+          if (!matched) {
+            const projectId = this.generateDeterministicId("proj", "gov", normVal);
+            projectMap.set(projectId, {
+              projectId,
+              name: this.cleanTitle(valStr),
+              normalizedName: normVal,
+              status: "ACTIVE",
+              priority: "MEDIUM",
+              createdAt: currentTime,
+              updatedAt: currentTime,
+              goals: [],
+              milestones: [],
+              tasks: [],
+              commitments: [],
+              dependencies: [],
+              events: [],
+              sourceAuthority: "EXPLICIT_USER_MEMORY",
+              confidence: mem.confidence || 0.9,
+              lineage: [`imported_from_governance`],
+            });
+          }
         }
       }
     }
@@ -1119,11 +1432,11 @@ export class GoalProjectEngine {
     activeTopic: string;
     diagnostics: GoalProjectDiagnostics;
   }): string[] {
-    const directives: string[] = [];
+    const rawDirectives: string[] = [];
 
     // Current-Turn Override Directive
     if (params.currentTurnOverrides.isProjectPaused && params.currentTurnOverrides.overrideReason) {
-      directives.push(`Current-turn instruction: ${params.currentTurnOverrides.overrideReason}`);
+      rawDirectives.push(`Current-turn instruction: ${params.currentTurnOverrides.overrideReason}`);
     }
 
     // Active Projects (Respecting Topic Isolation)
@@ -1135,51 +1448,64 @@ export class GoalProjectEngine {
           continue;
         }
       }
-      directives.push(`Active user project: "${p.name}". Keep answers relevant to its goals and progress.`);
+      rawDirectives.push(`Active user project: "${p.name}". Keep answers relevant to its goals and progress.`);
     }
 
     // Blocked Projects
     for (const p of params.blockedProjects) {
       if (p.blockerDescription) {
-        directives.push(`Project "${p.name}" is currently blocked by: ${p.blockerDescription}.`);
+        rawDirectives.push(`Project "${p.name}" is currently blocked by: ${p.blockerDescription}.`);
       }
     }
 
     // Active Goals
     for (const g of params.activeGoals) {
       if (g.status === "ACTIVE") {
-        directives.push(`The user is pursuing the goal: "${g.title}".`);
+        rawDirectives.push(`The user is pursuing the goal: "${g.title}".`);
       } else if (g.status === "BLOCKED" && g.blockerDescription) {
-        directives.push(`Goal "${g.title}" is currently blocked: ${g.blockerDescription}.`);
+        rawDirectives.push(`Goal "${g.title}" is currently blocked: ${g.blockerDescription}.`);
       }
     }
 
     // Active Commitments
     for (const c of params.activeCommitments) {
       if (c.deadlineString) {
-        directives.push(`The user has committed to: "${c.title}" (${c.deadlineString}).`);
+        rawDirectives.push(`The user has committed to: "${c.title}" (${c.deadlineString}).`);
       } else {
-        directives.push(`The user has committed to: "${c.title}".`);
+        rawDirectives.push(`The user has committed to: "${c.title}".`);
       }
     }
 
     // Blocked Tasks
     for (const t of params.blockedTasks) {
       if (t.blockedBy && t.blockedBy.length > 0) {
-        directives.push(`Task "${t.title}" is waiting on prerequisites: ${t.blockedBy.join(", ")}.`);
+        rawDirectives.push(`Task "${t.title}" is waiting on prerequisites.`);
       }
     }
 
     // Ready Next Tasks (First 2)
     const topReady = params.readyTasks.slice(0, 2);
     for (const t of topReady) {
-      directives.push(`Next ready task for active plan: "${t.title}".`);
+      rawDirectives.push(`Next ready task for active plan: "${t.title}".`);
     }
 
-    return directives;
+    // Strict sanitization of all directives
+    return rawDirectives.map((d) => this.sanitizeDirective(d));
   }
 
-  // --- Helpers ---
+  /**
+   * Sanitizes a directive string to ensure no internal IDs, hashes, timestamps, or floats leak.
+   */
+  public sanitizeDirective(directive: string): string {
+    return directive
+      .replace(/\b(?:proj|goal|commit|task|evt|evi)_[a-f0-9_]{6,}\b/gi, "")
+      .replace(/\b\d{10,13}\b/g, "") // Epoch timestamps
+      .replace(/\b0\.\d+\b/g, "") // Confidence floats
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  // --- Validation Helpers ---
 
   private isValidEntity(str: string): boolean {
     if (!str || str.length < 2) return false;
@@ -1192,7 +1518,7 @@ export class GoalProjectEngine {
     if (!this.isValidEntity(str)) return false;
     const norm = str.toLowerCase();
     // Filter casual conversation or simple entity questions
-    if (/^(what is|how to|why is|explain|hello|hi|tell me)\b/i.test(norm)) return false;
+    if (/^(what is|how to|why is|explain|hello|hi|tell me|can you)\b/i.test(norm)) return false;
     if (/^(python|javascript|weather|tea|coffee)$/i.test(norm.trim())) return false;
     return str.trim().split(/\s+/).length >= 2;
   }
@@ -1200,14 +1526,15 @@ export class GoalProjectEngine {
   private isValidProjectExpression(str: string): boolean {
     if (!this.isValidEntity(str)) return false;
     const norm = str.toLowerCase();
-    if (/^(what is|how to|why is|explain|hello|hi)\b/i.test(norm)) return false;
+    if (/^(what is|how to|why is|explain|hello|hi|can you)\b/i.test(norm)) return false;
+    if (/^(python|javascript|typescript|weather|tea|coffee)$/i.test(norm.trim())) return false;
     return str.trim().length >= 3;
   }
 
   private isValidCommitmentExpression(str: string): boolean {
     if (!this.isValidEntity(str)) return false;
     const norm = str.toLowerCase();
-    if (/^(you should|maybe you|assistant|ai)\b/i.test(norm)) return false;
+    if (/^(you should|maybe you|assistant|ai|can you)\b/i.test(norm)) return false;
     return str.trim().split(/\s+/).length >= 2;
   }
 

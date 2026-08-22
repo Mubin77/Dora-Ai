@@ -84,6 +84,8 @@ import { temporalMemoryEngine } from "./temporalMemoryEngine";
 import { TemporalMemoryAnalysis } from "./temporalMemoryTypes";
 import { goalProjectEngine } from "./goalProjectEngine";
 import { GoalProjectAnalysis } from "./goalProjectTypes";
+import { contextContinuityEngine } from "./contextContinuityEngine";
+import { ContextContinuityAnalysis } from "./contextContinuityTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -100,6 +102,7 @@ export * from "./adaptiveLearningTypes";
 export * from "./longTermUserModelTypes";
 export * from "./temporalMemoryTypes";
 export * from "./goalProjectTypes";
+export * from "./contextContinuityTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./memoryStore";
@@ -115,6 +118,7 @@ export { adaptiveLearningEngine } from "./adaptiveLearningEngine";
 export { longTermUserModelEngine } from "./longTermUserModelEngine";
 export { temporalMemoryEngine } from "./temporalMemoryEngine";
 export { goalProjectEngine } from "./goalProjectEngine";
+export { contextContinuityEngine } from "./contextContinuityEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { memoryStore } from "./memoryStore";
@@ -148,6 +152,7 @@ export interface BrainAnalysis {
   longTermUserModelAnalysis?: UserModelAnalysis;
   temporalMemoryAnalysis?: TemporalMemoryAnalysis;
   goalProjectAnalysis?: GoalProjectAnalysis;
+  contextContinuityAnalysis?: ContextContinuityAnalysis;
   predictiveContextAnalysis?: PredictiveContextAnalysis;
   responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
   activeTaskPlan?: TaskPlan;
@@ -530,7 +535,39 @@ export class BrainEngine {
       }
     }
 
-    // Step 11 / Phase 2: Predictive Context & Proactive Memory Orchestration Engine
+    // Step 11 / Phase 2: Cross-Session Context Continuity & Intelligent Recall Orchestration Engine (Deterministic, Bounded, Non-LLM)
+    // Downstream of GoalProjectEngine, UserModelEngine, TemporalMemoryEngine & GovernanceEngine — safely orchestrates validated historical context across sessions
+    const contextContinuityAnalysis = contextContinuityEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      history: recentHistory,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      governanceAnalysis: memoryGovernanceAnalysis,
+      retrievedMemories: memoryRetrieval,
+      longTermUserModel: longTermUserModelAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      goalProjectAnalysis,
+      adaptiveLearning: adaptiveLearningAnalysis,
+      options: {
+        userId,
+        currentTime,
+        isTopicIsolated: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
+    // Add safe continuity directives to promptDirectives
+    for (const d of contextContinuityAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Step 12 / Phase 2: Predictive Context & Proactive Memory Orchestration Engine
     // Downstream of AdaptiveLearningEngine, UserModelEngine & TemporalMemoryEngine — safely prepares context for active plans & confirmed preferences
     const predictiveContextAnalysis = predictiveContextEngine.evaluate({
       message,
@@ -600,6 +637,7 @@ export class BrainEngine {
       longTermUserModelAnalysis,
       temporalMemoryAnalysis,
       goalProjectAnalysis,
+      contextContinuityAnalysis,
       predictiveContextAnalysis,
       responseAdaptationAnalysis,
       activeTaskPlan: planningAnalysis.plan,
