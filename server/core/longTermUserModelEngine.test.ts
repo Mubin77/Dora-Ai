@@ -1574,6 +1574,358 @@ runTest("PC-10: Full lifecycle: Predictive context alone never alters stable use
   assert(res.profile.goals.length === 0, "No goals in stable profile");
 });
 
+// ===========================================================================
+// AUTHORITATIVE CANDIDATE PROMOTION GATE (CG-1 to CG-20)
+// ===========================================================================
+
+runTest("CG-1: CONFIRMED adaptive pattern with evidenceCount=1 and confidence=0.90 MUST NOT become confirmed", () => {
+  const pat = makeLearningPat("preferred_language", "Bangla", {
+    id: "pat_lang_cg1",
+    status: "CONFIRMED",
+    confidence: 0.90,
+    independentEvidenceCount: 1,
+    reinforcementCount: 1,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const langAttr = res.profile.attributes["language"];
+  assert(langAttr !== undefined, "Language attribute must exist");
+  assert(langAttr.status === "CANDIDATE", "Status must be CANDIDATE because independentEvidenceCount < 3");
+  assert(!res.profile.confirmedAttributes.some((a) => a.key === "language"), "Must not be in confirmedAttributes");
+});
+
+runTest("CG-2: CONFIRMED adaptive pattern with evidenceCount=2 and confidence=0.90 MUST NOT become confirmed", () => {
+  const pat = makeLearningPat("preferred_verbosity", "Concise", {
+    id: "pat_verb_cg2",
+    status: "CONFIRMED",
+    confidence: 0.90,
+    independentEvidenceCount: 2,
+    reinforcementCount: 2,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const verbAttr = res.profile.attributes["verbosity"];
+  assert(verbAttr !== undefined, "Verbosity attribute must exist");
+  assert(verbAttr.status === "CANDIDATE", "Status must remain CANDIDATE with 2 observations");
+  assert(!res.profile.confirmedAttributes.some((a) => a.key === "verbosity"), "Must not be in confirmedAttributes");
+});
+
+runTest("CG-3: CONFIRMED adaptive pattern with evidenceCount=3 and confidence=0.74 MUST NOT become confirmed", () => {
+  const pat = makeLearningPat("preferred_tone", "Direct", {
+    id: "pat_tone_cg3",
+    status: "CONFIRMED",
+    confidence: 0.74,
+    independentEvidenceCount: 3,
+    reinforcementCount: 3,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const toneAttr = res.profile.attributes["tone"];
+  assert(toneAttr !== undefined, "Tone attribute must exist");
+  assert(toneAttr.status === "CANDIDATE", "Status must be CANDIDATE with confidence 0.74 < 0.75");
+  assert(!res.profile.confirmedAttributes.some((a) => a.key === "tone"), "Must not be in confirmedAttributes");
+});
+
+runTest("CG-4: CONFIRMED adaptive pattern with evidenceCount=3 and confidence=0.75 and no contradiction MAY become CONFIRMED", () => {
+  const pat = makeLearningPat("preferred_format", "Bullet Points", {
+    id: "pat_format_cg4",
+    status: "CONFIRMED",
+    confidence: 0.75,
+    independentEvidenceCount: 3,
+    reinforcementCount: 3,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const formatAttr = res.profile.attributes["format"];
+  assert(formatAttr !== undefined, "Format attribute must exist");
+  assert(formatAttr.status === "CONFIRMED", "Status must be CONFIRMED with count=3 & conf=0.75");
+  assert(res.profile.confirmedAttributes.some((a) => a.key === "format"), "Must be in confirmedAttributes");
+});
+
+runTest("CG-5: CONFIRMED adaptive pattern with evidenceCount=4 and confidence=0.90 but active contradiction exists MUST NOT become CONFIRMED", () => {
+  // Existing explicit memory establishes preference for "ASUS"
+  const explicitMem = makeGovCand("preferred_laptop", "ASUS", {
+    memoryId: "mem_laptop_asus",
+    source: "EXPLICIT_USER",
+    confidence: 1.0,
+  });
+
+  // Conflicting adaptive pattern for "Lenovo"
+  const conflictingPat = makeLearningPat("preferred_laptop", "Lenovo", {
+    id: "pat_laptop_lenovo",
+    status: "CONFIRMED",
+    confidence: 0.90,
+    independentEvidenceCount: 4,
+    reinforcementCount: 4,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    governanceAnalysis: makeGovAnalysis([explicitMem]),
+    adaptiveLearning: makeLearningAnalysis([conflictingPat]),
+    options: { currentTime: 1000 },
+  });
+
+  const laptopAttr = res.profile.attributes["laptop"];
+  assert(laptopAttr !== undefined, "Laptop attribute must exist");
+  assert(laptopAttr.normalizedValue === "ASUS", "Explicit ASUS must win over contradictory Lenovo candidate");
+  assert(laptopAttr.sourceClassification === "EXPLICIT_USER_MEMORY", "Authority must remain EXPLICIT_USER_MEMORY");
+});
+
+runTest("CG-6: Candidate with 3 repeated observations from the SAME turn MUST NOT become confirmed", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "preferred_code_style",
+    confidence: 0.85,
+    independentEvidenceCount: 3,
+    evidence: [
+      { evidenceId: "evi_1", turnOrSessionId: "turn_1", valueHash: "hash_ts", timestamp: 100 },
+      { evidenceId: "evi_2", turnOrSessionId: "turn_1", valueHash: "hash_ts", timestamp: 100 },
+      { evidenceId: "evi_3", turnOrSessionId: "turn_1", valueHash: "hash_ts", timestamp: 100 },
+    ],
+  });
+
+  assert(promo.canPromote === false, "Must not promote when all 3 observations come from same turn");
+  assert(promo.targetStatus === "CANDIDATE", "Status must remain CANDIDATE");
+  assert(promo.validatedIndependentCount === 1, "Validated distinct turns must equal 1");
+});
+
+runTest("CG-7: Candidate with duplicated identical evidence hash MUST NOT inflate evidence count", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "preferred_verbosity",
+    confidence: 0.85,
+    independentEvidenceCount: 3,
+    evidence: [
+      { evidenceId: "evi_dup_1", turnOrSessionId: "turn_1", valueHash: "same_hash", timestamp: 100 },
+      { evidenceId: "evi_dup_1", turnOrSessionId: "turn_1", valueHash: "same_hash", timestamp: 100 },
+      { evidenceId: "evi_dup_2", turnOrSessionId: "turn_2", valueHash: "hash_2", timestamp: 200 },
+    ],
+  });
+
+  assert(promo.canPromote === false, "Duplicate evidence ID must not inflate count to 3");
+  assert(promo.targetStatus === "CANDIDATE", "Target status must be CANDIDATE");
+  assert(promo.validatedIndependentCount === 2, "Validated count must be 2");
+});
+
+runTest("CG-8: Candidate with 3 genuinely independent turns and confidence >= 0.75 becomes eligible for confirmation", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "preferred_language",
+    confidence: 0.80,
+    evidence: [
+      { evidenceId: "evi_turn1", turnOrSessionId: "turn_101", valueHash: "val_bangla", timestamp: 100 },
+      { evidenceId: "evi_turn2", turnOrSessionId: "turn_102", valueHash: "val_bangla", timestamp: 200 },
+      { evidenceId: "evi_turn3", turnOrSessionId: "turn_103", valueHash: "val_bangla", timestamp: 300 },
+    ],
+  });
+
+  assert(promo.canPromote === true, "Must promote when 3 independent turns observed");
+  assert(promo.targetStatus === "CONFIRMED", "Target status must be CONFIRMED");
+  assert(promo.validatedIndependentCount === 3, "Validated independent count must be 3");
+});
+
+runTest("CG-9: Predictive-only candidate with confidence >= 0.99 MUST NOT become confirmed", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "workflow_suggestion",
+    confidence: 0.99,
+    independentEvidenceCount: 5,
+    sourceClassification: "PREDICTIVE_CONTEXT",
+  });
+
+  assert(promo.canPromote === false, "Predictive source cannot promote");
+  assert(promo.targetStatus === "CANDIDATE", "Target status must remain CANDIDATE");
+  assert(promo.reason.includes("Predictive context signals are advisory only"), "Reason must cite advisory boundary");
+});
+
+runTest("CG-10: Predictive context + 3 independent predictive observations MUST NOT become confirmed", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "predictive_step",
+    confidence: 0.95,
+    evidence: [
+      { evidenceId: "pred_1", turnOrSessionId: "turn_1", source: "PREDICTIVE_CONTEXT", timestamp: 100 },
+      { evidenceId: "pred_2", turnOrSessionId: "turn_2", source: "PREDICTIVE_CONTEXT", timestamp: 200 },
+      { evidenceId: "pred_3", turnOrSessionId: "turn_3", source: "PREDICTIVE_CONTEXT", timestamp: 300 },
+    ],
+  });
+
+  assert(promo.canPromote === false, "Predictive observations cannot satisfy promotion gate");
+  assert(promo.targetStatus === "CANDIDATE", "Target status must be CANDIDATE");
+});
+
+runTest("CG-11: Predictive context + 3 independently validated non-predictive observations -> promotion may occur ONLY because of validated observations", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "preferred_format",
+    confidence: 0.85,
+    evidence: [
+      { evidenceId: "evi_real_1", turnOrSessionId: "turn_1", source: "ADAPTIVE_LEARNING", timestamp: 100 },
+      { evidenceId: "evi_real_2", turnOrSessionId: "turn_2", source: "ADAPTIVE_LEARNING", timestamp: 200 },
+      { evidenceId: "evi_real_3", turnOrSessionId: "turn_3", source: "ADAPTIVE_LEARNING", timestamp: 300 },
+      { evidenceId: "pred_advisory", turnOrSessionId: "turn_4", source: "PREDICTIVE_CONTEXT", timestamp: 400 },
+    ],
+  });
+
+  assert(promo.canPromote === true, "Promotion allowed due to 3 validated non-predictive turns");
+  assert(promo.targetStatus === "CONFIRMED", "Target status must be CONFIRMED");
+  assert(promo.validatedIndependentCount === 3, "Only non-predictive turns counted (3, not 4)");
+});
+
+runTest("CG-12: Explicit durable user preference can become CONFIRMED without 3-observation threshold", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "preferred_language",
+    confidence: 1.0,
+    independentEvidenceCount: 1,
+    isExplicit: true,
+  });
+
+  assert(promo.canPromote === true, "Explicit preference bypasses 3-count requirement");
+  assert(promo.targetStatus === "CONFIRMED", "Status is CONFIRMED");
+});
+
+runTest("CG-13: Current-turn temporary instruction does NOT mutate durable confirmed user model", () => {
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    message: "Answer this in Bangla for now.",
+    options: { currentTime: 1000 },
+  });
+
+  assert(res.currentTurnOverrides.length > 0, "Override must be placed in currentTurnOverrides");
+  assert(!res.profile.confirmedAttributes.some((a) => a.key === "language"), "Language must NOT be permanently confirmed in profile");
+});
+
+runTest("CG-14: Sensitive candidate suppressed and never promoted", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "auth_token",
+    value: "bearer secret_token_xyz12345",
+    confidence: 0.99,
+    independentEvidenceCount: 5,
+  });
+
+  assert(promo.canPromote === false, "Sensitive candidate cannot promote");
+  assert(promo.targetStatus === "SUPPRESSED", "Target status must be SUPPRESSED");
+});
+
+runTest("CG-15: Expired candidate never promoted", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "temp_interest",
+    confidence: 0.90,
+    independentEvidenceCount: 4,
+    isExpired: true,
+  });
+
+  assert(promo.canPromote === false, "Expired candidate cannot promote");
+  assert(promo.targetStatus === "CANDIDATE", "Target status must remain CANDIDATE");
+  assert(promo.reason.includes("Expired"), "Reason must cite expired");
+});
+
+runTest("CG-16: Superseded candidate never promoted", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "old_preference",
+    confidence: 0.90,
+    independentEvidenceCount: 4,
+    isSuperseded: true,
+  });
+
+  assert(promo.canPromote === false, "Superseded candidate cannot promote");
+  assert(promo.targetStatus === "SUPERSEDED", "Target status must be SUPERSEDED");
+  assert(promo.reason.includes("Superseded"), "Reason must cite superseded");
+});
+
+runTest("CG-17: Outdated/archived candidate never promoted", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "legacy_stack",
+    confidence: 0.90,
+    independentEvidenceCount: 4,
+    isOutdated: true,
+  });
+
+  assert(promo.canPromote === false, "Outdated candidate cannot promote");
+  assert(promo.targetStatus === "CANDIDATE", "Target status must remain CANDIDATE");
+  assert(promo.reason.includes("Archived or outdated"), "Reason must cite outdated");
+});
+
+runTest("CG-18: Topic-isolated candidate never promoted into active authoritative model", () => {
+  const promo = longTermUserModelEngine.evaluateCandidatePromotion({
+    key: "domain_interest",
+    dimension: "DOMAIN_INTEREST",
+    value: "Aerospace",
+    confidence: 0.90,
+    independentEvidenceCount: 4,
+    isTopicIsolated: true,
+  });
+
+  assert(promo.canPromote === false, "Domain candidate blocked under topic isolation");
+  assert(promo.targetStatus === "CANDIDATE", "Target status remains CANDIDATE");
+});
+
+runTest("CG-19: Same input processed twice produces identical model, identical status, zero evidence inflation", () => {
+  const pat = makeLearningPat("preferred_language", "Bangla", {
+    id: "pat_lang_idem",
+    status: "CONFIRMED",
+    confidence: 0.85,
+    independentEvidenceCount: 3,
+  });
+
+  const res1 = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const res2 = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([pat]),
+    options: { currentTime: 1000 },
+  });
+
+  const attr1 = res1.profile.attributes["language"];
+  const attr2 = res2.profile.attributes["language"];
+  assert(attr1.status === attr2.status, "Status must match identically");
+  assert(attr1.independentEvidenceCount === attr2.independentEvidenceCount, "Evidence count must not inflate");
+  assert(attr1.confidence === attr2.confidence, "Confidence must match");
+  assert(JSON.stringify(res1.activeDirectives) === JSON.stringify(res2.activeDirectives), "Directives must match identically");
+});
+
+runTest("CG-20: Step 5 reports pattern status CONFIRMED but Step 8 evidence threshold fails -> Step 8 MUST reject authoritative confirmation", () => {
+  // Step 5 pattern is labeled status: CONFIRMED, but only has independentEvidenceCount: 1 and confidence: 0.90
+  const patFromStep5 = makeLearningPat("preferred_verbosity", "Concise", {
+    id: "pat_step5_unverified",
+    status: "CONFIRMED", // Marked confirmed in Step 5
+    confidence: 0.90,
+    independentEvidenceCount: 1, // Fails Step 8 threshold (needs >= 3)
+    reinforcementCount: 1,
+  });
+
+  const res = longTermUserModelEngine.synthesize({
+    userId: "test_user",
+    adaptiveLearning: makeLearningAnalysis([patFromStep5]),
+    options: { currentTime: 1000 },
+  });
+
+  const verbAttr = res.profile.attributes["verbosity"];
+  assert(verbAttr !== undefined, "Verbosity attribute must exist in synthesized profile");
+  assert(verbAttr.status === "CANDIDATE", "CRITICAL: Step 8 MUST reject CONFIRMED status and set CANDIDATE");
+  assert(res.profile.candidateAttributes.some((a) => a.key === "verbosity"), "Must be in candidateAttributes");
+  assert(!res.profile.confirmedAttributes.some((a) => a.key === "verbosity"), "Must NOT be in confirmedAttributes");
+});
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------

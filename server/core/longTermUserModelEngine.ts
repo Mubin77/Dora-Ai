@@ -267,10 +267,10 @@ export class LongTermUserModelEngine {
         }
 
         const dimension = this.mapCategoryToDimension(pat.patternType, pat.key);
-        const isConfirmed = pat.status === "CONFIRMED";
-        const authority: UserModelEvidenceAuthority = isConfirmed
-          ? "CONFIRMED_ADAPTIVE_PATTERN"
-          : "REPEATED_VALIDATED_SIGNAL";
+        const authority: UserModelEvidenceAuthority =
+          pat.status === "CONFIRMED"
+            ? "CONFIRMED_ADAPTIVE_PATTERN"
+            : "REPEATED_VALIDATED_SIGNAL";
 
         // Pre-synthesis hard topic isolation gate
         if (isTopicIsolated && this.isDomainSpecific(dimension, pat.key)) {
@@ -283,10 +283,6 @@ export class LongTermUserModelEngine {
           });
           continue;
         }
-
-        const attrStatus: UserModelAttributeStatus = isConfirmed
-          ? "CONFIRMED"
-          : "CANDIDATE";
 
         const evidence: UserModelEvidence = {
           evidenceId: `evi_pat_${this.deterministicHash(pat.id + pat.value)}`,
@@ -310,13 +306,14 @@ export class LongTermUserModelEngine {
           normalizedValue: normalizedVal,
           confidence: Math.min(1.0, Math.max(0.0, pat.confidence || 0.7)),
           evidence,
-          status: attrStatus,
+          status: "CANDIDATE", // Always pass through evaluateCandidatePromotion gate
           authority,
           currentTime,
           firstObservedAt: pat.firstObservedAt || currentTime,
           lastObservedAt: pat.lastObservedAt || currentTime,
           isExplicit: false,
           independentCount: pat.independentEvidenceCount,
+          patternEvidence: pat.evidence,
           onConflictResolved: () => conflictsResolvedCount++,
         });
       }
@@ -529,6 +526,14 @@ export class LongTermUserModelEngine {
     isExplicit: boolean;
     isDurable?: boolean;
     independentCount?: number;
+    patternEvidence?: Array<{
+      evidenceId?: string;
+      turnOrSessionId?: string;
+      timestamp?: number;
+      valueHash?: string;
+      source?: string;
+      isExplicit?: boolean;
+    }>;
     onConflictResolved: () => void;
   }): void {
     const {
@@ -547,6 +552,7 @@ export class LongTermUserModelEngine {
       isExplicit,
       isDurable = true,
       independentCount,
+      patternEvidence,
       onConflictResolved,
     } = params;
 
@@ -555,6 +561,8 @@ export class LongTermUserModelEngine {
     if (!existing) {
       // Determine status using candidate promotion gate
       let finalStatus: UserModelAttributeStatus = status;
+      let effectiveIndependentCount = independentCount ?? (isExplicit ? 1 : 1);
+
       if (!isExplicit) {
         const promo = this.evaluateCandidatePromotion({
           key,
@@ -565,8 +573,22 @@ export class LongTermUserModelEngine {
           evidenceCount: 1,
           isExplicit: false,
           sourceClassification: authority,
+          status,
+          evidence: patternEvidence || (evidence ? [evidence] : undefined),
         });
-        finalStatus = promo.canPromote ? "CONFIRMED" : "CANDIDATE";
+        finalStatus = promo.canPromote ? "CONFIRMED" : promo.targetStatus === "SUPPRESSED" ? "SUPPRESSED" : "CANDIDATE";
+        effectiveIndependentCount = promo.validatedIndependentCount;
+      }
+
+      if (finalStatus === "SUPPRESSED") {
+        decisions.push({
+          key,
+          dimension,
+          decision: "SUPPRESSED_SENSITIVE",
+          authority,
+          reason: `Attribute suppressed during synthesis under authority ${authority}`,
+        });
+        return;
       }
 
       const newAttr: UserModelAttribute = {
@@ -575,7 +597,7 @@ export class LongTermUserModelEngine {
         normalizedValue,
         confidence,
         evidenceCount: 1,
-        independentEvidenceCount: independentCount ?? (isExplicit ? 1 : 1),
+        independentEvidenceCount: effectiveIndependentCount,
         status: finalStatus,
         sourceClassification: authority,
         firstObservedAt,
@@ -635,10 +657,12 @@ export class LongTermUserModelEngine {
           evidenceCount: existing.evidenceCount,
           isExplicit: isExplicit || existing.evidence.some((e) => e.isExplicit),
           sourceClassification: existing.sourceClassification,
+          evidence: existing.evidence,
         });
 
         if (promo.canPromote) {
           existing.status = "CONFIRMED";
+          existing.independentEvidenceCount = promo.validatedIndependentCount;
           decisions.push({
             key,
             dimension: existing.dimension,
@@ -1162,67 +1186,249 @@ export class LongTermUserModelEngine {
     normalizedValue?: string;
     value?: string;
     confidence: number;
-    independentEvidenceCount: number;
+    independentEvidenceCount?: number;
     evidenceCount?: number;
     isExplicit?: boolean;
     sourceClassification?: UserModelEvidenceAuthority;
+    status?: string;
+    lifecycleStatus?: string;
+    isExpired?: boolean;
+    isDeleted?: boolean;
+    isSuperseded?: boolean;
+    isQuarantined?: boolean;
+    isArchived?: boolean;
+    isOutdated?: boolean;
+    isContradicted?: boolean;
+    hasActiveContradiction?: boolean;
+    isTopicIsolated?: boolean;
+    evidence?: Array<{
+      evidenceId?: string;
+      turnOrSessionId?: string;
+      timestamp?: number;
+      valueHash?: string;
+      source?: string;
+      authority?: string;
+      isExplicit?: boolean;
+    }>;
   }): {
     canPromote: boolean;
     targetStatus: UserModelAttributeStatus;
     reason: string;
+    validatedIndependentCount: number;
   } {
     const val = candidate.value || candidate.normalizedValue || "";
 
-    // 1. Sensitive check
+    // 1. Sensitive check (Rule 1)
     if (this.isSensitive(candidate.key) || this.isSensitive(val)) {
       return {
         canPromote: false,
         targetStatus: "SUPPRESSED",
         reason: "Sensitive credentials or secrets suppressed from promotion",
+        validatedIndependentCount: 0,
       };
     }
 
-    // 2. Forbidden inferred identity check
+    // 2. Forbidden inferred identity check (Rule 14)
     if (!candidate.isExplicit && this.isForbiddenInferredIdentity(candidate.key)) {
       return {
         canPromote: false,
         targetStatus: "SUPPRESSED",
         reason: "Unsupported inferred identity dimension strictly excluded from promotion",
+        validatedIndependentCount: 0,
       };
     }
 
-    // 3. Strict predictive context boundary check
-    if (candidate.sourceClassification === "PREDICTIVE_CONTEXT") {
+    // 3. Quarantined check (Rule 2)
+    if (
+      candidate.isQuarantined ||
+      candidate.status === "QUARANTINED" ||
+      candidate.lifecycleStatus === "QUARANTINED"
+    ) {
+      return {
+        canPromote: false,
+        targetStatus: "SUPPRESSED",
+        reason: "Quarantined candidate blocked from promotion",
+        validatedIndependentCount: 0,
+      };
+    }
+
+    // 4. Suppressed check (Rule 7)
+    if (
+      candidate.status === "SUPPRESSED" ||
+      candidate.lifecycleStatus === "SUPPRESSED"
+    ) {
+      return {
+        canPromote: false,
+        targetStatus: "SUPPRESSED",
+        reason: "Suppressed candidate cannot be promoted",
+        validatedIndependentCount: 0,
+      };
+    }
+
+    // 5. Expired check (Rule 3)
+    if (
+      candidate.isExpired ||
+      candidate.status === "EXPIRED" ||
+      candidate.lifecycleStatus === "EXPIRED"
+    ) {
+      return {
+        canPromote: false,
+        targetStatus: "CANDIDATE",
+        reason: "Expired candidate cannot be promoted",
+        validatedIndependentCount: 0,
+      };
+    }
+
+    // 6. Superseded check (Rule 4)
+    if (
+      candidate.isSuperseded ||
+      candidate.status === "SUPERSEDED" ||
+      candidate.lifecycleStatus === "SUPERSEDED"
+    ) {
+      return {
+        canPromote: false,
+        targetStatus: "SUPERSEDED",
+        reason: "Superseded candidate cannot be promoted",
+        validatedIndependentCount: 0,
+      };
+    }
+
+    // 7. Deleted check (Rule 5)
+    if (
+      candidate.isDeleted ||
+      candidate.status === "DELETED" ||
+      candidate.lifecycleStatus === "DELETED"
+    ) {
+      return {
+        canPromote: false,
+        targetStatus: "CANDIDATE",
+        reason: "Deleted candidate cannot be promoted",
+        validatedIndependentCount: 0,
+      };
+    }
+
+    // 8. Archived / Outdated check (Rule 6)
+    if (
+      candidate.isArchived ||
+      candidate.isOutdated ||
+      candidate.status === "ARCHIVED" ||
+      candidate.status === "OUTDATED" ||
+      candidate.lifecycleStatus === "ARCHIVED" ||
+      candidate.lifecycleStatus === "OUTDATED"
+    ) {
+      return {
+        canPromote: false,
+        targetStatus: "CANDIDATE",
+        reason: "Archived or outdated candidate cannot be promoted",
+        validatedIndependentCount: 0,
+      };
+    }
+
+    // 9. Topic/Scope Isolation check (Rule 13)
+    if (
+      candidate.isTopicIsolated &&
+      this.isDomainSpecific(candidate.dimension || "DOMAIN_INTEREST", candidate.key)
+    ) {
+      return {
+        canPromote: false,
+        targetStatus: "CANDIDATE",
+        reason: "Domain-specific candidate blocked under topic isolation",
+        validatedIndependentCount: 0,
+      };
+    }
+
+    // 10. Strict Predictive Context Boundary (Rule 15)
+    if (
+      candidate.sourceClassification === "PREDICTIVE_CONTEXT" ||
+      candidate.sourceClassification === ("PREDICTION" as any)
+    ) {
       return {
         canPromote: false,
         targetStatus: "CANDIDATE",
         reason: "Predictive context signals are advisory only and cannot promote attributes",
+        validatedIndependentCount: 0,
       };
     }
 
-    // 4. Explicit user authorization
+    // 11. Active Contradiction check (Rule 12)
+    if (candidate.isContradicted || candidate.hasActiveContradiction) {
+      return {
+        canPromote: false,
+        targetStatus: "CANDIDATE",
+        reason: "Active contradiction prevents candidate promotion",
+        validatedIndependentCount: 0,
+      };
+    }
+
+    // 12. Explicit User Authorization Exception
     if (candidate.isExplicit === true) {
       return {
         canPromote: true,
         targetStatus: "CONFIRMED",
         reason: "Explicit user statement authorizes confirmed status",
+        validatedIndependentCount: 1,
       };
     }
 
-    // 5. Dual threshold check: independentEvidenceCount >= 3 AND confidence >= 0.75
-    if (candidate.independentEvidenceCount >= 3 && candidate.confidence >= 0.75) {
+    // 13. Deterministic Evidence Deduplication and Independent Turns Validation (Rules 10 & 11)
+    let validatedIndependentCount = candidate.independentEvidenceCount ?? 0;
+
+    if (candidate.evidence && candidate.evidence.length > 0) {
+      // Filter out predictive context evidence
+      const validNonPredictive = candidate.evidence.filter((e) => {
+        const src = (e.source || e.authority || "").toUpperCase();
+        return src !== "PREDICTIVE_CONTEXT" && src !== "PREDICTION";
+      });
+
+      if (validNonPredictive.length === 0) {
+        return {
+          canPromote: false,
+          targetStatus: "CANDIDATE",
+          reason: "No valid non-predictive evidence available for promotion",
+          validatedIndependentCount: 0,
+        };
+      }
+
+      const seenTurnKeys = new Set<string>();
+      const seenEvidenceKeys = new Set<string>();
+
+      for (let i = 0; i < validNonPredictive.length; i++) {
+        const e = validNonPredictive[i];
+        const eviKey =
+          e.evidenceId ||
+          (e.valueHash ? `${e.valueHash}_${e.timestamp ?? i}` : `evi_${i}`);
+
+        if (seenEvidenceKeys.has(eviKey)) {
+          continue;
+        }
+        seenEvidenceKeys.add(eviKey);
+
+        const turnKey =
+          e.turnOrSessionId ||
+          (e.timestamp ? `t_${e.timestamp}` : `turn_${i}`);
+
+        seenTurnKeys.add(turnKey);
+      }
+
+      validatedIndependentCount = seenTurnKeys.size;
+    }
+
+    // 14. Dual Threshold Gate: independentEvidenceCount >= 3 AND confidence >= 0.75 (Rules 8 & 9)
+    if (validatedIndependentCount >= 3 && candidate.confidence >= 0.75) {
       return {
         canPromote: true,
         targetStatus: "CONFIRMED",
-        reason: `Candidate met promotion threshold with ${candidate.independentEvidenceCount} independent observations and ${(candidate.confidence * 100).toFixed(0)}% confidence`,
+        reason: `Candidate met promotion threshold with ${validatedIndependentCount} independent observations and ${(candidate.confidence * 100).toFixed(0)}% confidence`,
+        validatedIndependentCount,
       };
     }
 
-    if (candidate.independentEvidenceCount < 3) {
+    if (validatedIndependentCount < 3) {
       return {
         canPromote: false,
         targetStatus: "CANDIDATE",
-        reason: `Insufficient independent evidence count (${candidate.independentEvidenceCount} < 3)`,
+        reason: `Insufficient independent evidence count (${validatedIndependentCount} < 3)`,
+        validatedIndependentCount,
       };
     }
 
@@ -1230,6 +1436,7 @@ export class LongTermUserModelEngine {
       canPromote: false,
       targetStatus: "CANDIDATE",
       reason: `Confidence below threshold (${candidate.confidence.toFixed(2)} < 0.75)`,
+      validatedIndependentCount,
     };
   }
 
