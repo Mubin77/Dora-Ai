@@ -329,7 +329,7 @@ export class PredictiveContextEngine {
       return null;
     }
 
-    // 2. Blocked Plan -> Will be handled by Clarification Prediction
+    // 2. Blocked Plan -> Handled by Clarification Prediction
     if (plan.status === "BLOCKED") {
       return null;
     }
@@ -338,34 +338,49 @@ export class PredictiveContextEngine {
     const steps = plan.steps || [];
     if (steps.length === 0) return null;
 
-    // Find completed step IDs
+    // Build completedStepIds from steps with status COMPLETED
     const completedStepIds = new Set(
       steps.filter((s) => s.status === "COMPLETED").map((s) => s.id)
     );
 
-    // Find next eligible step in DAG
-    let nextStep: PlanStep | null = null;
-    let blockedByDependency = false;
+    // Filter out already COMPLETED steps and active IN_PROGRESS steps
+    // Candidates for NEXT step continuation are unstarted/ready steps (READY or NOT_STARTED)
+    const pendingSteps = steps.filter(
+      (s) => s.status === "READY" || s.status === "NOT_STARTED"
+    );
+    if (pendingSteps.length === 0) {
+      return null;
+    }
 
-    for (const step of steps) {
-      if (step.status === "COMPLETED") continue;
+    // Step Map for checking dependency existence
+    const stepMap = new Map<string, PlanStep>(steps.map((s) => [s.id, s]));
 
-      // Check if step dependencies are all completed
-      const deps = step.dependencies || plan.dependencies?.[step.id] || [];
-      const allDepsMet = deps.every((depId) => completedStepIds.has(depId));
+    // Collect all eligible steps whose dependencies are ALL strictly COMPLETED
+    const eligibleSteps: PlanStep[] = [];
+
+    for (const step of pendingSteps) {
+      // Resolve dependencies from step.dependencies first, then fallback to plan.dependencies[step.id]
+      const deps = step.dependencies ?? (plan.dependencies?.[step.id] ?? []);
+
+      // If dependency list is empty, the step is independently eligible
+      if (deps.length === 0) {
+        eligibleSteps.push(step);
+        continue;
+      }
+
+      // Otherwise ALL dependencies must exist in the plan and be COMPLETED
+      const allDepsMet = deps.every((depId) => {
+        const depStep = stepMap.get(depId);
+        return depStep !== undefined && depStep.status === "COMPLETED" && completedStepIds.has(depId);
+      });
 
       if (allDepsMet) {
-        nextStep = step;
-        break;
-      } else {
-        // Dependencies not met: cannot run next step
-        blockedByDependency = true;
-        break;
+        eligibleSteps.push(step);
       }
     }
 
-    // If next step is blocked by incomplete dependencies, reject continuation
-    if (blockedByDependency || !nextStep) {
+    // If no eligible steps exist, return the suppressed DAG_DEPENDENCY_BLOCKED candidate
+    if (eligibleSteps.length === 0) {
       return {
         id: this.generateCandidateId("ACTIVE_PLAN", "TASK_CONTINUATION", plan.id, currentTime),
         source: "ACTIVE_PLAN",
@@ -382,8 +397,33 @@ export class PredictiveContextEngine {
       };
     }
 
+    // Deterministic selection:
+    // a) lowest order first
+    // b) then READY before NOT_STARTED (and others)
+    // c) then stable step id as final tie-breaker
+    const getStatusPriority = (status: string): number => {
+      if (status === "READY") return 0;
+      if (status === "NOT_STARTED") return 1;
+      if (status === "IN_PROGRESS") return 2;
+      return 3;
+    };
+
+    eligibleSteps.sort((a, b) => {
+      const orderA = a.order ?? 0;
+      const orderB = b.order ?? 0;
+      if (orderA !== orderB) return orderA - orderB;
+
+      const priorityA = getStatusPriority(a.status);
+      const priorityB = getStatusPriority(b.status);
+      if (priorityA !== priorityB) return priorityA - priorityB;
+
+      return a.id.localeCompare(b.id);
+    });
+
+    const nextStep = eligibleSteps[0];
+
     // Calculate score
-    const completedRatio = steps.length > 0 ? completedStepIds.size / steps.length : 0;
+    const completedRatio = completedStepIds.size / steps.length;
     const baseConfidence = 0.85;
     const continuityScore = Math.min(1.0, baseConfidence + completedRatio * 0.1);
 
@@ -644,48 +684,91 @@ export class PredictiveContextEngine {
 
     // A. Language overrides: E.g., Historical = Bangla, Current message requests English
     if (
-      (summary.includes("bangla") || directive.includes("bangla") || summary.includes("বাংলা")) &&
-      (lowerMessage.includes("english") || lowerMessage.includes("in english") || lowerMessage.includes("ingreji"))
+      (summary.includes("bangla") || directive.includes("bangla") || summary.includes("বাংলা") || summary.includes("bengali")) &&
+      (lowerMessage.includes("english") || lowerMessage.includes("in english") || lowerMessage.includes("ingreji") || lowerMessage.includes("write in english") || lowerMessage.includes("answer in english"))
     ) {
       return true;
     }
     if (
       (summary.includes("english") || directive.includes("english")) &&
-      (lowerMessage.includes("bangla") || lowerMessage.includes("বাংলা") || lowerMessage.includes("banglay"))
+      (lowerMessage.includes("bangla") || lowerMessage.includes("বাংলা") || lowerMessage.includes("banglay") || lowerMessage.includes("bengali") || lowerMessage.includes("in bangla"))
     ) {
       return true;
     }
 
-    // B. Response style overrides: E.g., Historical = concise, Current message requests detail / step-by-step
+    // B. Response style / verbosity overrides:
+    // Case 1: Historical = concise/brief, Current = detailed/elaborate/explain
     if (
-      (summary.includes("concise") || summary.includes("brief") || directive.includes("concise")) &&
-      (lowerMessage.includes("explain") || lowerMessage.includes("in detail") || lowerMessage.includes("detailed") || lowerMessage.includes("step by step") || lowerMessage.includes("vistareto"))
+      (summary.includes("concise") || summary.includes("brief") || summary.includes("short") || directive.includes("concise") || directive.includes("brief")) &&
+      (lowerMessage.includes("explain") || lowerMessage.includes("in detail") || lowerMessage.includes("detailed") || lowerMessage.includes("step by step") || lowerMessage.includes("elaborate") || lowerMessage.includes("comprehensive") || lowerMessage.includes("vistareto"))
+    ) {
+      return true;
+    }
+    // Case 2: Historical = detailed/verbose/comprehensive, Current = short/concise/brief
+    if (
+      (summary.includes("detail") || summary.includes("detailed") || summary.includes("verbose") || summary.includes("comprehensive") || directive.includes("detailed") || directive.includes("detail")) &&
+      (lowerMessage.includes("short") || lowerMessage.includes("keep it short") || lowerMessage.includes("brief") || lowerMessage.includes("briefly") || lowerMessage.includes("concise") || lowerMessage.includes("summarize") || lowerMessage.includes("in short") || lowerMessage.includes("quick answer"))
     ) {
       return true;
     }
 
-    // C. Explicit direct negation of candidate content
+    // C. Entity / Brand alternative replacement: "Recommend Lenovo instead", "use X instead", "choose X rather than Y"
+    if (lowerMessage.includes("instead") || lowerMessage.includes("rather than") || lowerMessage.includes("switch to")) {
+      // If user specifies an alternative with "instead", check if candidate represents an entity that is not what the user requested
+      const candidateTokens = summary
+        .split(/[\s,:=()".]+/)
+        .filter((t) => t.length >= 2 && !["the", "user", "has", "confirmed", "preferred", "preference", "and", "for", "with", "item"].includes(t));
+      
+      const insteadMatch = lowerMessage.match(/(?:recommend|use|choose|pick|suggest|prefer|give\s+me)?\s*([a-z0-9_-]+)\s+instead/i);
+      if (insteadMatch && insteadMatch[1]) {
+        const requestedEntity = insteadMatch[1].toLowerCase();
+        if (!summary.includes(requestedEntity) && candidateTokens.length > 0) {
+          return true;
+        }
+      } else if (candidate.source === "USER_MODEL" || candidate.source === "CONFIRMED_MEMORY") {
+        return true;
+      }
+    }
+
+    // D. Explicit direct negation of candidate content
     if (
       lowerMessage.includes("not ") ||
       lowerMessage.includes("without ") ||
       lowerMessage.includes("instead of ") ||
       lowerMessage.includes("no ") ||
-      lowerMessage.includes("exclude ")
+      lowerMessage.includes("exclude ") ||
+      lowerMessage.includes("avoid ") ||
+      lowerMessage.includes("don't ") ||
+      lowerMessage.includes("dont ") ||
+      lowerMessage.includes("do not ") ||
+      lowerMessage.includes("never ")
     ) {
-      const tokens = summary.split(/[\s,:=]+/).filter((t) => t.length > 3);
+      const tokens = summary.split(/[\s,:=()".]+/).filter((t) => t.length >= 2);
       for (const token of tokens) {
+        if (["user", "has", "the", "confirmed", "preferred", "preference", "item", "and"].includes(token)) continue;
         if (
           lowerMessage.includes(`not ${token}`) ||
           lowerMessage.includes(`without ${token}`) ||
           lowerMessage.includes(`no ${token}`) ||
-          lowerMessage.includes(`instead of ${token}`)
+          lowerMessage.includes(`avoid ${token}`) ||
+          lowerMessage.includes(`exclude ${token}`) ||
+          lowerMessage.includes(`instead of ${token}`) ||
+          lowerMessage.includes(`don't use ${token}`) ||
+          lowerMessage.includes(`dont use ${token}`) ||
+          lowerMessage.includes(`don't recommend ${token}`) ||
+          lowerMessage.includes(`dont recommend ${token}`) ||
+          lowerMessage.includes(`do not recommend ${token}`) ||
+          lowerMessage.includes(`do not use ${token}`) ||
+          lowerMessage.includes(`don't ${token}`) ||
+          lowerMessage.includes(`dont ${token}`) ||
+          lowerMessage.includes(`never ${token}`)
         ) {
           return true;
         }
       }
     }
 
-    // D. Explicit correction intent in current turn
+    // E. Explicit correction intent in current turn
     if (input.intent?.primaryIntent === "CORRECTION" || input.intent?.relationship === "CORRECTION") {
       // If current turn is a correction that contradicts historical preference
       if (candidate.source === "USER_MODEL" || candidate.source === "CONFIRMED_MEMORY") {
@@ -807,18 +890,33 @@ export class PredictiveContextEngine {
     if (!text) return false;
     const lower = text.toLowerCase();
 
-    // Passwords, tokens, API keys, private credentials
+    // Passwords, tokens, API keys, private credentials, financial details
     if (
       lower.includes("password") ||
+      lower.includes("passwd") ||
       lower.includes("bearer ") ||
       lower.includes("api_key") ||
+      lower.includes("api key") ||
       lower.includes("secret_key") ||
+      lower.includes("secret key") ||
       lower.includes("private_key") ||
+      lower.includes("private key") ||
       lower.includes("client_secret") ||
       lower.includes("auth_token") ||
+      lower.includes("access_token") ||
       lower.includes("accesstoken") ||
       lower.includes("cvv") ||
-      lower.includes("credit_card")
+      lower.includes("cvc") ||
+      lower.includes("credit_card") ||
+      lower.includes("credit card") ||
+      lower.includes("debit_card") ||
+      lower.includes("debit card") ||
+      lower.includes("bank_account") ||
+      lower.includes("bank account") ||
+      lower.includes("routing_number") ||
+      lower.includes("routing number") ||
+      lower.includes("account_number") ||
+      lower.includes("account number")
     ) {
       return true;
     }
@@ -826,7 +924,8 @@ export class PredictiveContextEngine {
     // RegEx patterns for credentials, credit cards, SSNs, and private tokens
     const sensitiveRegexes = [
       /\b(?:password|passwd|pwd)\s*[:=]\s*\S+/i,
-      /\b(?:sk_live|sk_test|pk_live|pk_test|ghp_|glpat-|xox[baprs]-)\w+/i,
+      /\b(?:sk_live|sk_test|pk_live|pk_test|ghp_|glpat-|xox[baprs]-|sk-[a-zA-Z0-9_-]+)\w*/i,
+      /\bapi\s*key\s*[:=]\s*\S+/i,
       /\b(?:\d{4}[-\s]?){3}\d{4}\b/, // Credit Card Number
       /\b\d{3}-\d{2}-\d{4}\b/,       // SSN
     ];

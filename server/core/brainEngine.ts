@@ -82,6 +82,8 @@ import { longTermUserModelEngine } from "./longTermUserModelEngine";
 import { UserModelAnalysis } from "./longTermUserModelTypes";
 import { temporalMemoryEngine } from "./temporalMemoryEngine";
 import { TemporalMemoryAnalysis } from "./temporalMemoryTypes";
+import { goalProjectEngine } from "./goalProjectEngine";
+import { GoalProjectAnalysis } from "./goalProjectTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -97,6 +99,7 @@ export * from "./memoryGovernanceTypes";
 export * from "./adaptiveLearningTypes";
 export * from "./longTermUserModelTypes";
 export * from "./temporalMemoryTypes";
+export * from "./goalProjectTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./memoryStore";
@@ -111,6 +114,7 @@ export { memoryGovernanceEngine } from "./memoryGovernanceEngine";
 export { adaptiveLearningEngine } from "./adaptiveLearningEngine";
 export { longTermUserModelEngine } from "./longTermUserModelEngine";
 export { temporalMemoryEngine } from "./temporalMemoryEngine";
+export { goalProjectEngine } from "./goalProjectEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { memoryStore } from "./memoryStore";
@@ -143,6 +147,7 @@ export interface BrainAnalysis {
   adaptiveLearningAnalysis?: LearningAnalysis;
   longTermUserModelAnalysis?: UserModelAnalysis;
   temporalMemoryAnalysis?: TemporalMemoryAnalysis;
+  goalProjectAnalysis?: GoalProjectAnalysis;
   predictiveContextAnalysis?: PredictiveContextAnalysis;
   responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
   activeTaskPlan?: TaskPlan;
@@ -495,6 +500,36 @@ export class BrainEngine {
       }
     }
 
+    // Step 10 / Phase 2: Goal, Project & Commitment Memory Engine (Deterministic, Bounded, Non-LLM)
+    // Downstream of LongTermUserModelEngine & TemporalMemoryEngine — safely maintains validated goals, projects, commitments, blockers, & state
+    const goalProjectAnalysis = goalProjectEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      governanceAnalysis: memoryGovernanceAnalysis,
+      adaptiveLearning: adaptiveLearningAnalysis,
+      longTermUserModel: longTermUserModelAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        isTopicIsolated: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
+    // Add safe goal & project directives to promptDirectives
+    for (const d of goalProjectAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Step 11 / Phase 2: Predictive Context & Proactive Memory Orchestration Engine
     // Downstream of AdaptiveLearningEngine, UserModelEngine & TemporalMemoryEngine — safely prepares context for active plans & confirmed preferences
     const predictiveContextAnalysis = predictiveContextEngine.evaluate({
@@ -564,6 +599,7 @@ export class BrainEngine {
       adaptiveLearningAnalysis,
       longTermUserModelAnalysis,
       temporalMemoryAnalysis,
+      goalProjectAnalysis,
       predictiveContextAnalysis,
       responseAdaptationAnalysis,
       activeTaskPlan: planningAnalysis.plan,

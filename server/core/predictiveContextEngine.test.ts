@@ -1535,8 +1535,757 @@ export function runTests() {
     console.log("  ✓ BrainEngine cognitive pipeline seamlessly incorporates PredictiveContextEngine");
   }
 
+  // =============================================================
+  // TARGETED REGRESSION AUDIT SUITE (TEST A — TEST M)
+  // =============================================================
+  console.log("\n==========================================");
+  console.log("RUNNING TARGETED REGRESSION SUITE (TEST A - TEST M)");
   console.log("==========================================");
-  console.log("ALL 35 PREDICTIVE CONTEXT TESTS PASSED!");
+
+  // -------------------------------------------------------------
+  // TEST A — Independent DAG branch must remain eligible
+  // -------------------------------------------------------------
+  console.log("TEST A — Independent DAG branch must remain eligible:");
+  {
+    const ctx = createDummyContext("task");
+    const intent = createDummyIntent("PLANNING");
+    const plan: TaskPlan = {
+      id: "plan_parallel_branch",
+      objective: "Data processing pipeline",
+      goal: "Process inputs and generate report",
+      status: "IN_PROGRESS",
+      priority: "NORMAL",
+      complexity: "MEDIUM",
+      steps: [
+        {
+          id: "step_A",
+          title: "Step A - Fetch Remote Data",
+          description: "Fetch data",
+          order: 1,
+          status: "IN_PROGRESS",
+          dependencies: [],
+          requiredInputs: [],
+          expectedOutput: "Data",
+          canRunInParallel: true,
+          completionCriteria: "Fetched",
+        },
+        {
+          id: "step_B",
+          title: "Step B - Parse Remote Data",
+          description: "Parse data",
+          order: 2,
+          status: "NOT_STARTED",
+          dependencies: ["step_A"],
+          requiredInputs: [],
+          expectedOutput: "Parsed",
+          canRunInParallel: false,
+          completionCriteria: "Parsed",
+        },
+        {
+          id: "step_C",
+          title: "Step C - Independent Local Cache Prep",
+          description: "Prep cache",
+          order: 3,
+          status: "READY",
+          dependencies: [], // INDEPENDENT!
+          requiredInputs: [],
+          expectedOutput: "Cache ready",
+          canRunInParallel: true,
+          completionCriteria: "Ready",
+        },
+      ],
+      dependencies: {
+        step_A: [],
+        step_B: ["step_A"],
+        step_C: [],
+      },
+      requiredInputs: [],
+      availableInputs: [],
+      missingInputs: [],
+      toolRequirements: [],
+      executionStrategy: "PARALLEL_BATCH",
+      completionCriteria: [],
+      failureStrategy: "REQUEST_CLARIFICATION",
+      createdAt: 1000,
+      updatedAt: 1000,
+      sourceIntent: "PLANNING",
+      sourceReasoning: "PLANNING",
+      isCancellable: true,
+      activeStepId: "step_A",
+    };
+
+    const result = predictiveContextEngine.evaluate({
+      message: "What is next in our pipeline?",
+      context: ctx,
+      intent,
+      planning: { requiresPlanning: true, plan, directives: [] },
+      options: { currentTime: 2000 },
+    });
+
+    assert(result.predictions.includes("TASK_CONTINUATION"), "Predicts continuation for independent branch");
+    assert(!result.suppressionReasons.includes("DAG_DEPENDENCY_BLOCKED"), "Plan is NOT suppressed as DAG_DEPENDENCY_BLOCKED");
+    const candidate = result.acceptedCandidates.find((c) => c.predictionType === "TASK_CONTINUATION");
+    assert(Boolean(candidate), "Task continuation candidate accepted");
+    assert(candidate!.targetStepId === "step_C", "Identifies independent step_C as the next eligible candidate (not blocked step_B)");
+    assert(result.directives.some((d) => d.includes("Step C - Independent Local Cache Prep")), "Directive targets step C");
+    console.log("  ✓ Independent DAG branch remains eligible when another branch is in progress");
+  }
+
+  // -------------------------------------------------------------
+  // TEST B — Sequential dependency remains blocked
+  // -------------------------------------------------------------
+  console.log("TEST B — Sequential dependency remains blocked:");
+  {
+    const ctx = createDummyContext("task");
+    const intent = createDummyIntent("PLANNING");
+    const plan: TaskPlan = {
+      id: "plan_seq_blocked",
+      objective: "Sequential workflow",
+      goal: "Execute step 1 then step 2",
+      status: "IN_PROGRESS",
+      priority: "NORMAL",
+      complexity: "LOW",
+      steps: [
+        {
+          id: "step_A",
+          title: "Step A",
+          description: "Step A",
+          order: 1,
+          status: "IN_PROGRESS",
+          dependencies: [],
+          requiredInputs: [],
+          expectedOutput: "Done",
+          canRunInParallel: false,
+          completionCriteria: "Done",
+        },
+        {
+          id: "step_B",
+          title: "Step B",
+          description: "Step B",
+          order: 2,
+          status: "NOT_STARTED",
+          dependencies: ["step_A"],
+          requiredInputs: [],
+          expectedOutput: "Done",
+          canRunInParallel: false,
+          completionCriteria: "Done",
+        },
+      ],
+      dependencies: { step_A: [], step_B: ["step_A"] },
+      requiredInputs: [],
+      availableInputs: [],
+      missingInputs: [],
+      toolRequirements: [],
+      executionStrategy: "SEQUENTIAL",
+      completionCriteria: [],
+      failureStrategy: "REQUEST_CLARIFICATION",
+      createdAt: 1000,
+      updatedAt: 1000,
+      sourceIntent: "PLANNING",
+      sourceReasoning: "PLANNING",
+      isCancellable: true,
+      activeStepId: "step_A",
+    };
+
+    const result = predictiveContextEngine.evaluate({
+      message: "What is next?",
+      context: ctx,
+      intent,
+      planning: { requiresPlanning: true, plan, directives: [] },
+      options: { currentTime: 2000 },
+    });
+
+    const acceptedTask = result.acceptedCandidates.find((c) => c.predictionType === "TASK_CONTINUATION");
+    assert(!acceptedTask, "Step B is NOT accepted because step A is still IN_PROGRESS");
+    const rejectedTask = result.rejectedCandidates.find((c) => c.suppressionReason === "DAG_DEPENDENCY_BLOCKED");
+    assert(Boolean(rejectedTask), "Candidate suppressed with DAG_DEPENDENCY_BLOCKED");
+    console.log("  ✓ Sequential dependency strictly blocks until upstream step completes");
+  }
+
+  // -------------------------------------------------------------
+  // TEST C — Dependency becomes eligible after completion
+  // -------------------------------------------------------------
+  console.log("TEST C — Dependency becomes eligible after completion:");
+  {
+    const ctx = createDummyContext("task");
+    const intent = createDummyIntent("PLANNING");
+    const plan: TaskPlan = {
+      id: "plan_seq_resolved",
+      objective: "Sequential workflow resolved",
+      goal: "Execute step 1 then step 2",
+      status: "IN_PROGRESS",
+      priority: "NORMAL",
+      complexity: "LOW",
+      steps: [
+        {
+          id: "step_A",
+          title: "Step A",
+          description: "Step A",
+          order: 1,
+          status: "COMPLETED", // COMPLETED!
+          dependencies: [],
+          requiredInputs: [],
+          expectedOutput: "Done",
+          canRunInParallel: false,
+          completionCriteria: "Done",
+        },
+        {
+          id: "step_B",
+          title: "Step B",
+          description: "Step B",
+          order: 2,
+          status: "READY",
+          dependencies: ["step_A"],
+          requiredInputs: [],
+          expectedOutput: "Done",
+          canRunInParallel: false,
+          completionCriteria: "Done",
+        },
+      ],
+      dependencies: { step_A: [], step_B: ["step_A"] },
+      requiredInputs: [],
+      availableInputs: [],
+      missingInputs: [],
+      toolRequirements: [],
+      executionStrategy: "SEQUENTIAL",
+      completionCriteria: [],
+      failureStrategy: "REQUEST_CLARIFICATION",
+      createdAt: 1000,
+      updatedAt: 1000,
+      sourceIntent: "PLANNING",
+      sourceReasoning: "PLANNING",
+      isCancellable: true,
+      activeStepId: "step_B",
+    };
+
+    const result = predictiveContextEngine.evaluate({
+      message: "What is next?",
+      context: ctx,
+      intent,
+      planning: { requiresPlanning: true, plan, directives: [] },
+      options: { currentTime: 2000 },
+    });
+
+    const acceptedTask = result.acceptedCandidates.find((c) => c.predictionType === "TASK_CONTINUATION");
+    assert(Boolean(acceptedTask), "Step B is accepted because step A is COMPLETED");
+    assert(acceptedTask!.targetStepId === "step_B", "targetStepId is step_B");
+    console.log("  ✓ Dependent step becomes eligible once upstream dependency is COMPLETED");
+  }
+
+  // -------------------------------------------------------------
+  // TEST D — Unknown dependency is blocked
+  // -------------------------------------------------------------
+  console.log("TEST D — Unknown dependency is blocked:");
+  {
+    const ctx = createDummyContext("task");
+    const intent = createDummyIntent("PLANNING");
+    const plan: TaskPlan = {
+      id: "plan_unknown_dep",
+      objective: "Unknown dep test",
+      goal: "Test missing dependencies",
+      status: "IN_PROGRESS",
+      priority: "NORMAL",
+      complexity: "LOW",
+      steps: [
+        {
+          id: "step_B",
+          title: "Step B",
+          description: "Step B",
+          order: 1,
+          status: "READY",
+          dependencies: ["NON_EXISTENT_STEP"],
+          requiredInputs: [],
+          expectedOutput: "Done",
+          canRunInParallel: false,
+          completionCriteria: "Done",
+        },
+      ],
+      dependencies: { step_B: ["NON_EXISTENT_STEP"] },
+      requiredInputs: [],
+      availableInputs: [],
+      missingInputs: [],
+      toolRequirements: [],
+      executionStrategy: "SEQUENTIAL",
+      completionCriteria: [],
+      failureStrategy: "REQUEST_CLARIFICATION",
+      createdAt: 1000,
+      updatedAt: 1000,
+      sourceIntent: "PLANNING",
+      sourceReasoning: "DIRECT_ANSWER",
+      isCancellable: true,
+      activeStepId: "step_B",
+    };
+
+    const result = predictiveContextEngine.evaluate({
+      message: "Proceed with step",
+      context: ctx,
+      intent,
+      planning: { requiresPlanning: true, plan, directives: [] },
+      options: { currentTime: 2000 },
+    });
+
+    const acceptedTask = result.acceptedCandidates.find((c) => c.predictionType === "TASK_CONTINUATION");
+    assert(!acceptedTask, "Step with non-existent dependency is NOT accepted");
+    const rejectedTask = result.rejectedCandidates.find((c) => c.suppressionReason === "DAG_DEPENDENCY_BLOCKED");
+    assert(Boolean(rejectedTask), "Candidate suppressed with DAG_DEPENDENCY_BLOCKED");
+    console.log("  ✓ Unknown dependency ID strictly blocks step execution");
+  }
+
+  // -------------------------------------------------------------
+  // TEST E — Deterministic ordering across eligible candidates
+  // -------------------------------------------------------------
+  console.log("TEST E — Deterministic ordering across eligible candidates:");
+  {
+    const ctx = createDummyContext("task");
+    const intent = createDummyIntent("PLANNING");
+    const plan: TaskPlan = {
+      id: "plan_ordering",
+      objective: "Ordering evaluation",
+      goal: "Verify order -> status -> id priority",
+      status: "IN_PROGRESS",
+      priority: "NORMAL",
+      complexity: "HIGH",
+      steps: [
+        {
+          id: "step_z",
+          title: "Step Z (order 2, READY)",
+          description: "Z",
+          order: 2,
+          status: "READY",
+          dependencies: [],
+          requiredInputs: [],
+          expectedOutput: "Z",
+          canRunInParallel: true,
+          completionCriteria: "Z",
+        },
+        {
+          id: "step_b",
+          title: "Step B (order 1, NOT_STARTED)",
+          description: "B",
+          order: 1,
+          status: "NOT_STARTED",
+          dependencies: [],
+          requiredInputs: [],
+          expectedOutput: "B",
+          canRunInParallel: true,
+          completionCriteria: "B",
+        },
+        {
+          id: "step_c",
+          title: "Step C (order 1, READY)",
+          description: "C",
+          order: 1,
+          status: "READY",
+          dependencies: [],
+          requiredInputs: [],
+          expectedOutput: "C",
+          canRunInParallel: true,
+          completionCriteria: "C",
+        },
+        {
+          id: "step_a",
+          title: "Step A (order 1, READY)",
+          description: "A",
+          order: 1,
+          status: "READY",
+          dependencies: [],
+          requiredInputs: [],
+          expectedOutput: "A",
+          canRunInParallel: true,
+          completionCriteria: "A",
+        },
+      ],
+      dependencies: { step_z: [], step_b: [], step_c: [], step_a: [] },
+      requiredInputs: [],
+      availableInputs: [],
+      missingInputs: [],
+      toolRequirements: [],
+      executionStrategy: "PARALLEL_BATCH",
+      completionCriteria: [],
+      failureStrategy: "REQUEST_CLARIFICATION",
+      createdAt: 1000,
+      updatedAt: 1000,
+      sourceIntent: "PLANNING",
+      sourceReasoning: "DIRECT_ANSWER",
+      isCancellable: true,
+      activeStepId: "step_a",
+    };
+
+    const input: PredictiveContextInput = {
+      message: "Next step",
+      context: ctx,
+      intent,
+      planning: { requiresPlanning: true, plan, directives: [] },
+      options: { currentTime: 2000 },
+    };
+
+    const res1 = predictiveContextEngine.evaluate(input);
+    const res2 = predictiveContextEngine.evaluate(input);
+
+    const task1 = res1.acceptedCandidates.find((c) => c.predictionType === "TASK_CONTINUATION");
+    const task2 = res2.acceptedCandidates.find((c) => c.predictionType === "TASK_CONTINUATION");
+
+    assert(Boolean(task1) && Boolean(task2), "Task continuation found in both runs");
+    // Priority: Order 1 over 2, READY over NOT_STARTED, and "step_a" over "step_c" via tie-breaker
+    assert(task1!.targetStepId === "step_a", "step_a chosen via deterministic order -> status -> id rules");
+    assert(task2!.targetStepId === "step_a", "Repeated evaluation chooses identical targetStepId");
+    console.log("  ✓ Deterministic ordering accurately selects lowest order, READY over NOT_STARTED, and alphabetical ID tie-breaker");
+  }
+
+  // -------------------------------------------------------------
+  // TEST F — Current-turn entity override
+  // -------------------------------------------------------------
+  console.log("TEST F — Current-turn entity override:");
+  {
+    const ctx = createDummyContext("laptop");
+    const intent = createDummyIntent("RECOMMENDATION");
+    const pattern: LearningPattern = {
+      id: "pat_brand_asus",
+      userId: "user_test",
+      patternType: "USER_PREFERENCE",
+      category: "laptop",
+      key: "preferred_brand",
+      value: "ASUS ROG series",
+      status: "CONFIRMED",
+      confidence: 0.9,
+      reinforcementCount: 3,
+      independentEvidenceCount: 3,
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      evidence: [],
+      source: "EXPLICIT_USER_STATEMENT",
+      isExplicit: true,
+    };
+
+    const input: PredictiveContextInput = {
+      message: "Recommend Lenovo instead.",
+      context: ctx,
+      intent,
+      adaptiveLearning: createDummyLearningAnalysis([pattern]),
+      options: { currentTime: 3000 },
+    };
+
+    const result = predictiveContextEngine.evaluate(input);
+
+    const asusDirective = result.directives.find((d) => d.toLowerCase().includes("asus"));
+    assert(!asusDirective, "ASUS directive must NOT be accepted when current turn specifies 'Recommend Lenovo instead'");
+    assert(pattern.status === "CONFIRMED", "Historical pattern status in storage remains unmutated");
+    assert(pattern.value === "ASUS ROG series", "Historical pattern value in storage remains unmutated");
+    console.log("  ✓ Current-turn entity override suppresses conflicting historical preference without mutating memory");
+  }
+
+  // -------------------------------------------------------------
+  // TEST G — Current-turn language override
+  // -------------------------------------------------------------
+  console.log("TEST G — Current-turn language override:");
+  {
+    const ctx = createDummyContext();
+    const intent = createDummyIntent("INFORMATION");
+    const pattern: LearningPattern = {
+      id: "pat_lang_bn",
+      userId: "user_test",
+      patternType: "INTERACTION_STYLE",
+      category: "general",
+      key: "response_language",
+      value: "Bangla",
+      status: "CONFIRMED",
+      confidence: 0.95,
+      reinforcementCount: 5,
+      independentEvidenceCount: 4,
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      evidence: [],
+      source: "EXPLICIT_USER_STATEMENT",
+      isExplicit: true,
+    };
+
+    const input: PredictiveContextInput = {
+      message: "Answer in English.",
+      context: ctx,
+      intent,
+      adaptiveLearning: createDummyLearningAnalysis([pattern]),
+      options: { currentTime: 3000 },
+    };
+
+    const result = predictiveContextEngine.evaluate(input);
+
+    const banglaDirective = result.directives.find((d) => d.toLowerCase().includes("bangla") || d.includes("বাংলা"));
+    assert(!banglaDirective, "Bangla directive suppressed when user requests 'Answer in English.'");
+    assert(pattern.value === "Bangla", "Historical pattern value remains unmutated");
+    console.log("  ✓ Current-turn language override suppresses conflicting historical language preference");
+  }
+
+  // -------------------------------------------------------------
+  // TEST H — Current-turn verbosity override
+  // -------------------------------------------------------------
+  console.log("TEST H — Current-turn verbosity override:");
+  {
+    const ctx = createDummyContext();
+    const intent = createDummyIntent("INFORMATION");
+    const pattern: LearningPattern = {
+      id: "pat_style_detailed",
+      userId: "user_test",
+      patternType: "INTERACTION_STYLE",
+      category: "general",
+      key: "response_verbosity",
+      value: "Detailed and comprehensive",
+      status: "CONFIRMED",
+      confidence: 0.88,
+      reinforcementCount: 3,
+      independentEvidenceCount: 2,
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      evidence: [],
+      source: "EXPLICIT_USER_STATEMENT",
+      isExplicit: true,
+    };
+
+    const input: PredictiveContextInput = {
+      message: "Keep it short.",
+      context: ctx,
+      intent,
+      adaptiveLearning: createDummyLearningAnalysis([pattern]),
+      options: { currentTime: 3000 },
+    };
+
+    const result = predictiveContextEngine.evaluate(input);
+
+    const detailedDirective = result.directives.find((d) => d.toLowerCase().includes("detailed"));
+    assert(!detailedDirective, "Detailed preference directive suppressed when user asks 'Keep it short.'");
+    console.log("  ✓ Current-turn verbosity override suppresses conflicting historical verbosity preference");
+  }
+
+  // -------------------------------------------------------------
+  // TEST I — Explicit negation
+  // -------------------------------------------------------------
+  console.log("TEST I — Explicit negation:");
+  {
+    const ctx = createDummyContext("laptop");
+    const intent = createDummyIntent("RECOMMENDATION");
+    const pattern: LearningPattern = {
+      id: "pat_brand_asus",
+      userId: "user_test",
+      patternType: "USER_PREFERENCE",
+      category: "laptop",
+      key: "preferred_brand",
+      value: "ASUS",
+      status: "CONFIRMED",
+      confidence: 0.9,
+      reinforcementCount: 3,
+      independentEvidenceCount: 3,
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      evidence: [],
+      source: "EXPLICIT_USER_STATEMENT",
+      isExplicit: true,
+    };
+
+    const input: PredictiveContextInput = {
+      message: "Don't recommend ASUS.",
+      context: ctx,
+      intent,
+      adaptiveLearning: createDummyLearningAnalysis([pattern]),
+      options: { currentTime: 3000 },
+    };
+
+    const result = predictiveContextEngine.evaluate(input);
+
+    const asusDirective = result.directives.find((d) => d.toLowerCase().includes("asus"));
+    assert(!asusDirective, "ASUS directive rejected/suppressed due to explicit negation");
+    assert(result.rejectedCandidates.some((c) => c.suppressionReason === "CURRENT_TURN_OVERRIDE"), "Suppressed as CURRENT_TURN_OVERRIDE");
+    console.log("  ✓ Explicit negation ('Don't recommend ASUS') cleanly suppresses conflicting preference");
+  }
+
+  // -------------------------------------------------------------
+  // TEST J — Topic isolation
+  // -------------------------------------------------------------
+  console.log("TEST J — Topic isolation:");
+  {
+    const ctx = createDummyContext("weather"); // Current topic is WEATHER!
+    const intent = createDummyIntent("INFORMATION");
+    const laptopPattern: LearningPattern = {
+      id: "pat_laptop_asus",
+      userId: "user_test",
+      patternType: "USER_PREFERENCE",
+      category: "laptop", // LAPTOP DOMAIN!
+      key: "preferred_brand",
+      value: "ASUS ROG",
+      status: "CONFIRMED",
+      confidence: 0.92,
+      reinforcementCount: 4,
+      independentEvidenceCount: 3,
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      evidence: [],
+      source: "EXPLICIT_USER_STATEMENT",
+      isExplicit: true,
+    };
+
+    const input: PredictiveContextInput = {
+      message: "What is the weather in Dhaka today?",
+      context: ctx,
+      intent,
+      adaptiveLearning: createDummyLearningAnalysis([laptopPattern]),
+      options: { currentTime: 3000 },
+    };
+
+    const result = predictiveContextEngine.evaluate(input);
+
+    const laptopDirective = result.directives.find((d) => d.toLowerCase().includes("asus") || d.toLowerCase().includes("laptop"));
+    assert(!laptopDirective, "Laptop preference does NOT leak into weather query");
+    assert(result.rejectedCandidates.some((c) => c.suppressionReason === "TOPIC_MISMATCH"), "Suppressed under TOPIC_MISMATCH");
+    console.log("  ✓ Topic isolation prevents domain-specific preferences from leaking into unrelated domains");
+  }
+
+  // -------------------------------------------------------------
+  // TEST K — Candidate cannot become authoritative
+  // -------------------------------------------------------------
+  console.log("TEST K — Candidate cannot become authoritative:");
+  {
+    const ctx = createDummyContext();
+    const intent = createDummyIntent("INFORMATION");
+    const candidatePattern: LearningPattern = {
+      id: "pat_unconfirmed_val",
+      userId: "user_test",
+      patternType: "USER_PREFERENCE",
+      category: "general",
+      key: "unconfirmed_pref",
+      value: "Hypothetical preference",
+      status: "CANDIDATE", // NOT CONFIRMED!
+      confidence: 0.65,
+      reinforcementCount: 1,
+      independentEvidenceCount: 1,
+      firstObservedAt: 1000,
+      lastObservedAt: 1000,
+      evidence: [],
+      source: "DOMAIN_QUERY",
+    };
+
+    const input: PredictiveContextInput = {
+      message: "Help me with something",
+      context: ctx,
+      intent,
+      adaptiveLearning: createDummyLearningAnalysis([candidatePattern]),
+      options: { currentTime: 3000 },
+    };
+
+    const result = predictiveContextEngine.evaluate(input);
+
+    assert(result.directives.length === 0, "No authoritative directives generated from CANDIDATE status pattern");
+    const accepted = result.acceptedCandidates.find((c) => c.reasonCategory === "CONFIRMED_USER_PREFERENCE");
+    assert(!accepted, "Candidate status pattern is NOT accepted as authoritative");
+    console.log("  ✓ CANDIDATE patterns strictly prohibited from creating authoritative prompt directives");
+  }
+
+  // -------------------------------------------------------------
+  // TEST L — Sensitive data suppression
+  // -------------------------------------------------------------
+  console.log("TEST L — Sensitive data suppression:");
+  {
+    const ctx = createDummyContext();
+    const intent = createDummyIntent();
+
+    // 1. Sensitive user message
+    const msgResult = predictiveContextEngine.evaluate({
+      message: "My API key is sk-live-998877665544332211, please save it",
+      context: ctx,
+      intent,
+      options: { currentTime: 1000 },
+    });
+
+    assert(msgResult.analysisStatus === "SUPPRESSED", "Sensitive message evaluation suppressed");
+    assert(msgResult.suppressionReasons.includes("SENSITIVE_DATA"), "Suppression reason is SENSITIVE_DATA");
+    assert(msgResult.acceptedCandidates.length === 0, "Zero accepted candidates on sensitive data");
+    assert(msgResult.directives.length === 0, "Zero directives on sensitive data");
+
+    // 2. Sensitive candidate injected via adaptive learning
+    const sensitivePattern: LearningPattern = {
+      id: "pat_sensitive_pwd",
+      userId: "user_test",
+      patternType: "USER_PREFERENCE",
+      category: "general",
+      key: "user_password",
+      value: "password: secretPassword123!",
+      status: "CONFIRMED",
+      confidence: 0.9,
+      reinforcementCount: 2,
+      independentEvidenceCount: 2,
+      firstObservedAt: 1000,
+      lastObservedAt: 1000,
+      evidence: [],
+      source: "EXPLICIT_USER_STATEMENT",
+    };
+
+    const candResult = predictiveContextEngine.evaluate({
+      message: "Check my preferences",
+      context: ctx,
+      intent,
+      adaptiveLearning: createDummyLearningAnalysis([sensitivePattern]),
+      options: { currentTime: 1000 },
+    });
+
+    assert(candResult.directives.length === 0, "Sensitive value never appears in directives");
+    assert(candResult.acceptedCandidates.length === 0, "Sensitive candidate never accepted");
+    
+    // Inspect all returned text fields for any sensitive leakage
+    for (const d of candResult.directives) {
+      assert(!d.includes("secretPassword123"), "Directive contains no sensitive leakage");
+    }
+    for (const c of candResult.acceptedCandidates) {
+      assert(!c.contextSummary.includes("secretPassword123"), "Accepted summary contains no sensitive leakage");
+      assert(!c.directive?.includes("secretPassword123"), "Accepted directive contains no sensitive leakage");
+    }
+    console.log("  ✓ Sensitive credentials, passwords, and API keys strictly suppressed with zero leakage");
+  }
+
+  // -------------------------------------------------------------
+  // TEST M — Determinism & Idempotency
+  // -------------------------------------------------------------
+  console.log("TEST M — Determinism & Idempotency:");
+  {
+    const ctx = createDummyContext("laptop");
+    const intent = createDummyIntent("RECOMMENDATION");
+    const pattern: LearningPattern = {
+      id: "pat_gpu_rtx",
+      userId: "user_test",
+      patternType: "USER_PREFERENCE",
+      category: "laptop",
+      key: "preferred_gpu",
+      value: "RTX 4060",
+      status: "CONFIRMED",
+      confidence: 0.91,
+      reinforcementCount: 4,
+      independentEvidenceCount: 3,
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      evidence: [],
+      source: "EXPLICIT_USER_STATEMENT",
+      isExplicit: true,
+    };
+
+    const input: PredictiveContextInput = {
+      message: "Suggest a good gaming setup",
+      context: ctx,
+      intent,
+      adaptiveLearning: createDummyLearningAnalysis([pattern]),
+      options: { currentTime: 1234567 },
+    };
+
+    const res1 = predictiveContextEngine.evaluate(input);
+    const res2 = predictiveContextEngine.evaluate(input);
+
+    assert(res1.confidence === res2.confidence, "Confidence matches exactly across runs");
+    assert(res1.analysisStatus === res2.analysisStatus, "Analysis status matches exactly");
+    assert(JSON.stringify(res1.predictions) === JSON.stringify(res2.predictions), "Predictions match exactly");
+    assert(JSON.stringify(res1.directives) === JSON.stringify(res2.directives), "Directives match exactly");
+    assert(res1.acceptedCandidates.length === res2.acceptedCandidates.length, "Accepted candidate count matches");
+    assert(res1.rejectedCandidates.length === res2.rejectedCandidates.length, "Rejected candidate count matches");
+    assert(JSON.stringify(res1.suppressionReasons) === JSON.stringify(res2.suppressionReasons), "Suppression reasons match");
+    console.log("  ✓ Repeated evaluate() calls produce identical, deeply equivalent results");
+  }
+
+  console.log("\n==========================================");
+  console.log("ALL 35 BASE + 13 REGRESSION (48 TOTAL) PREDICTIVE CONTEXT TESTS PASSED!");
   console.log("==========================================");
 }
 

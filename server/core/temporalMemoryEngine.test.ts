@@ -1139,6 +1139,437 @@ runTest("TM-40: Idempotent repeated analysis produces identical results", () => 
 });
 
 // ---------------------------------------------------------------------------
+// TARGETED INVARIANT TESTS (TI-1 to TI-20)
+// ---------------------------------------------------------------------------
+console.log("\n--- RUNNING TARGETED INVARIANT SUITE (TI-1 to TI-20) ---");
+
+runTest("TI-1: isAuthoritativeTemporalEvidence strictly identifies authoritative sources", () => {
+  assert(temporalMemoryEngine.isAuthoritativeTemporalEvidence("CURRENT_TURN_EXPLICIT") === true, "CURRENT_TURN_EXPLICIT must be authoritative");
+  assert(temporalMemoryEngine.isAuthoritativeTemporalEvidence("EXPLICIT_USER_MEMORY") === true, "EXPLICIT_USER_MEMORY must be authoritative");
+  assert(temporalMemoryEngine.isAuthoritativeTemporalEvidence("VERIFIED_EVIDENCE") === true, "VERIFIED_EVIDENCE must be authoritative");
+  assert(temporalMemoryEngine.isAuthoritativeTemporalEvidence("CONFIRMED_ADAPTIVE_PATTERN") === false, "CONFIRMED_ADAPTIVE_PATTERN is adaptive, not hard verified evidence");
+  assert(temporalMemoryEngine.isAuthoritativeTemporalEvidence("REPEATED_VALIDATED_SIGNAL") === false, "REPEATED_VALIDATED_SIGNAL is signal, not verified evidence");
+  assert(temporalMemoryEngine.isAuthoritativeTemporalEvidence("PREDICTIVE_CONTEXT") === false, "PREDICTIVE_CONTEXT is advisory, never authoritative evidence");
+});
+
+runTest("TI-2: Governance Candidate without explicit/verified source is not classified as VERIFIED_EVIDENCE", () => {
+  const cand = {
+    key: "laptop",
+    value: "Dell XPS",
+    source: "INFERRED_CONTEXT",
+    timestamp: 5000,
+    confidence: 0.7,
+  };
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    governanceAnalysis: makeGovernanceAnalysis([cand]),
+    options: { currentTime: 6000 },
+  });
+  const pat = res.patterns.find((p) => p.attributeKey === "laptop");
+  assert(pat !== undefined, "Pattern must exist");
+  assert(pat.sourceAuthority !== "VERIFIED_EVIDENCE", "Unconfirmed candidate must NOT receive VERIFIED_EVIDENCE authority");
+  assert(pat.sourceAuthority === "REPEATED_VALIDATED_SIGNAL", "Candidate should receive REPEATED_VALIDATED_SIGNAL authority");
+});
+
+runTest("TI-3: Governance Candidate with explicit source receives EXPLICIT_USER_MEMORY", () => {
+  const cand = {
+    key: "laptop",
+    value: "MacBook Pro",
+    source: "EXPLICIT_USER",
+    timestamp: 5000,
+    confidence: 1.0,
+  };
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    governanceAnalysis: makeGovernanceAnalysis([cand]),
+    options: { currentTime: 6000 },
+  });
+  const pat = res.patterns.find((p) => p.attributeKey === "laptop");
+  assert(pat !== undefined, "Pattern must exist");
+  assert(pat.sourceAuthority === "EXPLICIT_USER_MEMORY", "Explicit source must receive EXPLICIT_USER_MEMORY authority");
+});
+
+runTest("TI-4: Governance Candidate with verified tool output receives VERIFIED_EVIDENCE", () => {
+  const cand = {
+    key: "current_city",
+    value: "Dhaka",
+    source: "VERIFIED_TOOL_OUTPUT",
+    sourceClassification: "VERIFIED_EVIDENCE",
+    timestamp: 5000,
+    confidence: 0.95,
+  };
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    governanceAnalysis: makeGovernanceAnalysis([cand]),
+    options: { currentTime: 6000 },
+  });
+  const pat = res.patterns.find((p) => p.attributeKey === "current_city");
+  assert(pat !== undefined, "Pattern must exist");
+  assert(pat.sourceAuthority === "VERIFIED_EVIDENCE", "Verified tool output must receive VERIFIED_EVIDENCE authority");
+});
+
+runTest("TI-5: Same-day multiple observations collapse to a single day period", () => {
+  const baseDay = 1000 * 60 * 60 * 24 * 10;
+  const { observations, distinctPeriods, distinctTurnsCount } = temporalMemoryEngine.extractObservations(
+    [
+      { evidenceId: "e1", turnOrSessionId: "turn_1", timestamp: baseDay + 1000 },
+      { evidenceId: "e2", turnOrSessionId: "turn_2", timestamp: baseDay + 5000 },
+      { evidenceId: "e3", turnOrSessionId: "turn_3", timestamp: baseDay + 10000 },
+    ],
+    "Bangla",
+    "EXPLICIT_USER_MEMORY",
+    baseDay,
+    baseDay + 10000,
+    3
+  );
+  assert(observations.length === 3, "All 3 observations must be recorded");
+  assert(distinctTurnsCount === 3, "Distinct turns count must be 3");
+  assert(distinctPeriods.length === 1, "Same-day observations must collapse to exactly 1 active period");
+});
+
+runTest("TI-6: Multi-day observations generate distinct active periods", () => {
+  const day1 = 1000 * 60 * 60 * 24 * 1;
+  const day2 = 1000 * 60 * 60 * 24 * 2;
+  const day3 = 1000 * 60 * 60 * 24 * 3;
+  const { distinctPeriods } = temporalMemoryEngine.extractObservations(
+    [
+      { evidenceId: "e1", turnOrSessionId: "turn_1", timestamp: day1 },
+      { evidenceId: "e2", turnOrSessionId: "turn_2", timestamp: day2 },
+      { evidenceId: "e3", turnOrSessionId: "turn_3", timestamp: day3 },
+    ],
+    "Bangla",
+    "CONFIRMED_ADAPTIVE_PATTERN",
+    day1,
+    day3,
+    3
+  );
+  assert(distinctPeriods.length === 3, "3 different calendar days must produce 3 distinct periods");
+});
+
+runTest("TI-7: Predictive evidence sources are completely stripped from extractObservations", () => {
+  const { observations, distinctPeriods, distinctTurnsCount } = temporalMemoryEngine.extractObservations(
+    [
+      { evidenceId: "p1", source: "PREDICTIVE_CONTEXT", turnOrSessionId: "pred_1", timestamp: 1000 },
+      { evidenceId: "p2", source: "PREDICTION", turnOrSessionId: "pred_2", timestamp: 2000 },
+    ],
+    "Concise",
+    "PREDICTIVE_CONTEXT",
+    1000,
+    2000,
+    2
+  );
+  assert(observations.length === 0, "Predictive evidence must produce zero temporal observations");
+  assert(distinctTurnsCount === 0, "Distinct turns must be 0 for predictive-only items");
+  assert(distinctPeriods.length === 0, "Distinct periods must be 0 for predictive-only items");
+});
+
+runTest("TI-8: Stability requires at least 2 distinct periods in addition to 3 observations", () => {
+  const baseDay = 1000 * 60 * 60 * 24 * 10;
+  const userModel = makeUserModel({
+    tone: {
+      key: "tone",
+      normalizedValue: "Friendly",
+      value: "Friendly",
+      sourceClassification: "CONFIRMED_ADAPTIVE_PATTERN",
+      confidence: 0.85,
+      evidence: [
+        { evidenceId: "e1", turnOrSessionId: "turn_1", timestamp: baseDay + 100 },
+        { evidenceId: "e2", turnOrSessionId: "turn_2", timestamp: baseDay + 200 },
+        { evidenceId: "e3", turnOrSessionId: "turn_3", timestamp: baseDay + 300 },
+      ],
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: baseDay + 500 },
+  });
+  const tonePat = res.patterns.find((p) => p.attributeKey === "tone");
+  assert(tonePat !== undefined, "Tone pattern must exist");
+  assert(tonePat.independentObservationCount === 3, "Observation count is 3");
+  assert(tonePat.activePeriods.length === 1, "Only 1 active period (same day)");
+  assert(tonePat.isStable === false, "Must not be stable if all observations are within a single day");
+});
+
+runTest("TI-9: Injected currentTime is strictly respected across all computations", () => {
+  const userModel = makeUserModel({
+    laptop: {
+      key: "laptop",
+      normalizedValue: "Lenovo",
+      value: "Lenovo",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "CONFIRMED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      confidence: 1.0,
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: 1000000 },
+  });
+  assert(res.analyzedAt === 1000000, "analyzedAt must match injected currentTime exactly");
+});
+
+runTest("TI-10: Quarantined attributes are completely excluded from analysis", () => {
+  const userModel = makeUserModel({
+    secret_note: {
+      key: "secret_note",
+      normalizedValue: "Confidential",
+      value: "Confidential",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "QUARANTINED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: 3000 },
+  });
+  assert(!res.patterns.some((p) => p.attributeKey === "secret_note"), "QUARANTINED memory must be excluded");
+});
+
+runTest("TI-11: Deleted attributes are completely excluded from analysis", () => {
+  const userModel = makeUserModel({
+    deleted_pref: {
+      key: "old_style",
+      normalizedValue: "Raw",
+      value: "Raw",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "DELETED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: 3000 },
+  });
+  assert(!res.patterns.some((p) => p.attributeKey === "old_style"), "DELETED memory must be excluded");
+});
+
+runTest("TI-12: Expired attributes are classified as historical EXPIRED patterns", () => {
+  const userModel = makeUserModel({
+    temporary_coupon: {
+      key: "coupon",
+      normalizedValue: "SAVE20",
+      value: "SAVE20",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "EXPIRED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: 3000 },
+  });
+  const pat = res.patterns.find((p) => p.attributeKey === "coupon");
+  assert(pat !== undefined, "Pattern must exist");
+  assert(pat.temporalStatus === "EXPIRED", "Status must be EXPIRED");
+  assert(res.historicalPatterns.some((p) => p.attributeKey === "coupon"), "Must be in historicalPatterns");
+  assert(!res.activePatterns.some((p) => p.attributeKey === "coupon"), "Must not be in activePatterns");
+});
+
+runTest("TI-13: Outdated attributes are classified as STALE and placed in historical patterns", () => {
+  const userModel = makeUserModel({
+    old_version: {
+      key: "library_version",
+      normalizedValue: "v1.0",
+      value: "v1.0",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "OUTDATED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: 3000 },
+  });
+  const pat = res.patterns.find((p) => p.attributeKey === "library_version");
+  assert(pat !== undefined, "Pattern must exist");
+  assert(pat.temporalStatus === "STALE", "Status must be STALE");
+  assert(pat.isStale === true, "isStale flag must be true");
+});
+
+runTest("TI-14: Global preferences generate directives even under topic switch", () => {
+  const userModel = makeUserModel({
+    lang: {
+      key: "language",
+      normalizedValue: "Bangla",
+      value: "Bangla",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "CONFIRMED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      confidence: 1.0,
+    },
+    laptop: {
+      key: "laptop",
+      normalizedValue: "Lenovo",
+      value: "Lenovo",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "CONFIRMED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      confidence: 1.0,
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    message: "How is the weather in Sylhet?",
+    longTermUserModel: userModel,
+    options: {
+      currentTime: 3000,
+      isTopicIsolated: true,
+      activeTopic: "weather inquiry",
+    },
+  });
+  assert(res.directives.some((d) => d.includes("Bangla")), "Global language directive must be emitted");
+  assert(!res.directives.some((d) => d.includes("Lenovo")), "Topic-isolated laptop preference must not emit directive");
+  assert(res.diagnostics.topicIsolatedCount >= 1, "topicIsolatedCount must be incremented");
+});
+
+runTest("TI-15: Directives never leak raw UUIDs, floats, or evidence hashes", () => {
+  const userModel = makeUserModel({
+    verb: {
+      key: "verbosity",
+      normalizedValue: "Concise",
+      value: "Concise",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "CONFIRMED",
+      confidence: 0.8872134,
+      id: "raw_model_uuid_998877",
+      evidence: [{ evidenceId: "raw_evidence_hash_aabbcc", timestamp: 1700000000000 }],
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: 1700000050000 },
+  });
+  for (const d of res.directives) {
+    assert(!d.includes("raw_model_uuid"), "No UUID leakage in directives");
+    assert(!d.includes("raw_evidence_hash"), "No hash leakage in directives");
+    assert(!d.includes("0.8872134"), "No raw float leakage in directives");
+    assert(!d.includes("1700000000000"), "No timestamp leakage in directives");
+  }
+});
+
+runTest("TI-16: Contradiction relation is established when higher authority rejects lower authority", () => {
+  const userModel = makeUserModel({
+    laptop: {
+      key: "laptop",
+      normalizedValue: "MacBook Pro",
+      value: "MacBook Pro",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "CONFIRMED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      confidence: 1.0,
+    },
+  });
+  const adaptiveLearning = makeAdaptiveLearning([
+    {
+      key: "laptop",
+      value: "Chromebook",
+      status: "CANDIDATE",
+      confidence: 0.6,
+      firstObservedAt: 3000,
+      lastObservedAt: 4000,
+    },
+  ]);
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    adaptiveLearning,
+    options: { currentTime: 5000 },
+  });
+  const contradictRel = res.relations.find((r) => r.relationType === "CONTRADICTS");
+  assert(contradictRel !== undefined, "CONTRADICTS relation must be created");
+  assert(contradictRel.sourceKey.includes("Chromebook"), "Rejected candidate is source of contradiction");
+  assert(contradictRel.targetKey.includes("MacBook Pro"), "Higher authority target is preserved");
+});
+
+runTest("TI-17: SUPERSEDES and EVOLVED_TO relations established when higher authority replaces older value", () => {
+  const userModel = makeUserModel({
+    editor: {
+      key: "editor",
+      normalizedValue: "Vim",
+      value: "Vim",
+      sourceClassification: "EXPLICIT_USER_MEMORY",
+      status: "CONFIRMED",
+      firstObservedAt: 1000,
+      lastObservedAt: 2000,
+      confidence: 1.0,
+    },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    message: "From now on, switch to Neovim",
+    longTermUserModel: userModel,
+    governanceAnalysis: makeGovernanceAnalysis([
+      {
+        key: "editor",
+        value: "Neovim",
+        source: "EXPLICIT_USER",
+        timestamp: 5000,
+        confidence: 1.0,
+      },
+    ]),
+    options: { currentTime: 6000 },
+  });
+  assert(res.relations.some((r) => r.relationType === "SUPERSEDES"), "SUPERSEDES relation must be recorded");
+  assert(res.relations.some((r) => r.relationType === "EVOLVED_TO"), "EVOLVED_TO relation must be recorded");
+});
+
+runTest("TI-18: Multiple sensitive patterns in same input are all suppressed", () => {
+  const userModel = makeUserModel({
+    pwd: { key: "admin_password", value: "SuperSecret123!" },
+    api_key: { key: "openai_api_key", value: "sk-1234567890abcdef" },
+    card: { key: "credit_card", value: "4111-2222-3333-4444" },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: 5000 },
+  });
+  assert(res.diagnostics.suppressedSensitiveCount === 3, "All 3 sensitive items must be suppressed");
+  assert(res.patterns.length === 0, "No sensitive patterns admitted");
+});
+
+runTest("TI-19: Forbidden identity dimensions are completely filtered", () => {
+  const userModel = makeUserModel({
+    job: { key: "profession", value: "Senior Architect" },
+    salary: { key: "salary", value: "$200,000" },
+    age: { key: "age", value: "35" },
+    health: { key: "medical_condition", value: "Hypertension" },
+  });
+  const res = temporalMemoryEngine.evaluate({
+    userId: "test_user",
+    longTermUserModel: userModel,
+    options: { currentTime: 5000 },
+  });
+  assert(res.patterns.length === 0, "Forbidden identity attributes must never create temporal patterns");
+});
+
+runTest("TI-20: Full BrainEngine pipeline produces unified TemporalMemoryAnalysis", () => {
+  const analysis = brainEngine.analyze("Amar default language Bangla koro", [], undefined, "session_test", undefined, {
+    currentTime: 10000,
+  });
+  assert(analysis.temporalMemoryAnalysis !== undefined, "temporalMemoryAnalysis must be present on BrainAnalysis");
+  assert(analysis.temporalMemoryAnalysis.patterns.length >= 1, "Temporal patterns must be analyzed");
+  assert(analysis.promptDirectives.length >= 1, "Safe directives must reach promptDirectives");
+});
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log("=============================================");

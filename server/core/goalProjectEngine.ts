@@ -1,0 +1,1252 @@
+/**
+ * Goal, Project & Commitment Memory Engine (Phase 2 - Step 10)
+ * 
+ * Deterministic, bounded, non-LLM engine that safely maintains validated
+ * long-running user goals, projects, commitments, milestones, blockers,
+ * dependencies, and project lifecycle state across turns and sessions.
+ * 
+ * Invariants Enforced:
+ * 1. Deterministic execution: Zero Math.random(), zero Date.now() in decisions, zero random UUIDs.
+ * 2. Strict read-only analysis: Zero side-effect mutation of persistent memory store.
+ * 3. Authority Hierarchy:
+ *    CURRENT_TURN_EXPLICIT > EXPLICIT_USER_MEMORY > VERIFIED_EVIDENCE >
+ *    CONFIRMED_ADAPTIVE_PATTERN > CONFIRMED_PREFERENCE > REPEATED_VALIDATED_SIGNAL > PREDICTIVE_CONTEXT.
+ * 4. Candidate Safety: CANDIDATE records cannot establish authoritative goals/projects.
+ * 5. Predictive Boundary: Predictive Context is strictly advisory.
+ * 6. Completion Evidence: Completion requires explicit user claim or verified tool result.
+ * 7. Blocker Detection: Evidence-based blockers only; never invent emotional/personal blockers.
+ * 8. Deadlines: Explicit dates only; relative time calculated deterministically via injected currentTime.
+ * 9. Current-Turn Precedence: Current-turn instructions override historical state for the current turn.
+ * 10. Topic/Project Isolation: Project-scoped context does not leak into unrelated projects.
+ * 11. Privacy & Identity: Sensitive credentials and unsupported identity inferences are strictly suppressed.
+ * 12. Sanitized Directives: Natural language only; zero internal IDs, raw floats, or epoch timestamps.
+ */
+
+import { ConversationContext, ConversationTurn } from "./contextTypes";
+import { StructuredIntent } from "./intentTypes";
+import { ReasoningAnalysis } from "./reasoningTypes";
+import { PlanningAnalysis } from "./planningTypes";
+import { VerificationAnalysis } from "./verificationTypes";
+import { MemoryGovernanceAnalysis } from "./memoryGovernanceTypes";
+import { LearningAnalysis } from "./adaptiveLearningTypes";
+import { UserModelAnalysis, UserModelEvidenceAuthority } from "./longTermUserModelTypes";
+import { TemporalMemoryAnalysis } from "./temporalMemoryTypes";
+import {
+  Commitment,
+  Goal,
+  GoalProjectAnalysis,
+  GoalProjectDiagnostics,
+  GoalProjectEvaluationOptions,
+  GoalProjectEvidence,
+  GoalProjectPriority,
+  GoalProjectStatus,
+  GoalScope,
+  Milestone,
+  Project,
+  ProjectDependency,
+  ProjectEvent,
+  ProjectState,
+  ProjectTask,
+  TaskExecutionStatus,
+} from "./goalProjectTypes";
+
+export class GoalProjectEngine {
+  private static instance: GoalProjectEngine;
+
+  // Authority Weight Map
+  private readonly AUTHORITY_WEIGHTS: Record<UserModelEvidenceAuthority, number> = {
+    CURRENT_TURN_EXPLICIT: 100,
+    EXPLICIT_USER_MEMORY: 90,
+    VERIFIED_EVIDENCE: 80,
+    CONFIRMED_ADAPTIVE_PATTERN: 60,
+    CONFIRMED_PREFERENCE: 50,
+    REPEATED_VALIDATED_SIGNAL: 40,
+    PREDICTIVE_CONTEXT: 10,
+  };
+
+  // Sensitive Patterns
+  private readonly SENSITIVE_PATTERNS = [
+    /(password|passwd|pwd)/i,
+    /(secret|api[_-]?key|bearer\s+[a-z0-9_\-\.]+)/i,
+    /(token|auth[_-]?token|access[_-]?token|refresh[_-]?token)/i,
+    /(credit[_-]?card|card[_-]?number|cvv|cvc|\bpin\b|\bssn\b)/i,
+    /(bank[_-]?account|routing[_-]?number|private[_-]?key)/i,
+  ];
+
+  // Forbidden Identity Patterns (Cannot infer profession, employment, enrollment)
+  private readonly FORBIDDEN_IDENTITY_DIMENSIONS = [
+    /\b(i am a|i work as a|my job is|my profession is|my title is)\b/i,
+    /\b(employed at|working at|employee of|software engineer at|architect at)\b/i,
+    /\b(student at|enrolled at|enrolled in|university student|college student)\b/i,
+    /\b(salary|income|net worth|bank balance|debt|loan)\b/i,
+    /\b(diagnosed with|medical condition|prescription|illness)\b/i,
+  ];
+
+  // Goal Detection Regexes (Bangla, English, Banglish)
+  private readonly EXPLICIT_GOAL_PATTERNS = [
+    /(?:i want to|my goal is to|aiming to|planning to|plan to|i intend to|goal is to|target is to)\s+([^.,;!?\n]+)/i,
+    /(?:amar goal|amader goal|amar target|amader target|target holo|target hocche|plan hocche)\s+([^.,;!?\n]+)/i,
+    /(?:sesh korte chai|complete korte chai|build korte chai|banate chai)\s+([^.,;!?\n]+)/i,
+  ];
+
+  // Project Detection Regexes
+  private readonly EXPLICIT_PROJECT_PATTERNS = [
+    /(?:working on(?: project)?|project:?|building(?: the)?|developing(?: the)?)\s+([a-z0-9_\-\s]{2,40})/i,
+    /(?:amar project|amader project|project er naam|project hocche)\s+([a-z0-9_\-\s]{2,40})/i,
+  ];
+
+  // Commitment Detection Regexes
+  private readonly EXPLICIT_COMMITMENT_PATTERNS = [
+    /(?:i'll|i will|i need to|i must|i have to|i promise to|i commit to|i plan to)\s+([^.,;!?\n]+)/i,
+    /(?:ami kal|ami pore|ami sesh korbo|ami review korbo|ami submit korbo|ami push korbo)\s+([^.,;!?\n]+)/i,
+  ];
+
+  // Blocker Detection Regexes
+  private readonly EXPLICIT_BLOCKER_PATTERNS = [
+    /(?:can't continue|cannot continue|blocked by|stuck on|failed because|error in|api is down|api isn't working|missing credentials|shuru korte parchi na karon|attke gechi|block hoye ache)\s*[:\s]+([^.,;!?\n]+)/i,
+    /(?:because|karon)\s+(the [a-z0-9_\-\s]+ is (?:down|broken|failing|not working|unavailable))/i,
+  ];
+
+  // Completion Detection Regexes
+  private readonly EXPLICIT_COMPLETION_PATTERNS = [
+    /(?:i finished|i have finished|i completed|i have completed|done with|all done with|successfully completed)\s+([^.,;!?\n]+)/i,
+    /(?:sesh korechi|sesh hoyeche|complete korechi|done hoye geche)\s+([^.,;!?\n]+)/i,
+    /(?:(?:marked|mark)\s+([^.,;!?\n]+)\s+(?:as completed|as done))/i,
+  ];
+
+  // Current-turn Pause / Override Regexes
+  private readonly CURRENT_TURN_OVERRIDE_PATTERNS = [
+    /(?:pause|hold off on|stop working on|switch away from|leave|postpone)\s+([^.,;!?\n]+)/i,
+    /(?:actually switch to|let's switch to|instead work on|eita ekhon thak|ekhon pause rakho)\s+([^.,;!?\n]+)/i,
+  ];
+
+  // Reopen Project / Goal Regexes
+  private readonly EXPLICIT_REOPEN_PATTERNS = [
+    /(?:reopen|resume|restart|continue working on|reactivate)\s+([^.,;!?\n]+)/i,
+    /(?:abar shuru korbo|reopen koro|restart koro|resume koro)\s+([^.,;!?\n]+)/i,
+  ];
+
+  private constructor() {}
+
+  public static getInstance(): GoalProjectEngine {
+    if (!GoalProjectEngine.instance) {
+      GoalProjectEngine.instance = new GoalProjectEngine();
+    }
+    return GoalProjectEngine.instance;
+  }
+
+  /**
+   * Deterministic simple hash function (no random UUIDs or runtime non-determinism).
+   */
+  public deterministicHash(str: string): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  /**
+   * Generates a clean deterministic ID.
+   */
+  public generateDeterministicId(prefix: string, ...components: string[]): string {
+    const raw = components.map((c) => (c || "").trim().toLowerCase()).join("::");
+    const hash = this.deterministicHash(raw);
+    const sanitizedPrefix = prefix.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+    return `${sanitizedPrefix}_${hash}`;
+  }
+
+  /**
+   * Normalizes a title or string.
+   */
+  public normalizeTitle(str: string): string {
+    return (str || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "")
+      .replace(/\s+/g, " ");
+  }
+
+  /**
+   * Checks if an evidence authority is considered authoritative.
+   */
+  public isAuthoritative(authority: UserModelEvidenceAuthority): boolean {
+    return (
+      authority === "CURRENT_TURN_EXPLICIT" ||
+      authority === "EXPLICIT_USER_MEMORY" ||
+      authority === "VERIFIED_EVIDENCE"
+    );
+  }
+
+  /**
+   * Checks if a string contains sensitive credentials.
+   */
+  public containsSensitiveData(text: string): boolean {
+    if (!text) return false;
+    return this.SENSITIVE_PATTERNS.some((pattern) => pattern.test(text));
+  }
+
+  /**
+   * Checks if a string contains forbidden identity assumptions.
+   */
+  public containsForbiddenIdentity(text: string): boolean {
+    if (!text) return false;
+    return this.FORBIDDEN_IDENTITY_DIMENSIONS.some((pattern) => pattern.test(text));
+  }
+
+  /**
+   * Primary Evaluation Entry Point for Step 10: Goal, Project & Commitment Memory Engine.
+   */
+  public evaluate(params: {
+    userId?: string;
+    message?: string;
+    context?: ConversationContext;
+    intent?: StructuredIntent;
+    reasoning?: ReasoningAnalysis;
+    planning?: PlanningAnalysis;
+    verification?: VerificationAnalysis;
+    governanceAnalysis?: MemoryGovernanceAnalysis;
+    adaptiveLearning?: LearningAnalysis;
+    longTermUserModel?: UserModelAnalysis;
+    temporalMemory?: TemporalMemoryAnalysis;
+    history?: ConversationTurn[];
+    existingProjects?: Project[];
+    existingGoals?: Goal[];
+    existingCommitments?: Commitment[];
+    options?: GoalProjectEvaluationOptions;
+  }): GoalProjectAnalysis {
+    const startTime = 0; // Pure deterministic profiling
+    const userId = params.options?.userId || params.userId || "default";
+    const currentTime = params.options?.currentTime ?? 1000000;
+    const message = (params.message || "").trim();
+    const isTopicIsolated = Boolean(
+      params.options?.isTopicIsolated ||
+      params.governanceAnalysis?.topicIsolationApplied
+    );
+    const activeTopic = params.options?.activeTopic || params.context?.activeTopic || "";
+
+    const diagnostics: GoalProjectDiagnostics = {
+      totalGoals: 0,
+      activeGoalsCount: 0,
+      totalProjects: 0,
+      activeProjectsCount: 0,
+      totalCommitments: 0,
+      expiredCommitmentsCount: 0,
+      readyTasksCount: 0,
+      blockedTasksCount: 0,
+      suppressedCandidateCount: 0,
+      suppressedSensitiveCount: 0,
+      suppressedPredictiveCount: 0,
+      isolatedTopicCount: 0,
+      evaluationTimeMs: 0,
+    };
+
+    const currentTurnOverrides: GoalProjectAnalysis["currentTurnOverrides"] = {};
+
+    // 1. Check for Current-Turn Overrides (Pause / Switch / Temporary Instruction)
+    this.detectCurrentTurnOverrides(message, currentTurnOverrides);
+
+    // 2. Aggregate Base Collections from Memory, LongTermUserModel & Injected State
+    const goalMap = new Map<string, Goal>();
+    const projectMap = new Map<string, Project>();
+    const commitmentMap = new Map<string, Commitment>();
+    const taskMap = new Map<string, ProjectTask>();
+    const milestoneMap = new Map<string, Milestone>();
+
+    // 2a. Ingest Existing Structured Projects, Goals, Commitments
+    if (params.existingProjects) {
+      for (const p of params.existingProjects) {
+        if (this.isValidEntity(p.name)) {
+          projectMap.set(p.projectId, this.cloneProject(p));
+        }
+      }
+    }
+    if (params.existingGoals) {
+      for (const g of params.existingGoals) {
+        if (this.isValidEntity(g.title)) {
+          goalMap.set(g.goalId, this.cloneGoal(g));
+        }
+      }
+    }
+    if (params.existingCommitments) {
+      for (const c of params.existingCommitments) {
+        if (this.isValidEntity(c.title)) {
+          commitmentMap.set(c.commitmentId, this.cloneCommitment(c));
+        }
+      }
+    }
+
+    // 2b. Ingest Governance Allowed Memories & LongTermUserModel
+    this.ingestFromLongTermUserModel(
+      params.longTermUserModel,
+      goalMap,
+      projectMap,
+      commitmentMap,
+      currentTime,
+      diagnostics
+    );
+
+    this.ingestFromGovernanceAnalysis(
+      params.governanceAnalysis,
+      goalMap,
+      projectMap,
+      commitmentMap,
+      currentTime,
+      diagnostics
+    );
+
+    // 2c. Ingest Planning Engine Active Plan Tasks & Milestones
+    this.ingestFromPlanningEngine(
+      params.planning,
+      projectMap,
+      goalMap,
+      taskMap,
+      milestoneMap,
+      currentTime
+    );
+
+    // 3. Process Current-Turn Explicit User Input (Highest Authority: CURRENT_TURN_EXPLICIT)
+    if (message) {
+      this.processCurrentTurnMessage(
+        message,
+        userId,
+        goalMap,
+        projectMap,
+        commitmentMap,
+        taskMap,
+        milestoneMap,
+        currentTime,
+        currentTurnOverrides,
+        diagnostics
+      );
+    }
+
+    // 4. Resolve Dependencies & Determine Execution Readiness
+    this.resolveTaskDependencies(taskMap, milestoneMap, diagnostics);
+
+    // 5. Evaluate Deadlines & Expiration Deterministically
+    this.evaluateDeadlinesAndExpirations(commitmentMap, goalMap, projectMap, currentTime, diagnostics);
+
+    // 6. Partition States into Categorized Collections
+    const allGoals = Array.from(goalMap.values());
+    const allProjects = Array.from(projectMap.values());
+    const allCommitments = Array.from(commitmentMap.values());
+    const allTasks = Array.from(taskMap.values());
+
+    const activeGoals: Goal[] = [];
+    const completedGoals: Goal[] = [];
+    for (const g of allGoals) {
+      if (g.status === "ACTIVE" || g.status === "PAUSED" || g.status === "BLOCKED") {
+        activeGoals.push(g);
+      } else if (g.status === "COMPLETED") {
+        completedGoals.push(g);
+      }
+    }
+
+    const activeProjects: Project[] = [];
+    const pausedProjects: Project[] = [];
+    const blockedProjects: Project[] = [];
+    const completedProjects: Project[] = [];
+    const historicalProjects: Project[] = [];
+
+    for (const p of allProjects) {
+      if (p.status === "ACTIVE") {
+        activeProjects.push(p);
+      } else if (p.status === "PAUSED") {
+        pausedProjects.push(p);
+      } else if (p.status === "BLOCKED") {
+        blockedProjects.push(p);
+      } else if (p.status === "COMPLETED") {
+        completedProjects.push(p);
+      } else {
+        historicalProjects.push(p);
+      }
+    }
+
+    const activeCommitments: Commitment[] = [];
+    const expiredCommitments: Commitment[] = [];
+    for (const c of allCommitments) {
+      if (c.status === "ACTIVE" && !c.isExpired) {
+        activeCommitments.push(c);
+      } else if (c.isExpired || c.status === "EXPIRED") {
+        expiredCommitments.push(c);
+      }
+    }
+
+    const readyTasks: ProjectTask[] = [];
+    const blockedTasks: ProjectTask[] = [];
+    for (const t of allTasks) {
+      if (t.status === "READY" || t.status === "IN_PROGRESS") {
+        readyTasks.push(t);
+      } else if (t.status === "BLOCKED") {
+        blockedTasks.push(t);
+      }
+    }
+
+    diagnostics.totalGoals = allGoals.length;
+    diagnostics.activeGoalsCount = activeGoals.length;
+    diagnostics.totalProjects = allProjects.length;
+    diagnostics.activeProjectsCount = activeProjects.length + pausedProjects.length + blockedProjects.length;
+    diagnostics.totalCommitments = allCommitments.length;
+    diagnostics.expiredCommitmentsCount = expiredCommitments.length;
+    diagnostics.readyTasksCount = readyTasks.length;
+    diagnostics.blockedTasksCount = blockedTasks.length;
+
+    // 7. Generate Sanitized Natural Language Directives
+    const directives = this.generateSanitizedDirectives({
+      activeProjects,
+      pausedProjects,
+      blockedProjects,
+      activeGoals,
+      activeCommitments,
+      readyTasks,
+      blockedTasks,
+      currentTurnOverrides,
+      isTopicIsolated,
+      activeTopic,
+      diagnostics,
+    });
+
+    const state: ProjectState = {
+      activeProjects,
+      pausedProjects,
+      blockedProjects,
+      completedProjects,
+      historicalProjects,
+      activeGoals,
+      completedGoals,
+      activeCommitments,
+      expiredCommitments,
+      activeTasks: allTasks,
+    };
+
+    return {
+      state,
+      activeProjects,
+      blockedProjects,
+      activeGoals,
+      activeCommitments,
+      readyTasks,
+      blockedTasks,
+      directives,
+      currentTurnOverrides,
+      diagnostics,
+    };
+  }
+
+  /**
+   * Detects current-turn instructions that override project status for the current turn.
+   */
+  private detectCurrentTurnOverrides(
+    message: string,
+    overrides: GoalProjectAnalysis["currentTurnOverrides"]
+  ): void {
+    if (!message) return;
+
+    for (const pattern of this.CURRENT_TURN_OVERRIDE_PATTERNS) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        overrides.isProjectPaused = true;
+        overrides.overrideReason = `User explicitly instructed to pause/switch: "${match[1].trim()}"`;
+        break;
+      }
+    }
+  }
+
+  /**
+   * Processes current turn message to extract explicit goals, projects, commitments, and completions.
+   */
+  private processCurrentTurnMessage(
+    message: string,
+    userId: string,
+    goalMap: Map<string, Goal>,
+    projectMap: Map<string, Project>,
+    commitmentMap: Map<string, Commitment>,
+    taskMap: Map<string, ProjectTask>,
+    milestoneMap: Map<string, Milestone>,
+    currentTime: number,
+    overrides: GoalProjectAnalysis["currentTurnOverrides"],
+    diagnostics: GoalProjectDiagnostics
+  ): void {
+    // Check sensitive / forbidden identity
+    if (this.containsSensitiveData(message)) {
+      diagnostics.suppressedSensitiveCount++;
+      return;
+    }
+    if (this.containsForbiddenIdentity(message)) {
+      return;
+    }
+
+    // 1. Explicit Reopening of Project / Goal
+    for (const pattern of this.EXPLICIT_REOPEN_PATTERNS) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        const rawTarget = match[1].trim();
+        const normTarget = this.normalizeTitle(rawTarget);
+        // Find existing completed/paused project or goal
+        for (const [id, p] of projectMap.entries()) {
+          if (p.normalizedName.includes(normTarget) || normTarget.includes(p.normalizedName)) {
+            p.status = "ACTIVE";
+            p.updatedAt = currentTime;
+            p.version = (p.version || 1) + 1;
+            p.lineage.push(`reopened_at_${currentTime}`);
+            p.events.push({
+              eventId: this.generateDeterministicId("evt", p.projectId, "reopened", String(currentTime)),
+              eventType: "REOPENED",
+              targetType: "PROJECT",
+              targetId: p.projectId,
+              timestamp: currentTime,
+              description: `Project reopened by explicit user instruction: "${rawTarget}"`,
+              sourceAuthority: "CURRENT_TURN_EXPLICIT",
+            });
+          }
+        }
+        for (const [id, g] of goalMap.entries()) {
+          if (g.normalizedTitle.includes(normTarget) || normTarget.includes(g.normalizedTitle)) {
+            g.status = "ACTIVE";
+            g.updatedAt = currentTime;
+            g.version = (g.version || 1) + 1;
+            g.lineage.push(`reopened_at_${currentTime}`);
+          }
+        }
+      }
+    }
+
+    // 2. Explicit Completion Detection
+    for (const pattern of this.EXPLICIT_COMPLETION_PATTERNS) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        const rawCompleted = match[1].trim();
+        const normCompleted = this.normalizeTitle(rawCompleted);
+
+        // Mark matching task
+        for (const [id, t] of taskMap.entries()) {
+          if (t.normalizedTitle.includes(normCompleted) || normCompleted.includes(t.normalizedTitle)) {
+            t.status = "COMPLETED";
+            t.completedAt = currentTime;
+            t.updatedAt = currentTime;
+          }
+        }
+
+        // Mark matching goal
+        for (const [id, g] of goalMap.entries()) {
+          if (g.normalizedTitle.includes(normCompleted) || normCompleted.includes(g.normalizedTitle)) {
+            g.status = "COMPLETED";
+            g.completedAt = currentTime;
+            g.updatedAt = currentTime;
+          }
+        }
+
+        // Mark matching commitment
+        for (const [id, c] of commitmentMap.entries()) {
+          if (c.normalizedTitle.includes(normCompleted) || normCompleted.includes(c.normalizedTitle)) {
+            c.status = "COMPLETED";
+            c.completedAt = currentTime;
+            c.updatedAt = currentTime;
+          }
+        }
+
+        // Mark matching project if fully completed
+        for (const [id, p] of projectMap.entries()) {
+          if (p.normalizedName.includes(normCompleted) || normCompleted.includes(p.normalizedName)) {
+            p.status = "COMPLETED";
+            p.completedAt = currentTime;
+            p.updatedAt = currentTime;
+            p.events.push({
+              eventId: this.generateDeterministicId("evt", p.projectId, "completed", String(currentTime)),
+              eventType: "COMPLETED",
+              targetType: "PROJECT",
+              targetId: p.projectId,
+              timestamp: currentTime,
+              description: `Project completed by explicit confirmation: "${rawCompleted}"`,
+              sourceAuthority: "CURRENT_TURN_EXPLICIT",
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Explicit Blocker Detection
+    for (const pattern of this.EXPLICIT_BLOCKER_PATTERNS) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        const rawBlocker = match[1].trim();
+        if (this.isValidEntity(rawBlocker)) {
+          // Attach blocker to active projects / goals
+          for (const p of projectMap.values()) {
+            if (p.status === "ACTIVE") {
+              p.status = "BLOCKED";
+              p.blockerDescription = rawBlocker;
+              p.updatedAt = currentTime;
+              p.events.push({
+                eventId: this.generateDeterministicId("evt", p.projectId, "blocked", String(currentTime)),
+                eventType: "BLOCKED",
+                targetType: "PROJECT",
+                targetId: p.projectId,
+                timestamp: currentTime,
+                description: `Blocked: ${rawBlocker}`,
+                sourceAuthority: "CURRENT_TURN_EXPLICIT",
+              });
+            }
+          }
+          for (const g of goalMap.values()) {
+            if (g.status === "ACTIVE") {
+              g.status = "BLOCKED";
+              g.blockerDescription = rawBlocker;
+              g.updatedAt = currentTime;
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Explicit Goal Extraction
+    for (const pattern of this.EXPLICIT_GOAL_PATTERNS) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        const rawGoal = match[1].trim();
+        if (this.isValidGoalExpression(rawGoal)) {
+          const normGoal = this.normalizeTitle(rawGoal);
+          const goalId = this.generateDeterministicId("goal", userId, normGoal);
+
+          const existing = goalMap.get(goalId);
+          if (!existing) {
+            goalMap.set(goalId, {
+              goalId,
+              title: this.cleanTitle(rawGoal),
+              normalizedTitle: normGoal,
+              scope: "PROJECT",
+              status: "ACTIVE",
+              priority: "MEDIUM",
+              createdAt: currentTime,
+              updatedAt: currentTime,
+              evidence: [
+                {
+                  evidenceId: this.generateDeterministicId("evi", goalId, String(currentTime)),
+                  source: "CURRENT_TURN_MESSAGE",
+                  authority: "CURRENT_TURN_EXPLICIT",
+                  textSnippet: rawGoal,
+                  timestamp: currentTime,
+                },
+              ],
+              sourceAuthority: "CURRENT_TURN_EXPLICIT",
+              confidence: 1.0,
+              projectIds: [],
+              milestoneIds: [],
+              lineage: [`created_at_${currentTime}`],
+            });
+          }
+        }
+      }
+    }
+
+    // 5. Explicit Project Extraction
+    for (const pattern of this.EXPLICIT_PROJECT_PATTERNS) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        const rawProj = match[1].trim();
+        if (this.isValidProjectExpression(rawProj)) {
+          const normProj = this.normalizeTitle(rawProj);
+          const projectId = this.generateDeterministicId("proj", userId, normProj);
+
+          const existing = projectMap.get(projectId);
+          if (!existing) {
+            projectMap.set(projectId, {
+              projectId,
+              name: this.cleanTitle(rawProj),
+              normalizedName: normProj,
+              status: "ACTIVE",
+              priority: "MEDIUM",
+              createdAt: currentTime,
+              updatedAt: currentTime,
+              goals: [],
+              milestones: [],
+              tasks: [],
+              commitments: [],
+              dependencies: [],
+              events: [
+                {
+                  eventId: this.generateDeterministicId("evt", projectId, "created", String(currentTime)),
+                  eventType: "CREATED",
+                  targetType: "PROJECT",
+                  targetId: projectId,
+                  timestamp: currentTime,
+                  description: `Project created from user turn: "${rawProj}"`,
+                  sourceAuthority: "CURRENT_TURN_EXPLICIT",
+                },
+              ],
+              sourceAuthority: "CURRENT_TURN_EXPLICIT",
+              confidence: 1.0,
+              lineage: [`created_at_${currentTime}`],
+            });
+          }
+        }
+      }
+    }
+
+    // 6. Explicit Commitment Extraction
+    for (const pattern of this.EXPLICIT_COMMITMENT_PATTERNS) {
+      const match = message.match(pattern);
+      if (match && match[1]) {
+        const rawCommitment = match[1].trim();
+        if (this.isValidCommitmentExpression(rawCommitment)) {
+          const normCommitment = this.normalizeTitle(rawCommitment);
+          const commitmentId = this.generateDeterministicId("commit", userId, normCommitment);
+
+          // Extract explicit deadline if mentioned (e.g. "tomorrow", "by Friday")
+          const deadline = this.parseExplicitDeadline(rawCommitment, currentTime);
+
+          const existing = commitmentMap.get(commitmentId);
+          if (!existing) {
+            commitmentMap.set(commitmentId, {
+              commitmentId,
+              title: this.cleanTitle(rawCommitment),
+              normalizedTitle: normCommitment,
+              status: "ACTIVE",
+              createdAt: currentTime,
+              updatedAt: currentTime,
+              deadline: deadline?.timestamp,
+              deadlineString: deadline?.label,
+              isExpired: false,
+              evidence: [
+                {
+                  evidenceId: this.generateDeterministicId("evi", commitmentId, String(currentTime)),
+                  source: "CURRENT_TURN_MESSAGE",
+                  authority: "CURRENT_TURN_EXPLICIT",
+                  textSnippet: rawCommitment,
+                  timestamp: currentTime,
+                },
+              ],
+              sourceAuthority: "CURRENT_TURN_EXPLICIT",
+              confidence: 1.0,
+              isUserInitiated: true,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Ingests goals, projects, and commitments from LongTermUserModel.
+   */
+  private ingestFromLongTermUserModel(
+    modelAnalysis: UserModelAnalysis | undefined,
+    goalMap: Map<string, Goal>,
+    projectMap: Map<string, Project>,
+    commitmentMap: Map<string, Commitment>,
+    currentTime: number,
+    diagnostics: GoalProjectDiagnostics
+  ): void {
+    if (!modelAnalysis || !modelAnalysis.profile || !modelAnalysis.profile.attributes) return;
+
+    for (const [key, attr] of Object.entries(modelAnalysis.profile.attributes)) {
+      const valStr = String(attr.normalizedValue || attr.evidence?.[0]?.value || "").trim();
+      if (this.containsSensitiveData(attr.key) || this.containsSensitiveData(valStr)) {
+        diagnostics.suppressedSensitiveCount++;
+        continue;
+      }
+      if (this.containsForbiddenIdentity(attr.key) || this.containsForbiddenIdentity(valStr)) {
+        continue;
+      }
+
+      // CANDIDATE safety: Candidate records cannot create authoritative project/goal state
+      if (attr.status === "CANDIDATE") {
+        diagnostics.suppressedCandidateCount++;
+        continue;
+      }
+      if (attr.status === "SUPPRESSED" || attr.status === "SUPERSEDED") {
+        continue;
+      }
+
+      // Predictive context safety
+      if (attr.sourceClassification === "PREDICTIVE_CONTEXT") {
+        diagnostics.suppressedPredictiveCount++;
+        continue;
+      }
+
+      const normKey = this.normalizeTitle(attr.key);
+      const normVal = this.normalizeTitle(valStr);
+
+      if (normKey.includes("project") || attr.dimension === "PROJECT_CONTEXT" || attr.dimension === "TASK_WORKFLOW" && normKey.includes("project")) {
+        const projectId = this.generateDeterministicId("proj", modelAnalysis.userId, normVal);
+        if (!projectMap.has(projectId)) {
+          const status: GoalProjectStatus =
+            attr.status === "OUTDATED" ? "ARCHIVED" : "ACTIVE";
+          projectMap.set(projectId, {
+            projectId,
+            name: this.cleanTitle(valStr),
+            normalizedName: normVal,
+            status,
+            priority: "MEDIUM",
+            createdAt: attr.firstObservedAt,
+            updatedAt: attr.lastObservedAt,
+            goals: [],
+            milestones: [],
+            tasks: [],
+            commitments: [],
+            dependencies: [],
+            events: [],
+            sourceAuthority: attr.sourceClassification || "EXPLICIT_USER_MEMORY",
+            confidence: attr.confidence,
+            lineage: [`imported_from_user_model`],
+          });
+        }
+      } else if (normKey.includes("goal") || normKey.includes("target") || attr.dimension === "USER_GOAL") {
+        const goalId = this.generateDeterministicId("goal", modelAnalysis.userId, normVal);
+        if (!goalMap.has(goalId)) {
+          const status: GoalProjectStatus =
+            attr.status === "OUTDATED" ? "ARCHIVED" : "ACTIVE";
+          goalMap.set(goalId, {
+            goalId,
+            title: this.cleanTitle(valStr),
+            normalizedTitle: normVal,
+            scope: "PROJECT",
+            status,
+            priority: "MEDIUM",
+            createdAt: attr.firstObservedAt,
+            updatedAt: attr.lastObservedAt,
+            evidence: [],
+            sourceAuthority: attr.sourceClassification || "EXPLICIT_USER_MEMORY",
+            confidence: attr.confidence,
+            projectIds: [],
+            milestoneIds: [],
+            lineage: [`imported_from_user_model`],
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Ingests goals, projects, commitments from MemoryGovernance approved memories.
+   */
+  private ingestFromGovernanceAnalysis(
+    governance: MemoryGovernanceAnalysis | undefined,
+    goalMap: Map<string, Goal>,
+    projectMap: Map<string, Project>,
+    commitmentMap: Map<string, Commitment>,
+    currentTime: number,
+    diagnostics: GoalProjectDiagnostics
+  ): void {
+    if (!governance || !governance.allowedMemories) return;
+
+    for (const mem of governance.allowedMemories) {
+      if (this.containsSensitiveData(mem.key) || this.containsSensitiveData(mem.value)) {
+        diagnostics.suppressedSensitiveCount++;
+        continue;
+      }
+      if (this.containsForbiddenIdentity(mem.key) || this.containsForbiddenIdentity(mem.value)) {
+        continue;
+      }
+
+      const normKey = this.normalizeTitle(mem.key);
+      const valStr = (mem.value || "").trim();
+      const normVal = this.normalizeTitle(valStr);
+
+      if ((mem.type as string) === "GOAL" || (mem.type as string) === "USER_GOAL" || normKey.includes("goal") || normKey.includes("target")) {
+        const goalId = this.generateDeterministicId("goal", "gov", normVal);
+        if (!goalMap.has(goalId)) {
+          goalMap.set(goalId, {
+            goalId,
+            title: this.cleanTitle(valStr),
+            normalizedTitle: normVal,
+            scope: "PROJECT",
+            status: "ACTIVE",
+            priority: "MEDIUM",
+            createdAt: currentTime,
+            updatedAt: currentTime,
+            evidence: [
+              {
+                evidenceId: this.generateDeterministicId("evi", goalId, String(currentTime)),
+                source: "MEMORY_GOVERNANCE",
+                authority: "EXPLICIT_USER_MEMORY",
+                textSnippet: valStr,
+                timestamp: currentTime,
+              },
+            ],
+            sourceAuthority: "EXPLICIT_USER_MEMORY",
+            confidence: mem.confidence || 0.9,
+            projectIds: [],
+            milestoneIds: [],
+            lineage: [`imported_from_governance`],
+          });
+        }
+      } else if (mem.type === "PROJECT_CONTEXT" || (mem.type as string) === "PROJECT" || normKey.includes("project")) {
+        const projectId = this.generateDeterministicId("proj", "gov", normVal);
+        if (!projectMap.has(projectId)) {
+          projectMap.set(projectId, {
+            projectId,
+            name: this.cleanTitle(valStr),
+            normalizedName: normVal,
+            status: "ACTIVE",
+            priority: "MEDIUM",
+            createdAt: currentTime,
+            updatedAt: currentTime,
+            goals: [],
+            milestones: [],
+            tasks: [],
+            commitments: [],
+            dependencies: [],
+            events: [],
+            sourceAuthority: "EXPLICIT_USER_MEMORY",
+            confidence: mem.confidence || 0.9,
+            lineage: [`imported_from_governance`],
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Ingests lightweight tasks and milestones from PlanningEngine active plan.
+   */
+  private ingestFromPlanningEngine(
+    planning: PlanningAnalysis | undefined,
+    projectMap: Map<string, Project>,
+    goalMap: Map<string, Goal>,
+    taskMap: Map<string, ProjectTask>,
+    milestoneMap: Map<string, Milestone>,
+    currentTime: number
+  ): void {
+    if (!planning || !planning.plan || !planning.plan.steps) return;
+
+    const plan = planning.plan;
+    for (const step of plan.steps) {
+      if (this.containsSensitiveData(step.description)) continue;
+
+      const normStepTitle = this.normalizeTitle(step.description);
+      const taskId = step.id || this.generateDeterministicId("task", plan.id || "plan", normStepTitle);
+
+      const status: TaskExecutionStatus =
+        step.status === "COMPLETED"
+          ? "COMPLETED"
+          : step.status === "IN_PROGRESS"
+          ? "IN_PROGRESS"
+          : step.status === "FAILED" || step.status === "BLOCKED"
+          ? "BLOCKED"
+          : step.status === "CANCELLED"
+          ? "CANCELLED"
+          : step.status === "READY"
+          ? "READY"
+          : "NOT_STARTED";
+
+      const task: ProjectTask = {
+        taskId,
+        title: step.description,
+        normalizedTitle: normStepTitle,
+        status,
+        dependencies: Array.isArray(step.dependencies) ? [...step.dependencies] : [],
+        createdAt: currentTime,
+        updatedAt: currentTime,
+        completedAt: step.status === "COMPLETED" ? currentTime : undefined,
+        sourceAuthority: "VERIFIED_EVIDENCE",
+        order: step.order,
+      };
+
+      taskMap.set(taskId, task);
+    }
+  }
+
+  /**
+   * Resolves Task Dependencies deterministically.
+   * Invariant: Unknown dependency blocks execution readiness.
+   * Prerequisite completion enables dependent task.
+   */
+  public resolveTaskDependencies(
+    taskMap: Map<string, ProjectTask>,
+    milestoneMap: Map<string, Milestone>,
+    diagnostics: GoalProjectDiagnostics
+  ): void {
+    for (const [taskId, task] of taskMap.entries()) {
+      if (task.status === "COMPLETED" || task.status === "CANCELLED") {
+        continue;
+      }
+
+      if (!task.dependencies || task.dependencies.length === 0) {
+        // No dependencies: eligible to be READY or remain IN_PROGRESS
+        if (task.status === "NOT_STARTED") {
+          task.status = "READY";
+        }
+        continue;
+      }
+
+      let allSatisfied = true;
+      const blockedBy: string[] = [];
+
+      for (const depId of task.dependencies) {
+        const depTask = taskMap.get(depId);
+        if (!depTask) {
+          // Unknown dependency blocks execution readiness
+          allSatisfied = false;
+          blockedBy.push(`Unknown dependency: ${depId}`);
+        } else if (depTask.status !== "COMPLETED") {
+          // Dependent task not completed yet
+          allSatisfied = false;
+          blockedBy.push(`Prerequisite task not completed: ${depTask.title}`);
+        }
+      }
+
+      if (!allSatisfied) {
+        task.status = "BLOCKED";
+        task.blockedBy = blockedBy;
+        diagnostics.blockedTasksCount++;
+      } else {
+        if (task.status === "NOT_STARTED" || task.status === "BLOCKED") {
+          task.status = "READY";
+          task.blockedBy = undefined;
+        }
+      }
+    }
+  }
+
+  /**
+   * Evaluates deadlines and expiration deterministically using options.currentTime.
+   */
+  public evaluateDeadlinesAndExpirations(
+    commitmentMap: Map<string, Commitment>,
+    goalMap: Map<string, Goal>,
+    projectMap: Map<string, Project>,
+    currentTime: number,
+    diagnostics: GoalProjectDiagnostics
+  ): void {
+    for (const [id, c] of commitmentMap.entries()) {
+      if (c.status === "COMPLETED" || c.status === "ABANDONED" || c.status === "EXPIRED") {
+        continue;
+      }
+
+      if (c.deadline && c.deadline < currentTime) {
+        c.isExpired = true;
+        c.status = "EXPIRED";
+        c.updatedAt = currentTime;
+        diagnostics.expiredCommitmentsCount++;
+      }
+    }
+
+    for (const [id, g] of goalMap.entries()) {
+      if (g.status === "COMPLETED" || g.status === "ABANDONED" || g.status === "ARCHIVED" || g.status === "EXPIRED") {
+        continue;
+      }
+
+      if (g.targetDate && g.targetDate < currentTime) {
+        g.status = "EXPIRED";
+        g.updatedAt = currentTime;
+      }
+    }
+
+    for (const [id, p] of projectMap.entries()) {
+      if (p.status === "COMPLETED" || p.status === "ARCHIVED" || p.status === "ABANDONED") {
+        continue;
+      }
+
+      if (p.targetDate && p.targetDate < currentTime) {
+        p.status = "EXPIRED";
+        p.updatedAt = currentTime;
+      }
+    }
+  }
+
+  /**
+   * Parses explicit deadline strings deterministically using injected currentTime.
+   */
+  public parseExplicitDeadline(
+    text: string,
+    currentTime: number
+  ): { timestamp: number; label: string } | undefined {
+    if (!text) return undefined;
+
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    if (/\btomorrow\b/i.test(text) || /\bkal\b/i.test(text)) {
+      return {
+        timestamp: currentTime + DAY_MS,
+        label: "tomorrow",
+      };
+    }
+
+    if (/\b(?:within|in)\s+2\s+days\b/i.test(text) || /\bduidin er moddhe\b/i.test(text)) {
+      return {
+        timestamp: currentTime + 2 * DAY_MS,
+        label: "within 2 days",
+      };
+    }
+
+    if (/\bby friday\b/i.test(text) || /\bshukrobar er moddhe\b/i.test(text)) {
+      // Deterministically 3 days ahead
+      return {
+        timestamp: currentTime + 3 * DAY_MS,
+        label: "by Friday",
+      };
+    }
+
+    if (/\bby next week\b/i.test(text) || /\bagami shoptah\b/i.test(text)) {
+      return {
+        timestamp: currentTime + 7 * DAY_MS,
+        label: "by next week",
+      };
+    }
+
+    // Explicit ISO or date check: e.g. 2026-08-25
+    const isoMatch = text.match(/\b(20\d\d-\d\d-\d\d)\b/);
+    if (isoMatch && isoMatch[1]) {
+      const parsed = Date.parse(isoMatch[1]);
+      if (!isNaN(parsed)) {
+        return {
+          timestamp: parsed,
+          label: isoMatch[1],
+        };
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Generates Sanitized Natural Language Directives.
+   * Strict invariant: Never leak internal IDs, database hashes, confidence floats, or epoch timestamps.
+   */
+  private generateSanitizedDirectives(params: {
+    activeProjects: Project[];
+    pausedProjects: Project[];
+    blockedProjects: Project[];
+    activeGoals: Goal[];
+    activeCommitments: Commitment[];
+    readyTasks: ProjectTask[];
+    blockedTasks: ProjectTask[];
+    currentTurnOverrides: GoalProjectAnalysis["currentTurnOverrides"];
+    isTopicIsolated: boolean;
+    activeTopic: string;
+    diagnostics: GoalProjectDiagnostics;
+  }): string[] {
+    const directives: string[] = [];
+
+    // Current-Turn Override Directive
+    if (params.currentTurnOverrides.isProjectPaused && params.currentTurnOverrides.overrideReason) {
+      directives.push(`Current-turn instruction: ${params.currentTurnOverrides.overrideReason}`);
+    }
+
+    // Active Projects (Respecting Topic Isolation)
+    for (const p of params.activeProjects) {
+      if (params.isTopicIsolated && params.activeTopic) {
+        const normActiveTopic = this.normalizeTitle(params.activeTopic);
+        if (!p.normalizedName.includes(normActiveTopic) && !normActiveTopic.includes(p.normalizedName)) {
+          params.diagnostics.isolatedTopicCount++;
+          continue;
+        }
+      }
+      directives.push(`Active user project: "${p.name}". Keep answers relevant to its goals and progress.`);
+    }
+
+    // Blocked Projects
+    for (const p of params.blockedProjects) {
+      if (p.blockerDescription) {
+        directives.push(`Project "${p.name}" is currently blocked by: ${p.blockerDescription}.`);
+      }
+    }
+
+    // Active Goals
+    for (const g of params.activeGoals) {
+      if (g.status === "ACTIVE") {
+        directives.push(`The user is pursuing the goal: "${g.title}".`);
+      } else if (g.status === "BLOCKED" && g.blockerDescription) {
+        directives.push(`Goal "${g.title}" is currently blocked: ${g.blockerDescription}.`);
+      }
+    }
+
+    // Active Commitments
+    for (const c of params.activeCommitments) {
+      if (c.deadlineString) {
+        directives.push(`The user has committed to: "${c.title}" (${c.deadlineString}).`);
+      } else {
+        directives.push(`The user has committed to: "${c.title}".`);
+      }
+    }
+
+    // Blocked Tasks
+    for (const t of params.blockedTasks) {
+      if (t.blockedBy && t.blockedBy.length > 0) {
+        directives.push(`Task "${t.title}" is waiting on prerequisites: ${t.blockedBy.join(", ")}.`);
+      }
+    }
+
+    // Ready Next Tasks (First 2)
+    const topReady = params.readyTasks.slice(0, 2);
+    for (const t of topReady) {
+      directives.push(`Next ready task for active plan: "${t.title}".`);
+    }
+
+    return directives;
+  }
+
+  // --- Helpers ---
+
+  private isValidEntity(str: string): boolean {
+    if (!str || str.length < 2) return false;
+    if (this.containsSensitiveData(str)) return false;
+    if (this.containsForbiddenIdentity(str)) return false;
+    return true;
+  }
+
+  private isValidGoalExpression(str: string): boolean {
+    if (!this.isValidEntity(str)) return false;
+    const norm = str.toLowerCase();
+    // Filter casual conversation or simple entity questions
+    if (/^(what is|how to|why is|explain|hello|hi|tell me)\b/i.test(norm)) return false;
+    if (/^(python|javascript|weather|tea|coffee)$/i.test(norm.trim())) return false;
+    return str.trim().split(/\s+/).length >= 2;
+  }
+
+  private isValidProjectExpression(str: string): boolean {
+    if (!this.isValidEntity(str)) return false;
+    const norm = str.toLowerCase();
+    if (/^(what is|how to|why is|explain|hello|hi)\b/i.test(norm)) return false;
+    return str.trim().length >= 3;
+  }
+
+  private isValidCommitmentExpression(str: string): boolean {
+    if (!this.isValidEntity(str)) return false;
+    const norm = str.toLowerCase();
+    if (/^(you should|maybe you|assistant|ai)\b/i.test(norm)) return false;
+    return str.trim().split(/\s+/).length >= 2;
+  }
+
+  private cleanTitle(str: string): string {
+    return str
+      .replace(/^(to|that|about)\s+/i, "")
+      .replace(/[.,;!?]+$/, "")
+      .trim();
+  }
+
+  private cloneGoal(g: Goal): Goal {
+    return {
+      ...g,
+      evidence: g.evidence ? [...g.evidence] : [],
+      projectIds: g.projectIds ? [...g.projectIds] : [],
+      milestoneIds: g.milestoneIds ? [...g.milestoneIds] : [],
+      lineage: g.lineage ? [...g.lineage] : [],
+    };
+  }
+
+  private cloneProject(p: Project): Project {
+    return {
+      ...p,
+      goals: p.goals ? p.goals.map((g) => this.cloneGoal(g)) : [],
+      milestones: p.milestones ? [...p.milestones] : [],
+      tasks: p.tasks ? [...p.tasks] : [],
+      commitments: p.commitments ? p.commitments.map((c) => this.cloneCommitment(c)) : [],
+      dependencies: p.dependencies ? [...p.dependencies] : [],
+      events: p.events ? [...p.events] : [],
+      lineage: p.lineage ? [...p.lineage] : [],
+    };
+  }
+
+  private cloneCommitment(c: Commitment): Commitment {
+    return {
+      ...c,
+      evidence: c.evidence ? [...c.evidence] : [],
+    };
+  }
+}
+
+export const goalProjectEngine = GoalProjectEngine.getInstance();

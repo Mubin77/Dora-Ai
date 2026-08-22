@@ -38,11 +38,11 @@ export class TemporalMemoryEngine {
 
   // Sensitive & Forbidden Identity Patterns
   private readonly SENSITIVE_PATTERNS = [
-    /\b(password|passwd|pwd)\b/i,
-    /\b(secret|api[_-]?key|bearer\s+[a-z0-9_\-\.]+)\b/i,
-    /\b(token|auth[_-]?token|access[_-]?token|refresh[_-]?token)\b/i,
-    /\b(credit[_-]?card|card[_-]?number|cvv|cvc|pin|ssn)\b/i,
-    /\b(bank[_-]?account|routing[_-]?number|private[_-]?key)\b/i,
+    /(password|passwd|pwd)/i,
+    /(secret|api[_-]?key|bearer\s+[a-z0-9_\-\.]+)/i,
+    /(token|auth[_-]?token|access[_-]?token|refresh[_-]?token)/i,
+    /(credit[_-]?card|card[_-]?number|cvv|cvc|\bpin\b|\bssn\b)/i,
+    /(bank[_-]?account|routing[_-]?number|private[_-]?key)/i,
   ];
 
   private readonly FORBIDDEN_IDENTITY_DIMENSIONS = [
@@ -77,6 +77,17 @@ export class TemporalMemoryEngine {
       TemporalMemoryEngine.instance = new TemporalMemoryEngine();
     }
     return TemporalMemoryEngine.instance;
+  }
+
+  /**
+   * Checks if an evidence authority is considered authoritative evidence.
+   */
+  public isAuthoritativeTemporalEvidence(authority: UserModelEvidenceAuthority): boolean {
+    return (
+      authority === "CURRENT_TURN_EXPLICIT" ||
+      authority === "EXPLICIT_USER_MEMORY" ||
+      authority === "VERIFIED_EVIDENCE"
+    );
   }
 
   /**
@@ -328,12 +339,16 @@ export class TemporalMemoryEngine {
           continue;
         }
 
-        const isExplicit = cand.source === "EXPLICIT_USER" || cand.source === "USER_EXPLICIT";
+        const isExplicit = cand.source === "EXPLICIT_USER" || cand.source === "USER_EXPLICIT" || Boolean(cand.isExplicit);
+        const isVerified = cand.sourceClassification === "VERIFIED_EVIDENCE" || cand.source === "VERIFIED_TOOL_OUTPUT" || Boolean(cand.isVerified);
         const authority: UserModelEvidenceAuthority = isExplicit
           ? "EXPLICIT_USER_MEMORY"
-          : "VERIFIED_EVIDENCE";
-        const confidence = Math.min(1.0, Math.max(0.0, cand.confidence ?? (isExplicit ? 1.0 : 0.8)));
+          : isVerified
+          ? "VERIFIED_EVIDENCE"
+          : "REPEATED_VALIDATED_SIGNAL";
+        const confidence = Math.min(1.0, Math.max(0.0, cand.confidence ?? (isExplicit ? 1.0 : (isVerified ? 0.85 : 0.7))));
         const candTimestamp = cand.timestamp ?? currentTime;
+        const candPeriod = `day_${Math.floor(candTimestamp / (24 * 60 * 60 * 1000))}`;
 
         const existing = patternMap.get(normKey);
         if (!existing) {
@@ -347,7 +362,7 @@ export class TemporalMemoryEngine {
             lastObservedAt: candTimestamp,
             observationCount: 1,
             independentObservationCount: 1,
-            activePeriods: [`period_${candTimestamp}`],
+            activePeriods: [candPeriod],
             previousValues: [],
             temporalStatus: isExplicit ? "CURRENT" : "RECENT",
             confidence,
@@ -374,7 +389,7 @@ export class TemporalMemoryEngine {
               newConfidence: confidence,
               newFirstObservedAt: candTimestamp,
               newIndependentCount: 1,
-              newPeriods: [`period_${candTimestamp}`],
+              newPeriods: [candPeriod],
               evolutions,
               relations,
               currentTime,
@@ -494,7 +509,12 @@ export class TemporalMemoryEngine {
         pattern.isStale = true;
         pattern.temporalStatus = "STALE";
         diagnostics.staleCount++;
-      } else if (pattern.temporalStatus !== "SUPERSEDED" && pattern.temporalStatus !== "EXPIRED") {
+      } else if (
+        pattern.temporalStatus !== "SUPERSEDED" &&
+        pattern.temporalStatus !== "EXPIRED" &&
+        pattern.temporalStatus !== "STALE" &&
+        !pattern.isStale
+      ) {
         if (pattern.isCurrentTurnOverride) {
           pattern.temporalStatus = "CURRENT";
         } else if (pattern.previousValues.length > 0 && timeSinceObserved <= recencyWindowMs) {
@@ -526,7 +546,9 @@ export class TemporalMemoryEngine {
       const isHistorical =
         (pattern.temporalStatus as string) === "HISTORICAL" ||
         pattern.temporalStatus === "SUPERSEDED" ||
-        pattern.temporalStatus === "EXPIRED";
+        pattern.temporalStatus === "EXPIRED" ||
+        pattern.temporalStatus === "STALE" ||
+        pattern.isStale;
 
       if (isHistorical) {
         historicalPatterns.push(pattern);
@@ -855,8 +877,8 @@ export class TemporalMemoryEngine {
         distinctTurnKeys.add(turnKey);
 
         const periodKey = e.timestamp
-          ? `period_${Math.floor(e.timestamp / (24 * 60 * 60 * 1000))}`
-          : turnKey;
+          ? `day_${Math.floor(e.timestamp / (24 * 60 * 60 * 1000))}`
+          : (e.sessionId ? `session_${e.sessionId}` : turnKey);
 
         distinctPeriods.add(periodKey);
 
@@ -877,9 +899,9 @@ export class TemporalMemoryEngine {
     if (distinctTurnsCount === 0) {
       if (authority !== "PREDICTIVE_CONTEXT") {
         distinctTurnsCount = Math.max(1, fallbackCount);
-        distinctPeriods.add(`period_${firstObservedAt}`);
+        distinctPeriods.add(`day_${Math.floor(firstObservedAt / (24 * 60 * 60 * 1000))}`);
         if (lastObservedAt !== firstObservedAt) {
-          distinctPeriods.add(`period_${lastObservedAt}`);
+          distinctPeriods.add(`day_${Math.floor(lastObservedAt / (24 * 60 * 60 * 1000))}`);
         }
       } else {
         distinctTurnsCount = 0;
