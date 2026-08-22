@@ -76,6 +76,8 @@ import {
   PredictiveSignal,
   PredictionType,
 } from "./predictiveContextTypes";
+import { responseAdaptationEngine } from "./responseAdaptationEngine";
+import { ResponseAdaptationAnalysis } from "./responseAdaptationTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -90,6 +92,7 @@ export * from "./memoryConsolidationTypes";
 export * from "./memoryGovernanceTypes";
 export * from "./adaptiveLearningTypes";
 export * from "./predictiveContextTypes";
+export * from "./responseAdaptationTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -101,6 +104,7 @@ export { memoryConsolidationEngine } from "./memoryConsolidationEngine";
 export { memoryGovernanceEngine } from "./memoryGovernanceEngine";
 export { adaptiveLearningEngine } from "./adaptiveLearningEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
+export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { memoryStore } from "./memoryStore";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
@@ -130,6 +134,7 @@ export interface BrainAnalysis {
   memoryGovernanceAnalysis?: MemoryGovernanceAnalysis;
   adaptiveLearningAnalysis?: LearningAnalysis;
   predictiveContextAnalysis?: PredictiveContextAnalysis;
+  responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -454,6 +459,32 @@ export class BrainEngine {
       }
     }
 
+    // Step 12 / Phase 2: Response Adaptation & Personalization Engine (Deterministic, Bounded, Non-LLM)
+    // Downstream of PredictiveContextEngine — resolves multi-layer style profiling, format constraints, & safe personalization
+    const responseAdaptationAnalysis = responseAdaptationEngine.evaluate({
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      governanceAnalysis: memoryGovernanceAnalysis,
+      adaptiveLearning: adaptiveLearningAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+      },
+    });
+
+    // Add safe adaptation directives to promptDirectives
+    for (const d of responseAdaptationAnalysis.adaptationDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -469,6 +500,7 @@ export class BrainEngine {
       memoryGovernanceAnalysis,
       adaptiveLearningAnalysis,
       predictiveContextAnalysis,
+      responseAdaptationAnalysis,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,
