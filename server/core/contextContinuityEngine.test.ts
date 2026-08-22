@@ -1834,6 +1834,1318 @@ describe("Dora Phase 2 — Step 11: Cross-Session Context Continuity Engine", ()
       expect(JSON.stringify(res1)).toBe(JSON.stringify(res2));
     });
   });
+
+  // =========================================================================
+  // GROUP 12: Behavioral Authority Ordering (AV-1 to AV-7 & LEX-1 to LEX-2)
+  // =========================================================================
+  describe("Behavioral Authority Ordering & Lexicographic Ranking", () => {
+    it("AV-1: GOVERNANCE_APPROVED_MEMORY > CONFIRMED_ADAPTIVE_PATTERN", () => {
+      // Competing items for pref_language: Memory (low relevance) vs Adaptive Pattern (high relevance)
+      const res = engine.evaluate({
+        message: "What style should we use? Let's use rapid style",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_lang_gov",
+              key: "pref_language",
+              value: "Banglish",
+              source: "EXPLICIT_USER",
+              status: "ACTIVE",
+              createdAt: 1000,
+              updatedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        adaptiveLearning: {
+          confirmedPatterns: [
+            {
+              id: "adp_lang_habit",
+              key: "pref_language",
+              value: "English",
+              category: "COMMUNICATION",
+              status: "CONFIRMED",
+              confidence: 0.99,
+              lastObservedAt: 2000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      // Governed Memory (0.85) must win over Adaptive Pattern (0.60)
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "pref_language");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("GOVERNANCE_APPROVED_MEMORY");
+      expect(selected?.content).toBe("Banglish");
+
+      // Lower authority candidate must be suppressed as duplicate
+      const suppressed = res.suppressedItems.find((i) => i.id === "cc_adp_adp_lang_habit");
+      expect(suppressed).toBeDefined();
+      expect(suppressed?.suppressionReason).toBe("DUPLICATE_LOWER_AUTHORITY");
+    });
+
+    it("AV-2: CONFIRMED_USER_MODEL > CONFIRMED_ADAPTIVE_PATTERN", () => {
+      const res = engine.evaluate({
+        message: "how detailed should the explanation be? concise explanation",
+        longTermUserModel: {
+          profile: {
+            confirmedAttributes: [
+              {
+                key: "pref_verbosity",
+                normalizedValue: "detailed",
+                dimension: "PREFERENCES",
+                confidence: 0.85,
+                lastObservedAt: 1000,
+              } as any,
+            ],
+          } as any,
+        } as any,
+        adaptiveLearning: {
+          confirmedPatterns: [
+            {
+              id: "adp_verb",
+              key: "pref_verbosity",
+              value: "concise",
+              category: "COMMUNICATION",
+              status: "CONFIRMED",
+              confidence: 0.95,
+              lastObservedAt: 2000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "pref_verbosity");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("CONFIRMED_USER_MODEL");
+      expect(selected?.content).toBe("detailed");
+    });
+
+    it("AV-3: CONFIRMED_ADAPTIVE_PATTERN > PREDICTIVE_CONTEXT", () => {
+      const res = engine.evaluate({
+        message: "show me dark dark dark theme suggestions",
+        adaptiveLearning: {
+          confirmedPatterns: [
+            {
+              id: "adp_theme",
+              key: "pref_theme",
+              value: "light mode",
+              category: "PREFERENCES",
+              status: "CONFIRMED",
+              confidence: 0.80,
+              lastObservedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        predictiveContext: {
+          acceptedCandidates: [
+            {
+              id: "pred_theme",
+              type: "pref_theme",
+              description: "dark mode suggestion",
+              confidence: 0.99,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "pref_theme");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("CONFIRMED_ADAPTIVE_PATTERN");
+      expect(selected?.content).toBe("light mode");
+
+      const predSuppressed = res.suppressedItems.find((i) => i.id === "cc_pred_pred_theme");
+      expect(predSuppressed).toBeDefined();
+    });
+
+    it("AV-4: TEMPORAL_CONTEXT > PREDICTIVE_CONTEXT", () => {
+      const res = engine.evaluate({
+        message: "check hardware laptop recommendations",
+        temporalMemory: {
+          activePatterns: [
+            {
+              patternId: "temp_lap",
+              attributeKey: "pref_hardware_laptop",
+              currentValue: "ThinkPad X1 Carbon",
+              dimension: "HARDWARE",
+              temporalStatus: "STABLE",
+              confidence: 0.90,
+              lastObservedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        predictiveContext: {
+          acceptedCandidates: [
+            {
+              id: "pred_lap",
+              type: "pref_hardware_laptop",
+              description: "MacBook Pro",
+              confidence: 0.95,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000, activeTopic: "hardware" },
+      });
+
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "pref_hardware_laptop");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("TEMPORAL_CONTEXT");
+      expect(selected?.content).toBe("ThinkPad X1 Carbon");
+    });
+
+    it("AV-5: CURRENT_TURN_EXPLICIT > every historical layer", () => {
+      const res = engine.evaluate({
+        message: "Respond in English for this response please",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_lang",
+              key: "pref_language",
+              value: "Banglish",
+              source: "EXPLICIT_USER",
+              status: "ACTIVE",
+              createdAt: 1000,
+              updatedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        longTermUserModel: {
+          profile: {
+            confirmedAttributes: [
+              {
+                key: "pref_language",
+                normalizedValue: "Banglish",
+                dimension: "PREFERENCES",
+                confidence: 0.95,
+                lastObservedAt: 1000,
+              } as any,
+            ],
+          } as any,
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      expect(res.directives.some((d) => d.includes("English"))).toBe(true);
+      expect(res.directives.some((d) => d.includes("Banglish"))).toBe(false);
+      expect(res.diagnostics.suppressedConflictCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("AV-6: HARD_CONSTRAINT > historical context", () => {
+      const res = engine.evaluate({
+        message: "what security or auth guidelines do we have?",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_sec_hard",
+              key: "sec_policy",
+              value: "Never expose raw secrets or api keys",
+              source: "EXPLICIT_USER",
+              authority: "HARD_CONSTRAINT",
+              status: "ACTIVE",
+              createdAt: 1000,
+              updatedAt: 1000,
+            } as any,
+            {
+              id: "mem_sec_historical",
+              key: "sec_policy",
+              value: "Allow debug token print in dev mode",
+              source: "EXPLICIT_USER",
+              status: "ACTIVE",
+              createdAt: 1000,
+              updatedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "sec_policy");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("HARD_CONSTRAINT");
+      expect(selected?.content).toContain("Never expose raw secrets");
+    });
+
+    it("AV-7: VERIFIED_EVIDENCE > lower-authority high-relevance context", () => {
+      const res = engine.evaluate({
+        message: "tell me about our database postgres deployment",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_db_verified",
+              key: "database_backend",
+              value: "PostgreSQL 16 deployed on port 5432",
+              source: "VERIFIED_EVIDENCE",
+              authority: "VERIFIED_EVIDENCE",
+              status: "ACTIVE",
+              createdAt: 1000,
+              updatedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        longTermUserModel: {
+          profile: {
+            confirmedAttributes: [
+              {
+                key: "database_backend",
+                normalizedValue: "PostgreSQL with SQLite test mock",
+                dimension: "PREFERENCES",
+                confidence: 0.99,
+                lastObservedAt: 2000,
+              } as any,
+            ],
+          } as any,
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "database_backend");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("VERIFIED_EVIDENCE");
+      expect(selected?.content).toContain("PostgreSQL 16 deployed");
+    });
+
+    it("LEX-1: Adversarial test: Low-authority with 1.0 relevance & recency CANNOT beat High-authority with 0.10 relevance & recency", () => {
+      const itemHigh: ContextContinuityItem = {
+        id: "item_high",
+        type: "MEMORY",
+        sourceId: "src_1",
+        title: "High Authority Fact",
+        content: "High Authority Content",
+        normalizedKey: "fact_key",
+        authority: "GOVERNANCE_APPROVED_MEMORY",
+        authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS["GOVERNANCE_APPROVED_MEMORY"], // 0.85
+        relevanceScore: 0.10,
+        recencyScore: 0.10,
+        compositeScore: 0.40,
+        scope: "GLOBAL",
+        timestamp: 1000,
+        isExplicitlyRecalled: false,
+        isCurrentTurnConflict: false,
+        isTopicIsolated: false,
+        isSensitive: false,
+        isSuppressed: false,
+      };
+
+      const itemLow: ContextContinuityItem = {
+        id: "item_low",
+        type: "ADAPTIVE_PATTERN",
+        sourceId: "src_2",
+        title: "Low Authority Fact",
+        content: "Low Authority Content",
+        normalizedKey: "fact_key",
+        authority: "CONFIRMED_ADAPTIVE_PATTERN",
+        authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS["CONFIRMED_ADAPTIVE_PATTERN"], // 0.60
+        relevanceScore: 1.00,
+        recencyScore: 1.00,
+        compositeScore: 0.90,
+        scope: "GLOBAL",
+        timestamp: 5000,
+        isExplicitlyRecalled: false,
+        isCurrentTurnConflict: false,
+        isTopicIsolated: false,
+        isSensitive: false,
+        isSuppressed: false,
+      };
+
+      const cmp = engine.compareContinuityItems(itemHigh, itemLow);
+      expect(cmp).toBeLessThan(0); // itemHigh should sort before itemLow
+
+      const cmpReverse = engine.compareContinuityItems(itemLow, itemHigh);
+      expect(cmpReverse).toBeGreaterThan(0);
+    });
+
+    it("LEX-2: Multiple candidates sort strictly by authority tiers first", () => {
+      const tiers: ContinuitySourceAuthority[] = [
+        "CURRENT_TURN_EXPLICIT",
+        "HARD_CONSTRAINT",
+        "VERIFIED_EVIDENCE",
+        "GOVERNANCE_APPROVED_MEMORY",
+        "CONFIRMED_USER_MODEL",
+        "ACTIVE_GOAL_PROJECT_COMMITMENT",
+        "TEMPORAL_CONTEXT",
+        "CONFIRMED_ADAPTIVE_PATTERN",
+        "PREDICTIVE_CONTEXT",
+        "SYSTEM_DEFAULT",
+      ];
+
+      const items: ContextContinuityItem[] = tiers.map((tier, idx) => ({
+        id: `item_${tier}`,
+        type: "MEMORY",
+        sourceId: `src_${idx}`,
+        title: `Item ${tier}`,
+        content: `Content for ${tier}`,
+        normalizedKey: `key_${idx}`,
+        authority: tier,
+        authorityWeight: CONTINUITY_AUTHORITY_WEIGHTS[tier],
+        relevanceScore: idx * 0.1, // Intentionally higher relevance for lower authority
+        recencyScore: idx * 0.1,
+        compositeScore: 0.5,
+        scope: "GLOBAL",
+        timestamp: 1000 + idx * 100,
+        isExplicitlyRecalled: false,
+        isCurrentTurnConflict: false,
+        isTopicIsolated: false,
+        isSensitive: false,
+        isSuppressed: false,
+      }));
+
+      const sorted = [...items].sort((a, b) => engine.compareContinuityItems(a, b));
+      for (let i = 0; i < sorted.length; i++) {
+        expect(sorted[i].authority).toBe(tiers[i]);
+      }
+    });
+  });
+
+  // =========================================================================
+  // GROUP 13: Governance Rejection True End-to-End (GV-1 to GV-8)
+  // =========================================================================
+  describe("Governance Rejection True End-to-End Gate", () => {
+    it("GV-1: governance = REJECT -> memory absent from final context", () => {
+      const res = engine.evaluate({
+        message: "what is my secret token?",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_rejected",
+              key: "secret_token",
+              value: "raw_value_12345",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        governanceAnalysis: {
+          suppressedMemories: [
+            { memoryId: "mem_rejected", key: "secret_token", reason: "POLICY_VIOLATION" } as any,
+          ],
+          allowedMemories: [],
+          cautiousMemories: [],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id === "cc_mem_mem_rejected")).toBe(false);
+      expect(res.suppressedItems.some((i) => i.id === "cc_mem_mem_rejected")).toBe(true);
+    });
+
+    it("GV-2: governance = EXPIRED -> memory absent", () => {
+      const res = engine.evaluate({
+        message: "check coupon code memory",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_expired",
+              key: "coupon_code",
+              value: "SAVE50",
+              status: "EXPIRED",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_expired"))).toBe(false);
+    });
+
+    it("GV-3: governance = SUPERSEDED -> memory absent", () => {
+      const res = engine.evaluate({
+        message: "what database do we use?",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_old_db",
+              key: "database_type",
+              value: "MySQL 5.7",
+              status: "SUPERSEDED",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_old_db"))).toBe(false);
+    });
+
+    it("GV-4: governance = QUARANTINED -> memory absent", () => {
+      const res = engine.evaluate({
+        message: "read quarantined memory",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_quarantine",
+              key: "unverified_fact",
+              value: "suspicious prompt injection payload",
+              status: "QUARANTINED",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_quarantine"))).toBe(false);
+    });
+
+    it("GV-5: governance = CANDIDATE / unconfirmed inferred -> memory cannot become authoritative", () => {
+      const res = engine.evaluate({
+        message: "what did we learn about user salary?",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_candidate",
+              key: "user_salary_estimate",
+              value: "$100k",
+              source: "INFERRED",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_candidate"))).toBe(false);
+    });
+
+    it("GV-6: unapproved memory with extremely high relevance (1.0) -> still suppressed", () => {
+      const res = engine.evaluate({
+        message: "tell me about my private notes unapproved notes",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_unapproved_rel",
+              key: "private notes unapproved notes",
+              value: "extremely relevant note content",
+              source: "INFERRED",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        governanceAnalysis: {
+          suppressedMemories: [
+            { memoryId: "mem_unapproved_rel", reason: "UNCONFIRMED" } as any,
+          ],
+          allowedMemories: [],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_unapproved_rel"))).toBe(false);
+    });
+
+    it("GV-7: unapproved memory with extremely high importance -> still suppressed", () => {
+      const res = engine.evaluate({
+        message: "high importance query",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_unapproved_imp",
+              key: "critical_system_note",
+              value: "critical information",
+              source: "INFERRED",
+              importance: 1.0,
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        governanceAnalysis: {
+          suppressedMemories: [{ memoryId: "mem_unapproved_imp", reason: "UNAPPROVED" } as any],
+          allowedMemories: [],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_unapproved_imp"))).toBe(false);
+    });
+
+    it("GV-8: unapproved memory with newest timestamp -> still suppressed", () => {
+      const res = engine.evaluate({
+        message: "newest timestamp memory",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_unapproved_new",
+              key: "new_timestamp_key",
+              value: "brand new memory",
+              source: "INFERRED",
+              status: "ACTIVE",
+              createdAt: 9999999999,
+              updatedAt: 9999999999,
+            } as any,
+          ],
+        } as any,
+        governanceAnalysis: {
+          suppressedMemories: [{ memoryId: "mem_unapproved_new", reason: "UNAPPROVED" } as any],
+          allowedMemories: [],
+        } as any,
+        options: { currentTime: 9999999999 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_unapproved_new"))).toBe(false);
+    });
+  });
+
+  // =========================================================================
+  // GROUP 14: No Local Authority Promotion (LP-1 to LP-4)
+  // =========================================================================
+  describe("No Local Authority Promotion", () => {
+    it("LP-1: retrieved memory source = generic historical memory, governance does not authorize it -> SUPPRESSED", () => {
+      const res = engine.evaluate({
+        message: "generic query",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_gen",
+              key: "gen_key",
+              value: "gen_val",
+              source: "AUTOMATIC_EXTRACTION",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_gen"))).toBe(false);
+    });
+
+    it("LP-2: high confidence but unapproved -> SUPPRESSED", () => {
+      const res = engine.evaluate({
+        message: "confidence test",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_conf",
+              key: "conf_key",
+              value: "conf_val",
+              source: "INFERRED",
+              confidence: 0.99,
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_conf"))).toBe(false);
+    });
+
+    it("LP-3: high relevance but unapproved -> SUPPRESSED", () => {
+      const res = engine.evaluate({
+        message: "specific high relevance phrase",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_rel",
+              key: "specific high relevance phrase",
+              value: "specific high relevance phrase match",
+              source: "INFERRED",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_rel"))).toBe(false);
+    });
+
+    it("LP-4: recent + important + relevant but unapproved -> SUPPRESSED", () => {
+      const res = engine.evaluate({
+        message: "crucial updated insight",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_triple",
+              key: "crucial updated insight",
+              value: "triple threat unapproved item",
+              source: "INFERRED",
+              importance: 1.0,
+              confidence: 1.0,
+              status: "ACTIVE",
+              createdAt: 1000,
+              updatedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(res.selectedItems.some((i) => i.id.includes("mem_triple"))).toBe(false);
+    });
+  });
+
+  // =========================================================================
+  // GROUP 15: Predictive Context Conflict Tests (PCV-1 to PCV-5)
+  // =========================================================================
+  describe("Predictive Context Conflict Verification", () => {
+    it("PCV-1: Governed memory + predictive suggestion with same normalized key -> governed memory survives", () => {
+      const res = engine.evaluate({
+        message: "what tone should I use? concise tone",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_tone",
+              key: "pref_tone",
+              value: "friendly and professional",
+              source: "EXPLICIT_USER",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        predictiveContext: {
+          acceptedCandidates: [
+            {
+              id: "pred_tone",
+              type: "pref_tone",
+              description: "robotic concise tone",
+              confidence: 0.95,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "pref_tone");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("GOVERNANCE_APPROVED_MEMORY");
+      expect(selected?.content).toBe("friendly and professional");
+    });
+
+    it("PCV-2: Confirmed user model + predictive context -> confirmed user model survives", () => {
+      const res = engine.evaluate({
+        message: "check language settings",
+        longTermUserModel: {
+          profile: {
+            confirmedAttributes: [
+              {
+                key: "pref_language",
+                normalizedValue: "Banglish",
+                dimension: "PREFERENCES",
+                confidence: 0.90,
+                lastObservedAt: 1000,
+              } as any,
+            ],
+          } as any,
+        } as any,
+        predictiveContext: {
+          acceptedCandidates: [
+            {
+              id: "pred_lang",
+              type: "pref_language",
+              description: "English",
+              confidence: 0.95,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "pref_language");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("CONFIRMED_USER_MODEL");
+      expect(selected?.content).toBe("Banglish");
+    });
+
+    it("PCV-3: Adaptive pattern + predictive context -> adaptive pattern survives", () => {
+      const res = engine.evaluate({
+        message: "suggest themes",
+        adaptiveLearning: {
+          confirmedPatterns: [
+            {
+              id: "adp_th",
+              key: "pref_theme",
+              value: "dark",
+              category: "PREFERENCES",
+              status: "CONFIRMED",
+              confidence: 0.85,
+              lastObservedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        predictiveContext: {
+          acceptedCandidates: [
+            {
+              id: "pred_th",
+              type: "pref_theme",
+              description: "solarized light",
+              confidence: 0.95,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      const selected = res.selectedItems.find((i) => i.normalizedKey === "pref_theme");
+      expect(selected).toBeDefined();
+      expect(selected?.authority).toBe("CONFIRMED_ADAPTIVE_PATTERN");
+      expect(selected?.content).toBe("dark");
+    });
+
+    it("PCV-4: Predictive context alone with no competing context -> predictive item may remain as advisory", () => {
+      const res = engine.evaluate({
+        message: "how should we format logs?",
+        predictiveContext: {
+          acceptedCandidates: [
+            {
+              id: "pred_log_fmt",
+              type: "log_format_suggestion",
+              description: "JSON structured log format",
+              confidence: 0.75,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      const pred = res.selectedItems.find((i) => i.id === "cc_pred_pred_log_fmt");
+      expect(pred).toBeDefined();
+      expect(pred?.authority).toBe("PREDICTIVE_CONTEXT");
+    });
+
+    it("PCV-5: Predictive context must never mutate input structures", () => {
+      const predInput: any = {
+        acceptedCandidates: [
+          { id: "p1", type: "sug_1", description: "Suggestion 1" },
+        ],
+      };
+      const snapshot = JSON.stringify(predInput);
+
+      engine.evaluate({
+        message: "test prediction side effects",
+        predictiveContext: predInput,
+        options: { currentTime: 1000 },
+      });
+
+      expect(JSON.stringify(predInput)).toBe(snapshot);
+    });
+  });
+
+  // =========================================================================
+  // GROUP 16: Current-Turn Override Behavior & State Invariance (CTV-1 to CTV-4)
+  // =========================================================================
+  describe("Current-Turn Override Behavior & State Invariance", () => {
+    it("CTV-1: historical ASUS preference, current turn says Lenovo -> ASUS suppressed", () => {
+      const res = engine.evaluate({
+        message: "Recommend Lenovo laptops instead of ASUS for my team",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_asus",
+              key: "pref_hardware_laptop",
+              value: "ASUS ROG Zephyrus",
+              source: "EXPLICIT_USER",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 2000, activeTopic: "hardware" },
+      });
+
+      expect(res.directives.some((d) => d.includes("ASUS"))).toBe(false);
+      expect(res.directives.some((d) => d.includes("Lenovo"))).toBe(true);
+      expect(res.diagnostics.suppressedConflictCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("CTV-2: historical Banglish preference, current turn says English -> Banglish suppressed", () => {
+      const res = engine.evaluate({
+        message: "Please write the explanation in English this time",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_bn",
+              key: "pref_language",
+              value: "Banglish",
+              source: "EXPLICIT_USER",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      expect(res.directives.some((d) => d.includes("Banglish"))).toBe(false);
+      expect(res.directives.some((d) => d.includes("English"))).toBe(true);
+    });
+
+    it("CTV-3: historical project A, current turn explicitly switches to project B -> project A suppressed", () => {
+      const res = engine.evaluate({
+        message: "Forget Dora for now, let's switch to project Orion",
+        goalProjectAnalysis: {
+          activeProjects: [
+            {
+              projectId: "p_dora",
+              name: "Dora",
+              status: "ACTIVE",
+              goals: [{ goalId: "g1", title: "Dora Core", status: "ACTIVE" } as any],
+              milestones: [],
+              tasks: [],
+              commitments: [],
+              dependencies: [],
+              events: [],
+              sourceAuthority: "VERIFIED_EVIDENCE",
+              confidence: 1.0,
+              createdAt: 1000,
+              updatedAt: 1000,
+              lineage: [],
+            } as any,
+            {
+              projectId: "p_orion",
+              name: "Orion",
+              status: "ACTIVE",
+              goals: [{ goalId: "g2", title: "Orion Portal", status: "ACTIVE" } as any],
+              milestones: [],
+              tasks: [],
+              commitments: [],
+              dependencies: [],
+              events: [],
+              sourceAuthority: "VERIFIED_EVIDENCE",
+              confidence: 1.0,
+              createdAt: 1000,
+              updatedAt: 1000,
+              lineage: [],
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 2000 },
+      });
+
+      expect(res.continuityStatus).toBe("SWITCHED");
+      expect(res.activeProject?.name).toBe("Orion");
+      expect(res.suppressedItems.some((i) => i.projectId === "p_dora")).toBe(true);
+    });
+
+    it("CTV-4: Current-turn override MUST NOT mutate persistent historical records (Before/After snapshot)", () => {
+      const rawMemories = [
+        {
+          id: "mem_immutable",
+          key: "pref_hardware_laptop",
+          value: "ASUS",
+          source: "EXPLICIT_USER",
+          status: "ACTIVE",
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      ];
+      const rawProjects = [
+        {
+          projectId: "p_imm",
+          name: "Dora",
+          status: "ACTIVE",
+          goals: [{ goalId: "g1", title: "Goal 1", status: "ACTIVE" }],
+          milestones: [],
+          tasks: [{ taskId: "t1", title: "Task 1", status: "READY" }],
+          commitments: [],
+          dependencies: [],
+          events: [],
+          sourceAuthority: "VERIFIED_EVIDENCE",
+          confidence: 1.0,
+          createdAt: 1000,
+          updatedAt: 1000,
+          lineage: [],
+        },
+      ];
+
+      const beforeMemSnapshot = JSON.stringify(rawMemories);
+      const beforeProjSnapshot = JSON.stringify(rawProjects);
+
+      engine.evaluate({
+        message: "Switch from ASUS to Lenovo and switch from Dora to Titan",
+        retrievedMemories: { memories: rawMemories as any } as any,
+        goalProjectAnalysis: { activeProjects: rawProjects as any } as any,
+        options: { currentTime: 2000 },
+      });
+
+      const afterMemSnapshot = JSON.stringify(rawMemories);
+      const afterProjSnapshot = JSON.stringify(rawProjects);
+
+      expect(afterMemSnapshot).toBe(beforeMemSnapshot);
+      expect(afterProjSnapshot).toBe(beforeProjSnapshot);
+    });
+  });
+
+  // =========================================================================
+  // GROUP 17: Topic Isolation Adversarial Tests (TI-V1 to TI-V5)
+  // =========================================================================
+  describe("Topic Isolation Adversarial Gate", () => {
+    it("TI-V1: weather query + laptop preference -> laptop preference suppressed", () => {
+      const res = engine.evaluate({
+        message: "What is the weather forecast in Dhaka tomorrow?",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_lap",
+              key: "pref_hardware_laptop",
+              value: "ThinkPad",
+              source: "EXPLICIT_USER",
+              category: "HARDWARE",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000, isTopicIsolated: true, activeTopic: "weather" },
+      });
+
+      expect(res.selectedItems.some((i) => i.id === "cc_mem_mem_lap")).toBe(false);
+      expect(res.suppressedItems.some((i) => i.suppressionReason === "TOPIC_ISOLATED")).toBe(true);
+    });
+
+    it("TI-V2: coding query + unrelated shopping preference -> shopping preference suppressed", () => {
+      const res = engine.evaluate({
+        message: "How do I implement binary search in TypeScript?",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_shop",
+              key: "shopping_groceries_brand",
+              value: "Organic Valley Milk",
+              source: "EXPLICIT_USER",
+              category: "SHOPPING",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000, isTopicIsolated: true, activeTopic: "coding" },
+      });
+
+      expect(res.selectedItems.some((i) => i.id === "cc_mem_mem_shop")).toBe(false);
+      expect(res.suppressedItems.some((i) => i.suppressionReason === "TOPIC_ISOLATED")).toBe(true);
+    });
+
+    it("TI-V3: Dora project query + Dora project context -> compatible context retained", () => {
+      const res = engine.evaluate({
+        message: "Let's work on Dora pipeline refactoring",
+        goalProjectAnalysis: {
+          activeProjects: [
+            {
+              projectId: "p_dora",
+              name: "Dora",
+              status: "ACTIVE",
+              goals: [{ goalId: "g1", title: "Refactor pipeline", status: "ACTIVE" } as any],
+              milestones: [],
+              tasks: [{ taskId: "t1", title: "Add step 11 tests", status: "READY" } as any],
+              commitments: [],
+              dependencies: [],
+              events: [],
+              sourceAuthority: "VERIFIED_EVIDENCE",
+              confidence: 1.0,
+              createdAt: 1000,
+              updatedAt: 1000,
+              lineage: [],
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000, activeTopic: "Dora project" },
+      });
+
+      expect(res.activeProject?.name).toBe("Dora");
+      expect(res.selectedItems.some((i) => i.projectId === "p_dora")).toBe(true);
+    });
+
+    it("TI-V4: global language preference + topic switch -> language preference retained", () => {
+      const res = engine.evaluate({
+        message: "Explain quantum computing basics",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_lang_global",
+              key: "pref_language",
+              value: "Banglish",
+              source: "EXPLICIT_USER",
+              category: "COMMUNICATION",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000, isTopicIsolated: true, activeTopic: "quantum computing" },
+      });
+
+      const langItem = res.selectedItems.find((i) => i.normalizedKey === "pref_language");
+      expect(langItem).toBeDefined();
+      expect(langItem?.content).toBe("Banglish");
+      expect(res.directives.some((d) => d.includes("Banglish"))).toBe(true);
+    });
+
+    it("TI-V5: domain preference with uncertain topic compatibility -> SUPPRESS rather than guess", () => {
+      const res = engine.evaluate({
+        message: "Calculate the integral of x squared",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_gaming",
+              key: "favorite_game_genre",
+              value: "RPG",
+              source: "EXPLICIT_USER",
+              category: "GAMING",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000, isTopicIsolated: true, activeTopic: "calculus" },
+      });
+
+      expect(res.selectedItems.some((i) => i.id === "cc_mem_mem_gaming")).toBe(false);
+      expect(res.suppressedItems.some((i) => i.id === "cc_mem_mem_gaming")).toBe(true);
+    });
+  });
+
+  // =========================================================================
+  // GROUP 18: Deduplication, Budgeting, Read-Only, Determinism & Sanitization
+  // =========================================================================
+  describe("Deduplication, Budgeting, Read-Only & Sanitization Defenses", () => {
+    it("DEDUP-1: Four competing representations across layers collapse to highest authority representation", () => {
+      const res = engine.evaluate({
+        message: "how should we communicate?",
+        retrievedMemories: {
+          memories: [
+            {
+              id: "mem_lang_1",
+              key: "pref_language",
+              value: "Banglish",
+              source: "EXPLICIT_USER",
+              status: "ACTIVE",
+              createdAt: 1000,
+            } as any,
+          ],
+        } as any,
+        longTermUserModel: {
+          profile: {
+            confirmedAttributes: [
+              {
+                key: "pref_language",
+                normalizedValue: "Banglish",
+                dimension: "PREFERENCES",
+                confidence: 0.90,
+                lastObservedAt: 1000,
+              } as any,
+            ],
+          } as any,
+        } as any,
+        temporalMemory: {
+          activePatterns: [
+            {
+              patternId: "temp_lang_1",
+              attributeKey: "pref_language",
+              currentValue: "Banglish",
+              dimension: "PREFERENCES",
+              temporalStatus: "STABLE",
+              confidence: 0.85,
+              lastObservedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        adaptiveLearning: {
+          confirmedPatterns: [
+            {
+              id: "adp_lang_1",
+              key: "pref_language",
+              value: "Banglish",
+              category: "COMMUNICATION",
+              status: "CONFIRMED",
+              confidence: 0.80,
+              lastObservedAt: 1000,
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      });
+
+      const langItems = res.selectedItems.filter((i) => i.normalizedKey === "pref_language");
+      expect(langItems.length).toBe(1);
+      expect(langItems[0].authority).toBe("GOVERNANCE_APPROVED_MEMORY");
+      expect(res.diagnostics.suppressedDuplicateCount).toBeGreaterThanOrEqual(2);
+    });
+
+    it("BUDGET-1: Truncation strictly preserves highest-authority items and discards lower-authority duplicates", () => {
+      // 10 memories, 5 predictive items, 3 user model items
+      const memories = Array.from({ length: 8 }, (_, i) => ({
+        id: `mem_b_${i}`,
+        key: `note_item_${i}`,
+        value: `content ${i}`,
+        source: "EXPLICIT_USER",
+        status: "ACTIVE",
+        createdAt: 1000 + i,
+      }));
+
+      const res = engine.evaluate({
+        message: "show me note item context",
+        recallSignal: { isExplicitRecall: true, triggerType: "STATUS_RECALL" } as any,
+        retrievedMemories: { memories: memories as any } as any,
+        longTermUserModel: {
+          profile: {
+            confirmedAttributes: [
+              {
+                key: "user_attr_1",
+                normalizedValue: "val1",
+                dimension: "COMMUNICATION",
+                confidence: 0.9,
+                lastObservedAt: 1000,
+              } as any,
+            ],
+          } as any,
+        } as any,
+        predictiveContext: {
+          acceptedCandidates: [
+            { id: "pred_1", type: "pred_type", description: "pred desc", confidence: 0.99 },
+          ],
+        } as any,
+        options: {
+          currentTime: 2000,
+          budgetConfig: {
+            maxMemories: 3,
+            maxTotalContextItems: 4,
+          },
+        },
+      });
+
+      expect(res.selectedItems.length).toBeLessThanOrEqual(4);
+      // All selected items must have high authority (MEMORY or USER_MODEL)
+      for (const item of res.selectedItems) {
+        expect(CONTINUITY_AUTHORITY_WEIGHTS[item.authority]).toBeGreaterThanOrEqual(0.80);
+      }
+    });
+
+    it("RO-1: Complete Read-Only verification: Deep snapshot comparison of all input objects", () => {
+      const retrievedMemories = {
+        memories: [
+          { id: "m1", key: "k1", value: "v1", source: "EXPLICIT_USER", status: "ACTIVE", createdAt: 1000 },
+        ],
+      };
+      const userModel = {
+        profile: {
+          confirmedAttributes: [
+            { key: "um_k1", normalizedValue: "um_v1", dimension: "PREFERENCES", confidence: 0.9, lastObservedAt: 1000 },
+          ],
+        },
+      };
+      const goalProject = {
+        activeProjects: [
+          {
+            projectId: "p1",
+            name: "Dora",
+            status: "ACTIVE",
+            goals: [{ goalId: "g1", title: "Goal 1", status: "ACTIVE" }],
+            milestones: [],
+            tasks: [{ taskId: "t1", title: "Task 1", status: "READY" }],
+            commitments: [],
+            dependencies: [],
+            events: [],
+            sourceAuthority: "VERIFIED_EVIDENCE",
+            confidence: 1.0,
+            createdAt: 1000,
+            updatedAt: 1000,
+            lineage: [],
+          },
+        ],
+      };
+
+      const snapMem = JSON.stringify(retrievedMemories);
+      const snapUM = JSON.stringify(userModel);
+      const snapGP = JSON.stringify(goalProject);
+
+      engine.evaluate({
+        message: "read-only verification test",
+        retrievedMemories: retrievedMemories as any,
+        longTermUserModel: userModel as any,
+        goalProjectAnalysis: goalProject as any,
+        options: { currentTime: 1000 },
+      });
+
+      expect(JSON.stringify(retrievedMemories)).toBe(snapMem);
+      expect(JSON.stringify(userModel)).toBe(snapUM);
+      expect(JSON.stringify(goalProject)).toBe(snapGP);
+    });
+
+    it("DET-1: 10-Iteration Determinism: Exact identical outputs across repeated invocations", () => {
+      const input: ContextContinuityEvaluationInput = {
+        message: "where were we on Dora?",
+        retrievedMemories: {
+          memories: [
+            { id: "m1", key: "pref_language", value: "Banglish", source: "EXPLICIT_USER", status: "ACTIVE", createdAt: 1000 },
+          ],
+        } as any,
+        goalProjectAnalysis: {
+          activeProjects: [
+            {
+              projectId: "p_dora",
+              name: "Dora",
+              status: "ACTIVE",
+              goals: [{ goalId: "g1", title: "Complete Step 11", status: "ACTIVE" } as any],
+              milestones: [],
+              tasks: [{ taskId: "t1", title: "Write tests", status: "READY" } as any],
+              commitments: [],
+              dependencies: [],
+              events: [],
+              sourceAuthority: "VERIFIED_EVIDENCE",
+              confidence: 1.0,
+              createdAt: 1000,
+              updatedAt: 1000,
+              lineage: [],
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1000 },
+      };
+
+      const baseResult = JSON.stringify(engine.evaluate(input));
+      for (let i = 0; i < 10; i++) {
+        const iterResult = JSON.stringify(engine.evaluate(input));
+        expect(iterResult).toBe(baseResult);
+      }
+    });
+
+    it("SAN-1: Adversarial directive sanitization: Strips mem_, pat_, cand_, evi_, proj_, goal_, commit_, db_, sha256:, 0x..., floats, and timestamps", () => {
+      const adversarialInput: ContextContinuityEvaluationInput = {
+        message: "where were we?",
+        goalProjectAnalysis: {
+          activeProjects: [
+            {
+              projectId: "proj_9b542886_6ddd_4e46",
+              name: "Dora",
+              status: "ACTIVE",
+              goals: [{ goalId: "goal_12345678", title: "Complete Phase 2", status: "ACTIVE" } as any],
+              milestones: [],
+              tasks: [{ taskId: "task_abcdef12", title: "Refactor core cand_9999 db_prod sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 0xdeadbeef", status: "READY" } as any],
+              commitments: [{ commitmentId: "commit_77778888", title: "Review commit_8888 score=0.98", status: "ACTIVE" } as any],
+              dependencies: [],
+              events: [],
+              sourceAuthority: "VERIFIED_EVIDENCE",
+              confidence: 0.99,
+              createdAt: 1700000000000,
+              updatedAt: 1700000000000,
+              lineage: [],
+            } as any,
+          ],
+        } as any,
+        options: { currentTime: 1700000000000 },
+      };
+
+      const res = engine.evaluate(adversarialInput);
+      for (const d of res.sanitizedDirectives) {
+        expect(d).not.toMatch(/\b(?:proj_|goal_|task_|commit_|cand_|db_|mem_|pat_|evi_)[a-zA-Z0-9_-]+\b/);
+        expect(d).not.toMatch(/\bsha256:[a-f0-9]+\b/i);
+        expect(d).not.toMatch(/\b0x[a-f0-9]+\b/i);
+        expect(d).not.toMatch(/\b(?:confidence|score|authority)\s*[:=]?\s*0?\.\d+\b/i);
+        expect(d).not.toMatch(/\b1700000000000\b/);
+      }
+    });
+  });
 });
 
 console.log("\n=============================================");

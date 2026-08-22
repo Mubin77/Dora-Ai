@@ -215,5 +215,6 @@ export interface ContextContinuityEvaluationInput {
   goalProjectAnalysis?: GoalProjectAnalysis;
   adaptiveLearning?: LearningAnalysis;
   predictiveContext?: PredictiveContextAnalysis;
+  recallSignal?: ExplicitRecallSignal;
   options?: ContextContinuityOptions;
 }
