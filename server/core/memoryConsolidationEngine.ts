@@ -777,7 +777,7 @@ export class MemoryConsolidationEngine {
 
     // 1. Privacy Health
     const isSensitive = this.sensitivePatterns.some((p) =>
-      p.test(`${memory.key} ${memory.value} ${memory.tags.join(" ")}`)
+      p.test(`${memory.key} ${memory.value} ${(memory.tags || []).join(" ")}`)
     );
     const privacyHealth = isSensitive ? 0.0 : 1.0;
     if (isSensitive) {
@@ -905,7 +905,7 @@ export class MemoryConsolidationEngine {
         shouldForget =
           normKey.includes(target) ||
           normVal.includes(normTarget) ||
-          memory.tags.some((t) => t.toLowerCase().includes(target));
+          (memory.tags || []).some((t) => t.toLowerCase().includes(target));
       }
 
       if (shouldForget) {

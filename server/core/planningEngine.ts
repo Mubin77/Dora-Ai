@@ -78,7 +78,7 @@ export class PlanningEngine {
         context.archivedPlans.push({
           ...activeTaskPlan,
           status: activeTaskPlan.status === "IN_PROGRESS" ? "CANCELLED" : activeTaskPlan.status,
-          updatedAt: Date.now(),
+          updatedAt: context.updatedAt || 0,
         });
         context.activeTaskPlan = undefined;
       }
@@ -90,7 +90,7 @@ export class PlanningEngine {
     if (this.cancellationRegex.test(trimmed) || lower === "cancel" || lower === "never mind") {
       if (activeTaskPlan && activeTaskPlan.status !== "COMPLETED" && activeTaskPlan.status !== "CANCELLED") {
         activeTaskPlan.status = "CANCELLED";
-        activeTaskPlan.updatedAt = Date.now();
+        activeTaskPlan.updatedAt = context?.updatedAt || 0;
         for (const step of activeTaskPlan.steps) {
           if (step.status === "IN_PROGRESS" || step.status === "READY" || step.status === "NOT_STARTED") {
             step.status = "CANCELLED";
@@ -129,7 +129,7 @@ export class PlanningEngine {
     ) {
       if (activeTaskPlan && (activeTaskPlan.status === "READY" || activeTaskPlan.status === "NOT_STARTED" || activeTaskPlan.status === "IN_PROGRESS")) {
         activeTaskPlan.status = "IN_PROGRESS";
-        activeTaskPlan.updatedAt = Date.now();
+        activeTaskPlan.updatedAt = context?.updatedAt || 0;
 
         // Check if there is already an active step in progress
         const existingInProgressStep = activeTaskPlan.steps.find(s => s.status === "IN_PROGRESS");
@@ -369,6 +369,22 @@ export class PlanningEngine {
     return false;
   }
 
+  private deterministicHash(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash);
+  }
+
+  public generateDeterministicId(prefix: string, contextId: string, turn: number | string, seed: string): string {
+    const raw = `${contextId}_${turn}_${seed}`;
+    const hash = this.deterministicHash(raw).toString(36).substring(0, 6);
+    return `${prefix}_${contextId}_t${turn}_${hash}`;
+  }
+
   /**
    * Builds a new structured TaskPlan from first principles
    */
@@ -379,10 +395,12 @@ export class PlanningEngine {
     reasoning: ReasoningAnalysis,
     context?: ConversationContext
   ): TaskPlan {
-    const planId = `plan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const priority = this.derivePriority(lower);
     const goal = context?.userGoal || context?.currentTask || "execute_user_request";
-    const now = Date.now();
+    const contextId = context?.id || "default";
+    const turn = context?.turnsCount ?? 0;
+    const planId = this.generateDeterministicId("plan", contextId, turn, goal);
+    const priority = this.derivePriority(lower);
+    const now = context?.updatedAt || context?.contextTimestamp || 0;
 
     // =========================================================================
     // Scenario A: Missing Critical Inputs -> BLOCKED PLAN
@@ -966,7 +984,7 @@ export class PlanningEngine {
   private applyCorrectionToPlan(plan: TaskPlan, targetEntity: string, message: string): TaskPlan {
     const updatedPlan: TaskPlan = {
       ...plan,
-      updatedAt: Date.now(),
+      updatedAt: plan.updatedAt || 0,
     };
 
     // Update steps referencing old entity
@@ -1000,7 +1018,7 @@ export class PlanningEngine {
   ): TaskPlan {
     const updatedPlan: TaskPlan = {
       ...plan,
-      updatedAt: Date.now(),
+      updatedAt: plan.updatedAt || 0,
       requiredInputs: Array.from(new Set([...plan.requiredInputs, ...constraints.map(c => c.key)])),
       availableInputs: Array.from(new Set([...plan.availableInputs, ...constraints.map(c => c.key)])),
     };
@@ -1048,7 +1066,7 @@ export class PlanningEngine {
   ): TaskPlan {
     const updatedPlan: TaskPlan = {
       ...plan,
-      updatedAt: Date.now(),
+      updatedAt: plan.updatedAt || 0,
     };
 
     // Update eligible steps whose dependencies are now all COMPLETED to READY if they were NOT_STARTED

@@ -62,7 +62,7 @@ export class MemoryGovernanceEngine {
    * Main evaluation entry point for Memory Governance & Response Integration
    */
   public evaluate(input: MemoryGovernanceInput): MemoryGovernanceAnalysis {
-    const startTime = Date.now();
+    const startTime = 0; // Deterministic execution time tracking
     const {
       context,
       intent,
@@ -76,7 +76,7 @@ export class MemoryGovernanceEngine {
     } = input;
 
     const trimmedMsg = message.trim();
-    const currentTime = options?.currentTime || Date.now();
+    const currentTime = options?.currentTime ?? 0;
 
     // 1. Detect explicit memory recall reference
     const explicitReferenceDetected =
@@ -112,7 +112,7 @@ export class MemoryGovernanceEngine {
         directives: [],
         sanitizedMemoryContext: "",
         governanceConfidence: 1.0,
-        executionTimeMs: Date.now() - startTime,
+        executionTimeMs: 0,
       };
     }
 
@@ -146,7 +146,7 @@ export class MemoryGovernanceEngine {
         directives: [],
         sanitizedMemoryContext: "",
         governanceConfidence: 0.95,
-        executionTimeMs: Date.now() - startTime,
+        executionTimeMs: 0,
       };
     }
 
@@ -366,9 +366,14 @@ export class MemoryGovernanceEngine {
       // GATE 4: TOPIC & TASK ISOLATION GATE
       // -------------------------------------------------------------------
       const isGlobalStablePreference =
+        key === "language" ||
+        key === "preferred_language" ||
         key.startsWith("preference_ui") ||
         key.startsWith("preference_language") ||
         key.startsWith("user_name") ||
+        cand.category === "COMMUNICATION_STYLE" ||
+        mem?.tags?.includes("COMMUNICATION_STYLE") ||
+        mem?.type === "PERSONALIZATION" ||
         mem?.tags?.includes("global_profile");
 
       if (isTopicSwitched && !explicitReferenceDetected && !isGlobalStablePreference) {
@@ -680,7 +685,7 @@ export class MemoryGovernanceEngine {
       directives,
       sanitizedMemoryContext,
       governanceConfidence: Number(governanceConfidence.toFixed(2)),
-      executionTimeMs: Date.now() - startTime,
+      executionTimeMs: 0,
     };
   }
 

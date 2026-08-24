@@ -204,6 +204,30 @@ export class BrainEngine {
     /\b(?:eta|eita|oita|oitar|sheta|seta|eigula|oigula|ager\s*ta|ager\s*ti|last\s*one|previous\s*one|same\s*thing|that\s*one|this\s*one|the\s*other\s*one|second\s*one|first\s*one|last\s*thing|which\s*one)\b|[ওইএই][টত]া|[ওইএই]গুলো|[ওইএই]গুলা|আগেরটা/i;
 
   /**
+   * Deterministic hash function (zero Math.random, zero Date.now, zero random UUIDs).
+   */
+  public deterministicHash(str: string): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  /**
+   * Generates a clean, reproducible deterministic identifier.
+   */
+  public generateDeterministicId(prefix: string, ...components: (string | number | undefined)[]): string {
+    const raw = components
+      .map((c) => String(c ?? "").trim().toLowerCase())
+      .join("::");
+    const hash = this.deterministicHash(raw);
+    const sanitizedPrefix = prefix.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+    return `${sanitizedPrefix}_${hash}`;
+  }
+
+  /**
    * Performs deep cognitive and contextual analysis of the current turn
    */
   public analyze(
@@ -222,7 +246,7 @@ export class BrainEngine {
     const trimmed = (message || "").trim();
     const recentHistory = Array.isArray(history) ? history.slice(-12) : [];
     const userId = options?.userId || sessionId || "default";
-    const currentTime = options?.currentTime || Date.now();
+    const currentTime = options?.currentTime ?? 0;
 
     // 0. Load active long-term memories from MemoryStore if not explicitly passed
     let userMemories: MemoryRecord[] =
@@ -250,8 +274,14 @@ export class BrainEngine {
           entity.status = "superseded";
         }
       }
+      const correctionEntityId = this.generateDeterministicId(
+        "entity",
+        sessionId,
+        String(recentHistory.length),
+        structuredIntent.targetEntity
+      );
       contextResult.context.entities.unshift({
-        id: `entity-${Date.now()}`,
+        id: correctionEntityId,
         name: structuredIntent.targetEntity,
         type: "brand",
         role: "primary",
@@ -260,7 +290,9 @@ export class BrainEngine {
         mentionCount: 1,
         status: "active",
       });
-      contextStore.save(sessionId, contextResult.context);
+      if (options?.persistDecisions !== false) {
+        contextStore.save(sessionId, contextResult.context);
+      }
     }
 
     // Update last meaningful user intent on active context
@@ -293,7 +325,9 @@ export class BrainEngine {
     });
 
     // Save updated active context (including activeTaskPlan) to persistent session store
-    contextStore.save(sessionId, contextResult.context);
+    if (options?.persistDecisions !== false) {
+      contextStore.save(sessionId, contextResult.context);
+    }
 
     const isCorrection = structuredIntent.primaryIntent === "CORRECTION";
     const refMatches = trimmed.match(this.referenceRegex);
@@ -386,10 +420,13 @@ export class BrainEngine {
       intent: structuredIntent,
       memories: userMemories,
       userId,
+      options: {
+        now: currentTime,
+      },
     });
 
     // Optional automated consolidation maintenance
-    if (options?.autoMaintain) {
+    if (options?.autoMaintain && options?.persistDecisions !== false) {
       const maintenanceResult = memoryConsolidationEngine.maintain(userMemories, {
         currentTime,
       });

@@ -39,7 +39,7 @@ export class PredictiveContextEngine {
    * Evaluates current cognitive context and returns proactive context analysis.
    */
   public evaluate(input: PredictiveContextInput): PredictiveContextAnalysis {
-    const currentTime = input.options?.currentTime ?? Date.now();
+    const currentTime = input.options?.currentTime ?? 0;
     const message = input.message || "";
     const lowerMessage = message.toLowerCase().trim();
 

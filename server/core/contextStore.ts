@@ -26,8 +26,8 @@ export class ContextStore {
   /**
    * Generates a fresh blank active conversation context
    */
-  public createBlankContext(sessionId: string = "default"): ConversationContext {
-    const now = Date.now();
+  public createBlankContext(sessionId: string = "default", currentTime?: number): ConversationContext {
+    const now = currentTime !== undefined ? currentTime : 0;
     return {
       id: sessionId,
       activeTopic: null,
@@ -54,18 +54,18 @@ export class ContextStore {
   /**
    * Retrieves the current context for a session, initializing one if needed
    */
-  public getOrCreate(sessionId: string = "default"): ConversationContext {
+  public getOrCreate(sessionId: string = "default", currentTime?: number): ConversationContext {
     const existing = this.contexts.get(sessionId);
-    const now = Date.now();
+    const now = currentTime !== undefined ? currentTime : 0;
 
     if (existing) {
       // Check freshness TTL
-      if (now - existing.updatedAt < this.TTL_MS) {
+      if (now === 0 || (now - existing.updatedAt < this.TTL_MS)) {
         return existing;
       }
     }
 
-    const fresh = this.createBlankContext(sessionId);
+    const fresh = this.createBlankContext(sessionId, currentTime);
     this.contexts.set(sessionId, fresh);
     return fresh;
   }
@@ -73,12 +73,13 @@ export class ContextStore {
   /**
    * Saves or updates an active conversation context for a session
    */
-  public save(sessionId: string = "default", context: ConversationContext): ConversationContext {
+  public save(sessionId: string = "default", context: ConversationContext, currentTime?: number): ConversationContext {
+    const ts = currentTime !== undefined ? currentTime : (context.updatedAt ?? 0);
     const updated: ConversationContext = {
       ...context,
       id: sessionId,
-      updatedAt: Date.now(),
-      contextTimestamp: Date.now(),
+      updatedAt: ts,
+      contextTimestamp: ts,
     };
     this.contexts.set(sessionId, updated);
     return updated;
@@ -90,9 +91,12 @@ export class ContextStore {
    */
   public archiveCurrentTopic(
     context: ConversationContext,
-    endedAtTurn: number
+    endedAtTurn: number,
+    currentTime?: number
   ): ConversationContext {
     if (!context.activeTopic) return context;
+
+    const now = currentTime !== undefined ? currentTime : (context.updatedAt ?? 0);
 
     const snapshot: InactiveContextSnapshot = {
       topic: context.activeTopic,
@@ -100,7 +104,7 @@ export class ContextStore {
       goal: context.userGoal,
       entities: [...context.entities],
       constraints: [...context.constraints],
-      endedAt: Date.now(),
+      endedAt: now,
       endedAtTurn,
     };
 
@@ -111,7 +115,7 @@ export class ContextStore {
     ].slice(0, 10);
 
     const updatedArchivedPlans = context.activeTaskPlan
-      ? [{ ...context.activeTaskPlan, status: (context.activeTaskPlan.status === "COMPLETED" ? "COMPLETED" : "CANCELLED") as PlanStatus, updatedAt: Date.now() }, ...(context.archivedPlans || [])]
+      ? [{ ...context.activeTaskPlan, status: (context.activeTaskPlan.status === "COMPLETED" ? "COMPLETED" : "CANCELLED") as PlanStatus, updatedAt: now }, ...(context.archivedPlans || [])]
       : (context.archivedPlans || []);
 
     return {
@@ -129,8 +133,8 @@ export class ContextStore {
       isTopicSwitched: true,
       archivedContexts: updatedArchived,
       topicHistory: updatedHistory,
-      updatedAt: Date.now(),
-      contextTimestamp: Date.now(),
+      updatedAt: now,
+      contextTimestamp: now,
     };
   }
 
@@ -139,6 +143,13 @@ export class ContextStore {
    */
   public clear(sessionId: string = "default"): void {
     this.contexts.delete(sessionId);
+  }
+
+  /**
+   * Clears all contexts (useful for tests)
+   */
+  public clearAll(): void {
+    this.contexts.clear();
   }
 }
 
