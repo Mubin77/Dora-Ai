@@ -86,6 +86,8 @@ import { goalProjectEngine } from "./goalProjectEngine";
 import { GoalProjectAnalysis } from "./goalProjectTypes";
 import { contextContinuityEngine } from "./contextContinuityEngine";
 import { ContextContinuityAnalysis } from "./contextContinuityTypes";
+import { executiveContextEngine } from "./executiveContextEngine";
+import { ExecutiveContextPackage } from "./executiveContextTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -103,6 +105,7 @@ export * from "./longTermUserModelTypes";
 export * from "./temporalMemoryTypes";
 export * from "./goalProjectTypes";
 export * from "./contextContinuityTypes";
+export * from "./executiveContextTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./memoryStore";
@@ -119,6 +122,7 @@ export { longTermUserModelEngine } from "./longTermUserModelEngine";
 export { temporalMemoryEngine } from "./temporalMemoryEngine";
 export { goalProjectEngine } from "./goalProjectEngine";
 export { contextContinuityEngine } from "./contextContinuityEngine";
+export { executiveContextEngine } from "./executiveContextEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { memoryStore } from "./memoryStore";
@@ -155,6 +159,7 @@ export interface BrainAnalysis {
   contextContinuityAnalysis?: ContextContinuityAnalysis;
   predictiveContextAnalysis?: PredictiveContextAnalysis;
   responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
+  executiveContext?: ExecutiveContextPackage;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -620,6 +625,32 @@ export class BrainEngine {
       }
     }
 
+    // Step 12 / Phase 2: Executive Context Synthesis & Decision-Ready Context Engine (Deterministic, Bounded, Non-LLM)
+    // Centralized context-composition engine that transforms authorized outputs into a compact, conflict-free package
+    const executiveContext = executiveContextEngine.synthesize({
+      userId,
+      message: trimmed,
+      history: recentHistory,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      adaptiveLearning: adaptiveLearningAnalysis,
+      userModel: longTermUserModelAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      responseAdaptation: responseAdaptationAnalysis,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+      },
+    });
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -640,6 +671,7 @@ export class BrainEngine {
       contextContinuityAnalysis,
       predictiveContextAnalysis,
       responseAdaptationAnalysis,
+      executiveContext,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,
