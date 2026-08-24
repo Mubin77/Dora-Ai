@@ -651,6 +651,13 @@ export class BrainEngine {
       },
     });
 
+    // Add sanitized decision-ready prompt directives from Executive Context Engine
+    for (const d of executiveContext.promptDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 

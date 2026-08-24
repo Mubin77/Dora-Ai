@@ -33,6 +33,13 @@ import {
   DEFAULT_EXECUTIVE_BUDGET,
   ExecutiveContextBudgetConfig,
 } from "./executiveContextTypes";
+import { Project, Goal, Commitment, ProjectTask, ProjectMilestone, ProjectBlocker } from "./goalProjectTypes";
+import { TemporalPatternItem } from "./temporalMemoryTypes";
+import { PredictiveCandidate } from "./predictiveContextTypes";
+import { UserModelAttribute } from "./longTermUserModelTypes";
+import { GovernedMemoryDecision } from "./memoryGovernanceTypes";
+import { VerificationConstraint, VerifiedEvidenceItem } from "./verificationTypes";
+import { ReasoningConstraint } from "./reasoningTypes";
 
 export class ExecutiveContextEngine {
   private static instance: ExecutiveContextEngine;
@@ -73,16 +80,13 @@ export class ExecutiveContextEngine {
 
     // 1. Determine active topic and continuity context
     const activeTopic =
-      (input.contextContinuity as any)?.activeTopic ||
-      (input.contextContinuity?.activeProject as any)?.topic ||
+      input.contextContinuity?.activeProject?.name ||
       input.context?.activeTopic ||
       undefined;
 
     const isTopicIsolated = Boolean(
       input.options?.strictTopicIsolation ||
-      (input.contextContinuity as any)?.isTopicIsolated ||
-      (input.context as any)?.isTopicSwitched ||
-      (input.context as any)?.isTopicSwitch ||
+      input.context?.isTopicSwitched ||
       input.memoryGovernance?.topicIsolationApplied
     );
 
@@ -455,7 +459,6 @@ export class ExecutiveContextEngine {
       input.reasoning?.requiresClarification ||
       input.verification?.requiresClarification ||
       input.context?.isAmbiguousReference ||
-      (input.contextContinuity as any)?.ambiguityStatus === "AMBIGUOUS" ||
       input.contextContinuity?.requiresClarification
     );
 
@@ -491,10 +494,9 @@ export class ExecutiveContextEngine {
     let count = 1;
 
     // 1. Safety & Verification constraints
-    const verifConstraints: any[] = (input.verification as any)?.constraints || input.verification?.directives || [];
-    if (verifConstraints && Array.isArray(verifConstraints)) {
-      for (const c of verifConstraints) {
-        const desc = typeof c === "string" ? c : (c as any).description || (c as any).type || "Verification constraint";
+    if (input.verification?.constraints && Array.isArray(input.verification.constraints)) {
+      for (const c of input.verification.constraints) {
+        const desc = c.description || c.type || "Verification constraint";
         rawConstraints.push({
           id: `exec_const_${count++}`,
           type: "VERIFICATION",
@@ -506,9 +508,8 @@ export class ExecutiveContextEngine {
       }
     }
 
-    if ((input.verification as any)?.cautionDirectives) {
-      for (const c of (input.verification as any).cautionDirectives) {
-        const desc = typeof c === "string" ? c : (c as any).description || "Verification caution";
+    if (input.verification?.cautionDirectives && Array.isArray(input.verification.cautionDirectives)) {
+      for (const desc of input.verification.cautionDirectives) {
         rawConstraints.push({
           id: `exec_const_${count++}`,
           type: "VERIFICATION",
@@ -521,10 +522,10 @@ export class ExecutiveContextEngine {
     }
 
     // 2. Reasoning constraints
-    if ((input.reasoning as any)?.constraints) {
-      for (const c of (input.reasoning as any).constraints) {
-        const desc = typeof c === "string" ? c : (c as any).description || "Reasoning constraint";
-        const hard = typeof c === "string" ? true : ((c as any).isHardConstraint ?? true);
+    if (input.reasoning?.constraints && Array.isArray(input.reasoning.constraints)) {
+      for (const c of input.reasoning.constraints) {
+        const desc = c.description || "Reasoning constraint";
+        const hard = c.isHardConstraint ?? true;
         rawConstraints.push({
           id: `exec_const_${count++}`,
           type: "REASONING",
@@ -552,16 +553,15 @@ export class ExecutiveContextEngine {
     let factIdCount = 1;
 
     // 1. Verified Evidence facts from VerificationEngine
-    const verifEvidence = (input.verification as any)?.evidence || (input.verification as any)?.verifiedEvidence;
-    if (verifEvidence) {
-      const evList = Array.isArray(verifEvidence)
-        ? verifEvidence
-        : [verifEvidence];
-      
-      for (const ev of evList) {
+    const verifiedList: VerifiedEvidenceItem[] =
+      input.verification?.verifiedEvidence ||
+      (input.verification as any)?.evidence ||
+      [];
+    if (verifiedList && Array.isArray(verifiedList)) {
+      for (const ev of verifiedList) {
         if (ev && typeof ev === "object") {
-          const key = (ev as any).claim || (ev as any).fact || "verified_fact";
-          const val = (ev as any).content || (ev as any).details || String(key);
+          const key = ev.claim || (ev as any).key || "verified_fact";
+          const val = ev.groundingDetails || (ev as any).content || (ev as any).value || ev.claim || String(key);
           const isSens = this.containsSensitiveData(`${key} ${val}`);
 
           rawFacts.push({
@@ -573,7 +573,7 @@ export class ExecutiveContextEngine {
               authority: "VERIFIED_EVIDENCE",
               authorityWeight: EXECUTIVE_AUTHORITY_WEIGHTS["VERIFIED_EVIDENCE"],
               source: "verification_engine",
-              confidence: 1.0,
+              confidence: ev.confidence || 1.0,
               isGlobal: false,
               sanitizedDirective: this.sanitizeDirective(`Verified Fact: ${key} = ${val}`),
             },
@@ -586,22 +586,25 @@ export class ExecutiveContextEngine {
     }
 
     // 2. Governed Memories (ONLY memories authorized by MemoryGovernanceEngine)
-    const governedList: any[] = (input.memoryGovernance as any)?.governedMemories || input.memoryGovernance?.allowedMemories || [];
+    const governedList: GovernedMemoryDecision[] =
+      input.memoryGovernance?.allowedMemories ||
+      (input.memoryGovernance as any)?.governedMemories ||
+      [];
     if (governedList && Array.isArray(governedList)) {
       for (const gm of governedList) {
-        const mem = gm.memory || gm;
+        const mem = gm.memory;
         if (!mem) continue;
 
         // Lifecycle check
-        const status = (mem.status || "ACTIVE").toUpperCase();
+        const status = (mem.status || gm.status || "ACTIVE").toUpperCase();
         if (status === "SUPERSEDED" || status === "EXPIRED" || status === "DELETED" || status === "QUARANTINED" || status === "OUTDATED") {
           continue;
         }
 
         // Category & Fact check (we only extract factual / profile memories as facts)
-        const key = mem.key || mem.title || "memory";
-        const val = mem.value || mem.content || "";
-        const cat = (mem.category || mem.type || "GENERAL").toUpperCase();
+        const key = mem.key || "memory";
+        const val = mem.value || "";
+        const cat = (mem.category || "GENERAL").toUpperCase();
         const scope = this.determineScope(key, cat);
         const isGlobal = scope === "GLOBAL";
         const isSens = this.containsSensitiveData(`${key} ${val}`);
@@ -762,67 +765,91 @@ export class ExecutiveContextEngine {
 
     // 2. Confirmed User Model (Authority: CONFIRMED_USER_MODEL = 0.75)
     if (input.userModel?.profile) {
-      const prof: any = input.userModel.profile;
+      const prof = input.userModel.profile;
       
-      // Communication style
-      if (prof.communication) {
-        if (prof.communication.preferredLanguage && !currentTurn.overrides.language) {
-          const key = "language";
-          const val = prof.communication.preferredLanguage;
+      // Communication object preferences
+      if ((prof as any).communication) {
+        const comm = (prof as any).communication;
+        if (comm.preferredLanguage) {
           rawPreferences.push({
             item: {
               id: `exec_pref_${prefIdCount++}`,
-              key,
-              value: val,
-              dimension: "language",
+              key: "language",
+              value: comm.preferredLanguage,
+              dimension: "communication",
               authority: "CONFIRMED_USER_MODEL",
               authorityWeight: EXECUTIVE_AUTHORITY_WEIGHTS["CONFIRMED_USER_MODEL"],
-              source: "user_model_profile",
+              source: "user_model_communication",
               isCurrentTurnOverride: false,
               isGlobal: true,
-              sanitizedDirective: this.sanitizeDirective(`User prefers ${val} language.`),
+              sanitizedDirective: this.sanitizeDirective(`User confirmed preference: language = ${comm.preferredLanguage}`),
             },
-            normalizedKey: this.normalizeKey(key),
+            normalizedKey: "language",
+            rawStatus: "CONFIRMED",
             isSensitive: false,
+            topic: "communication",
             isGlobal: true,
           });
         }
-
-        if (prof.communication.preferredVerbosity && !currentTurn.overrides.verbosity) {
-          const key = "verbosity";
-          const val = prof.communication.preferredVerbosity;
+        if (comm.preferredVerbosity) {
           rawPreferences.push({
             item: {
               id: `exec_pref_${prefIdCount++}`,
-              key,
-              value: val,
-              dimension: "verbosity",
+              key: "verbosity",
+              value: comm.preferredVerbosity,
+              dimension: "communication",
               authority: "CONFIRMED_USER_MODEL",
               authorityWeight: EXECUTIVE_AUTHORITY_WEIGHTS["CONFIRMED_USER_MODEL"],
-              source: "user_model_profile",
+              source: "user_model_communication",
               isCurrentTurnOverride: false,
               isGlobal: true,
-              sanitizedDirective: this.sanitizeDirective(`User prefers ${val} responses.`),
+              sanitizedDirective: this.sanitizeDirective(`User confirmed preference: verbosity = ${comm.preferredVerbosity}`),
             },
-            normalizedKey: this.normalizeKey(key),
+            normalizedKey: "verbosity",
+            rawStatus: "CONFIRMED",
             isSensitive: false,
+            topic: "communication",
+            isGlobal: true,
+          });
+        }
+        if (comm.preferredTone) {
+          rawPreferences.push({
+            item: {
+              id: `exec_pref_${prefIdCount++}`,
+              key: "tone",
+              value: comm.preferredTone,
+              dimension: "communication",
+              authority: "CONFIRMED_USER_MODEL",
+              authorityWeight: EXECUTIVE_AUTHORITY_WEIGHTS["CONFIRMED_USER_MODEL"],
+              source: "user_model_communication",
+              isCurrentTurnOverride: false,
+              isGlobal: true,
+              sanitizedDirective: this.sanitizeDirective(`User confirmed preference: tone = ${comm.preferredTone}`),
+            },
+            normalizedKey: "tone",
+            rawStatus: "CONFIRMED",
+            isSensitive: false,
+            topic: "communication",
             isGlobal: true,
           });
         }
       }
 
-      // Confirmed preferences list
-      const confirmedList = prof.confirmedPreferences || prof.confirmedAttributes || Object.values(prof.attributes || {});
+      // Confirmed preferences and attributes list
+      const confirmedList: UserModelAttribute[] =
+        prof.confirmedAttributes ||
+        (prof as any).confirmedPreferences ||
+        Object.values(prof.attributes || {});
       if (Array.isArray(confirmedList)) {
         for (const pref of confirmedList) {
           const key = pref.key || pref.dimension || "preference";
-          const val = pref.normalizedValue || pref.value || "";
+          const val = pref.normalizedValue || (pref as any).value || "";
           const status = (pref.status || "CONFIRMED").toUpperCase();
-          if (status === "QUARANTINED" || status === "DELETED" || status === "EXPIRED" || status === "OUTDATED") {
+          if (status === "QUARANTINED" || status === "DELETED" || status === "EXPIRED" || status === "OUTDATED" || status === "SUPERSEDED") {
             continue;
           }
 
-          const scope = this.determineScope(key, pref.category || pref.dimension);
+          const scope = this.determineScope(key, pref.dimension);
           const isGlobal = scope === "GLOBAL";
           const isSens = this.containsSensitiveData(`${key} ${val}`);
 
@@ -842,7 +869,7 @@ export class ExecutiveContextEngine {
             normalizedKey: this.normalizeKey(key),
             rawStatus: status,
             isSensitive: isSens,
-            topic: pref.dimension || pref.category,
+            topic: pref.dimension,
             isGlobal,
           });
         }
@@ -850,21 +877,24 @@ export class ExecutiveContextEngine {
     }
 
     // 3. Governed Memory Preferences (Authority: GOVERNANCE_APPROVED_MEMORY = 0.80)
-    const governedList: any[] = (input.memoryGovernance as any)?.governedMemories || input.memoryGovernance?.allowedMemories || [];
+    const governedList: GovernedMemoryDecision[] =
+      input.memoryGovernance?.allowedMemories ||
+      (input.memoryGovernance as any)?.governedMemories ||
+      [];
     if (governedList && Array.isArray(governedList)) {
       for (const gm of governedList) {
-        const mem = gm.memory || gm;
+        const mem = gm.memory;
         if (!mem) continue;
 
-        const status = (mem.status || "ACTIVE").toUpperCase();
+        const status = (mem.status || gm.status || "ACTIVE").toUpperCase();
         if (status === "SUPERSEDED" || status === "EXPIRED" || status === "DELETED" || status === "QUARANTINED" || status === "OUTDATED") {
           continue;
         }
 
-        const cat = (mem.category || mem.type || "GENERAL").toUpperCase();
+        const cat = (mem.category || "GENERAL").toUpperCase();
         if (cat === "PREFERENCE" || cat === "PERSONALIZATION" || cat === "STYLE") {
-          const key = mem.key || mem.title || "memory_preference";
-          const val = mem.value || mem.content || "";
+          const key = mem.key || "memory_preference";
+          const val = mem.value || "";
           const scope = this.determineScope(key, cat);
           const isGlobal = scope === "GLOBAL";
           const isSens = this.containsSensitiveData(`${key} ${val}`);
@@ -898,9 +928,9 @@ export class ExecutiveContextEngine {
         const status = (pat.status || "OBSERVED").toUpperCase();
         if (status !== "CONFIRMED") continue; // Only confirmed patterns
 
-        const key = (pat as any).patternKey || pat.key || "adaptive_habit";
-        const val = (pat as any).preferredValue || pat.value || "";
-        const domain = (pat as any).domain || pat.category || key;
+        const key = pat.patternKey || pat.dimension || "adaptive_habit";
+        const val = pat.preferredValue || "";
+        const domain = pat.domain || pat.dimension || key;
         const scope = this.determineScope(key, domain);
         const isGlobal = scope === "GLOBAL";
         const isSens = this.containsSensitiveData(`${key} ${val}`);
@@ -961,7 +991,7 @@ export class ExecutiveContextEngine {
     }
 
     // 1. Projects
-    const rawProjects: any[] = input.goalProject.activeProjects || (input.goalProject as any).projects || [];
+    const rawProjects: Project[] = input.goalProject.activeProjects || (input.goalProject as any).projects || [];
     if (rawProjects && Array.isArray(rawProjects)) {
       for (const proj of rawProjects) {
         totalExamined++;
@@ -996,29 +1026,30 @@ export class ExecutiveContextEngine {
         }
 
         const isPrimaryActive = Boolean(
-          ((input.goalProject as any).primaryActiveProject && (input.goalProject as any).primaryActiveProject.id === (proj.projectId || proj.id)) ||
+          ((input.goalProject as any).primaryActiveProject && (input.goalProject as any).primaryActiveProject.id === proj.id) ||
+          (input.goalProject.state?.activeProjects?.[0]?.id === proj.id) ||
           (currentTurn.overrides.switchedProject &&
             proj.name.toLowerCase().includes(currentTurn.overrides.switchedProject.toLowerCase()))
         );
 
         const activeTasks = (proj.tasks || [])
-          .filter((t: any) => t.status === "READY" || t.status === "IN_PROGRESS")
-          .map((t: any) => t.title || t.name);
+          .filter((t) => t.status === "READY" || t.status === "IN_PROGRESS")
+          .map((t) => t.title);
 
         const readyTasks = (proj.tasks || [])
-          .filter((t: any) => t.status === "READY")
-          .map((t: any) => t.title || t.name);
+          .filter((t) => t.status === "READY")
+          .map((t) => t.title);
 
-        const blockers = (proj.blockers || []).map((b: any) =>
-          typeof b === "string" ? b : b.description || b.text || b.name || String(b)
+        const blockers = (proj.blockers || []).map((b) =>
+          typeof b === "string" ? b : b.description || b.blockerId || String(b)
         );
 
         projects.push({
-          id: proj.projectId || proj.id || `exec_proj_${proj.name}`,
+          id: proj.id || `exec_proj_${proj.name}`,
           name: proj.name,
           status: proj.status,
           description: proj.description,
-          currentMilestone: proj.milestones?.find((m: any) => m.status === "IN_PROGRESS")?.title,
+          currentMilestone: proj.milestones?.find((m) => m.status === "IN_PROGRESS")?.title,
           activeTasks,
           readyTasks,
           blockers,
@@ -1033,7 +1064,7 @@ export class ExecutiveContextEngine {
     }
 
     // 2. Goals
-    const rawGoals: any[] = input.goalProject.activeGoals || (input.goalProject as any).goals || [];
+    const rawGoals: Goal[] = input.goalProject.activeGoals || (input.goalProject as any).goals || [];
     if (rawGoals && Array.isArray(rawGoals)) {
       for (const goal of rawGoals) {
         totalExamined++;
@@ -1046,11 +1077,11 @@ export class ExecutiveContextEngine {
         }
 
         goals.push({
-          id: goal.goalId || goal.id || `exec_goal_${goal.title}`,
+          id: goal.id || `exec_goal_${goal.title}`,
           title: goal.title,
           status: goal.status,
           priority: goal.priority || "MEDIUM",
-          targetDate: goal.targetDateString || (typeof goal.targetDate === "number" ? new Date(goal.targetDate).toISOString() : goal.targetDate),
+          targetDate: typeof goal.targetDate === "number" ? new Date(goal.targetDate).toISOString() : goal.targetDate,
           scope: goal.scope || "GLOBAL",
           sanitizedDirective: this.sanitizeDirective(`Active Goal: ${goal.title} (Priority: ${goal.priority || "MEDIUM"})`),
         });
@@ -1058,7 +1089,7 @@ export class ExecutiveContextEngine {
     }
 
     // 3. Commitments (Strictly validated from direct user commitments)
-    const rawCommitments: any[] = input.goalProject.activeCommitments || (input.goalProject as any).commitments || [];
+    const rawCommitments: Commitment[] = input.goalProject.activeCommitments || (input.goalProject as any).commitments || [];
     if (rawCommitments && Array.isArray(rawCommitments)) {
       for (const comm of rawCommitments) {
         totalExamined++;
@@ -1078,10 +1109,10 @@ export class ExecutiveContextEngine {
         }
 
         commitments.push({
-          id: comm.commitmentId || comm.id || `exec_commit_${comm.description}`,
+          id: comm.id || `exec_commit_${comm.description}`,
           description: comm.description,
           status: comm.status,
-          dueDate: comm.dueDateString || comm.dueDate,
+          dueDate: typeof comm.dueDate === "number" ? new Date(comm.dueDate).toISOString() : comm.dueDate,
           sourceIntent,
           sanitizedDirective: this.sanitizeDirective(`Active Commitment: ${comm.description}${comm.dueDate ? ` (Due: ${comm.dueDate})` : ""}`),
         });
@@ -1130,7 +1161,7 @@ export class ExecutiveContextEngine {
     if (input.temporalMemory.patterns && Array.isArray(input.temporalMemory.patterns)) {
       for (const pat of input.temporalMemory.patterns) {
         totalExamined++;
-        const status = ((pat as any).status || pat.temporalStatus || "CURRENT").toUpperCase();
+        const status = (pat.status || pat.temporalStatus || "CURRENT").toUpperCase();
 
         // Stale & Expired lifecycle suppression
         if (status === "STALE" || status === "SUPERSEDED" || status === "EXPIRED" || status === "UNKNOWN") {
@@ -1140,9 +1171,9 @@ export class ExecutiveContextEngine {
         }
 
         // Topic isolation
-        const key = (pat as any).patternKey || (pat as any).key || pat.attributeKey || "temporal_pattern";
-        const val = (pat as any).value || pat.currentValue || "";
-        const topic = (pat as any).topic || pat.dimension;
+        const key = pat.patternKey || pat.attributeKey || "temporal_pattern";
+        const val = pat.currentValue || "";
+        const topic = pat.dimension;
         const scope = this.determineScope(key, topic);
         const isGlobal = scope === "GLOBAL";
 
@@ -1157,19 +1188,19 @@ export class ExecutiveContextEngine {
         // Evolving check
         if (status === "EVOLVING" && pat.previousValues && pat.previousValues.length > 0) {
           const lastPrev = pat.previousValues[pat.previousValues.length - 1];
-          const fromVal = typeof lastPrev === "string" ? lastPrev : (lastPrev.value || lastPrev.normalizedValue || "");
+          const fromVal = typeof lastPrev === "string" ? lastPrev : (lastPrev.normalizedValue || "");
           evolvingLineage.push({
             key,
             fromValue: fromVal,
             toValue: val,
-            isCurrentTurnEvolution: (pat as any).isCurrentTurnEvolution ?? false,
+            isCurrentTurnEvolution: pat.isCurrentTurnEvolution ?? false,
           });
         }
 
         activePatterns.push({
           key,
           value: val,
-          status: (pat as any).status || pat.temporalStatus,
+          status: pat.status || pat.temporalStatus || "CURRENT",
           authority: "TEMPORAL_CONTEXT",
           sanitizedDirective: this.sanitizeDirective(`Temporal context: ${key} = ${val} (${status.toLowerCase()})`),
         });
@@ -1201,10 +1232,10 @@ export class ExecutiveContextEngine {
 
     return {
       continuityStatus,
-      activeTopic: (continuity as any)?.activeTopic || (continuity?.activeProject as any)?.topic || input.context?.activeTopic,
-      resumedProject: (continuity as any)?.activeProjectSummary?.name || continuity?.activeProject?.name,
+      activeTopic: continuity?.activeProject?.name || input.context?.activeTopic,
+      resumedProject: continuity?.activeProject?.name,
       switchedAwayFrom: currentTurn.overrides.pausedProject,
-      isTopicIsolated: Boolean((continuity as any)?.isTopicIsolated || (input.context as any)?.isTopicSwitched || (input.context as any)?.isTopicSwitch),
+      isTopicIsolated: Boolean(input.context?.isTopicSwitched),
     };
   }
 
@@ -1221,9 +1252,9 @@ export class ExecutiveContextEngine {
     );
 
     const competingTargets: string[] = [];
-    if ((input.contextContinuity as any)?.competingCandidates) {
+    if ((input.contextContinuity as any)?.competingCandidates && Array.isArray((input.contextContinuity as any).competingCandidates)) {
       competingTargets.push(
-        ...(input.contextContinuity as any).competingCandidates.map((c: any) => c.title || c.id)
+        ...(input.contextContinuity as any).competingCandidates.map((c: any) => c.title || c.name || c.id)
       );
     } else if (isAmbiguous && projects.length > 1) {
       competingTargets.push(...projects.map((p) => p.name));
@@ -1472,15 +1503,9 @@ export class ExecutiveContextEngine {
       };
     }
 
-    const candidateList =
+    const candidateList: PredictiveCandidate[] =
       input.predictiveContext.acceptedCandidates ||
-      (input.predictiveContext as any).candidates ||
-      input.predictiveContext.directives?.map((d, i) => ({
-        id: `pred_${i}`,
-        title: d,
-        content: d,
-        relevanceScore: 0.5,
-      })) ||
+      input.predictiveContext.candidates ||
       [];
 
     const authoritativeKeys = new Set([
@@ -1490,8 +1515,8 @@ export class ExecutiveContextEngine {
 
     for (const cand of candidateList) {
       totalExamined++;
-      const key = (cand as any).key || (cand as any).title || (cand as any).contextSummary || "predictive_suggestion";
-      const val = (cand as any).content || (cand as any).suggestion || (cand as any).directive || String(key);
+      const key = cand.contextSummary || (cand as any).key || (cand as any).title || cand.type || "predictive_suggestion";
+      const val = cand.suggestion || (cand as any).content || (cand.directives && cand.directives[0]) || (cand as any).directive || String(key);
       const normKey = this.normalizeKey(key);
 
       // 1. Sensitive check
@@ -1521,7 +1546,7 @@ export class ExecutiveContextEngine {
       }
 
       // 4. Topic isolation check
-      const candTopic = (cand as any).topic || (cand as any).domain;
+      const candTopic = cand.domain;
       if (isTopicIsolated && activeTopic && candTopic) {
         const isCompat = this.isCompatibleWithTopic(candTopic, activeTopic, false);
         if (!isCompat) {
@@ -1535,7 +1560,7 @@ export class ExecutiveContextEngine {
         id: cand.id || `exec_adv_${list.length + 1}`,
         key,
         suggestion: val,
-        relevanceScore: (cand as any).relevanceScore || (cand as any).relevance || 0.5,
+        relevanceScore: cand.relevanceScore || 0.5,
         topic: candTopic,
         isAdvisoryOnly: true,
         sanitizedDirective: this.sanitizeDirective(`Advisory suggestion: ${val}`),
@@ -1557,20 +1582,20 @@ export class ExecutiveContextEngine {
     const styleProf = adaptation?.styleProfile;
 
     // Default style
-    let language = styleProf?.language?.value || (adaptation as any)?.resolvedLanguage?.value || "ENGLISH";
-    let verbosity = styleProf?.verbosity?.value || (adaptation as any)?.resolvedVerbosity?.value || "NORMAL";
-    let tone = styleProf?.tone?.value || (adaptation as any)?.resolvedTone?.value || "WARM_FRIENDLY";
-    let formatStyle = styleProf?.formatStyle?.value || (adaptation as any)?.resolvedFormat?.value || "PROSE";
-    let codeDensity = styleProf?.codeDensity?.value || (adaptation as any)?.resolvedCodeDensity?.value || "BALANCED";
-    let explanationDepth = styleProf?.explanationDepth?.value || (adaptation as any)?.resolvedExplanationDepth?.value || "INTERMEDIATE";
+    let language = styleProf?.language?.value || "ENGLISH";
+    let verbosity = styleProf?.verbosity?.value || "NORMAL";
+    let tone = styleProf?.tone?.value || "WARM_FRIENDLY";
+    let formatStyle = styleProf?.formatStyle?.value || "PROSE";
+    let codeDensity = styleProf?.codeDensity?.value || "BALANCED";
+    let explanationDepth = styleProf?.explanationDepth?.value || "INTERMEDIATE";
 
     const winningLayers: Record<string, string> = {
-      language: styleProf?.language?.winningLayer || (adaptation as any)?.resolvedLanguage?.winningLayer || "SYSTEM_DEFAULT",
-      verbosity: styleProf?.verbosity?.winningLayer || (adaptation as any)?.resolvedVerbosity?.winningLayer || "SYSTEM_DEFAULT",
-      tone: styleProf?.tone?.winningLayer || (adaptation as any)?.resolvedTone?.winningLayer || "SYSTEM_DEFAULT",
-      formatStyle: styleProf?.formatStyle?.winningLayer || (adaptation as any)?.resolvedFormat?.winningLayer || "SYSTEM_DEFAULT",
-      codeDensity: styleProf?.codeDensity?.winningLayer || (adaptation as any)?.resolvedCodeDensity?.winningLayer || "SYSTEM_DEFAULT",
-      explanationDepth: styleProf?.explanationDepth?.winningLayer || (adaptation as any)?.resolvedExplanationDepth?.winningLayer || "SYSTEM_DEFAULT",
+      language: styleProf?.language?.winningLayer || "SYSTEM_DEFAULT",
+      verbosity: styleProf?.verbosity?.winningLayer || "SYSTEM_DEFAULT",
+      tone: styleProf?.tone?.winningLayer || "SYSTEM_DEFAULT",
+      formatStyle: styleProf?.formatStyle?.winningLayer || "SYSTEM_DEFAULT",
+      codeDensity: styleProf?.codeDensity?.winningLayer || "SYSTEM_DEFAULT",
+      explanationDepth: styleProf?.explanationDepth?.winningLayer || "SYSTEM_DEFAULT",
     };
 
     // Apply resolved preferences from User Model / Governed Memories
@@ -1727,9 +1752,10 @@ export class ExecutiveContextEngine {
 
     return (
       rawText
-        // Strip internal IDs
+        // Strip internal IDs and prefixes
         .replace(/\b(?:mem|pat|cand|evi|proj|goal|commit|db)_[a-zA-Z0-9_\-]+\b/gi, "")
-        // Strip hashes & hex
+        // Strip id: xxx, hash: xxx, sha256: xxx
+        .replace(/\b(?:id|hash|sha256)\s*[:=]\s*[a-zA-Z0-9_\-]+\b/gi, "")
         .replace(/sha256:[a-fA-F0-9]+/gi, "")
         .replace(/\b0x[a-fA-F0-9]+\b/gi, "")
         // Strip confidence & authority scores
@@ -1737,9 +1763,9 @@ export class ExecutiveContextEngine {
         // Strip raw timestamps
         .replace(/\btimestamp\s*[:=]\s*\d{10,13}\b/gi, "")
         // Clean up redundant punctuation & whitespace
-        .replace(/\s{2,}/g, " ")
-        .replace(/\(\s*\)/g, "")
         .replace(/\[\s*\]/g, "")
+        .replace(/\(\s*\)/g, "")
+        .replace(/\s{2,}/g, " ")
         .replace(/:\s*:/g, ":")
         .trim()
     );

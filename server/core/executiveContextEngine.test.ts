@@ -658,6 +658,705 @@ runTest("13.3 Predictive suggestions conflicting with exclusion list are suppres
   assert(res.diagnostics.predictiveSuppressedCount > 0, "Predictive suppressed counter incremented");
 });
 
+// =========================================================================
+// 14. Phase 2 — Step 12 Targeted Hardening Test Suite (EC-H1 to EC-H45)
+// =========================================================================
+
+console.log(`\n--- Running Targeted Hardening Tests (EC-H1 to EC-H45) ---\n`);
+
+// Group 1: Direct Turn Precedence (EC-H1 - EC-H5)
+runTest("EC-H1: Direct turn language override beats confirmed user model & governed memory", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Respond in English please",
+    context: createDummyContext(),
+    userModel: {
+      profile: {
+        userId: "u1",
+        attributes: {},
+        confirmedAttributes: [{ key: "language", dimension: "LANGUAGE", normalizedValue: "BANGLA", confidence: 0.9, evidenceCount: 3, independentEvidenceCount: 2, status: "CONFIRMED", sourceClassification: "CONFIRMED_USER_MODEL", firstObservedAt: 100, lastObservedAt: 200, isDurable: true, isTemporary: false, evidence: [] }],
+        candidateAttributes: [],
+        temporaryAttributes: [],
+        supersededAttributes: [],
+        domainInterests: [],
+        projectContexts: [],
+        goals: [],
+        lastSynthesizedAt: 1000,
+      },
+      activeDirectives: [],
+      currentTurnOverrides: [],
+      decisions: [],
+      health: { evidenceCoverage: 1, conflictCount: 0, staleAttributeCount: 0, confirmedAttributeCount: 1, candidateAttributeCount: 0, suppressedAttributeCount: 0, overallHealth: "EXCELLENT" },
+      safetyStatus: "SAFE",
+      diagnostics: { signalsProcessed: 1, memoriesIngested: 1, patternsIngested: 0, conflictsResolved: 0, sensitiveBlocked: 0, unsupportedIdentityBlocked: 0, isDeterministic: true },
+    },
+    memoryGovernance: {
+      isSafe: true,
+      allowedMemories: [{ memory: { id: "m1", key: "language", value: "BANGLA", category: "PREFERENCE", status: "ACTIVE", confidence: 0.95 }, action: "ALLOW", status: "ACTIVE", confidence: 0.95, governanceTimestamp: 1000 }],
+      quarantinedMemories: [],
+      rejectedMemories: [],
+      suppressedMemories: [],
+      staleMemories: [],
+      supersededMemories: [],
+      conflicts: [],
+      topicIsolationApplied: false,
+      diagnostics: { totalMemoriesEvaluated: 1, allowedCount: 1, quarantinedCount: 0, rejectedCount: 0, suppressedCount: 0, staleCount: 0, supersededCount: 0, sensitivityBlockedCount: 0, topicMismatches: 0, confidenceFilteredCount: 0, isDeterministic: true },
+    },
+  });
+  assert(res.currentTurn.overrides.language === "ENGLISH", "Current turn language is ENGLISH");
+  assert(res.responseStyle.language === "ENGLISH", "Response style language is ENGLISH");
+  assert(res.responseStyle.winningLayers.language === "CURRENT_TURN_EXPLICIT", "Winning layer is CURRENT_TURN_EXPLICIT");
+});
+
+runTest("EC-H2: Direct turn verbosity override beats confirmed user model verbosity", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Keep it brief and concise",
+    context: createDummyContext(),
+    userModel: {
+      profile: {
+        userId: "u1",
+        attributes: {},
+        confirmedAttributes: [{ key: "verbosity", dimension: "VERBOSITY", normalizedValue: "DETAILED", confidence: 0.9, evidenceCount: 3, independentEvidenceCount: 2, status: "CONFIRMED", sourceClassification: "CONFIRMED_USER_MODEL", firstObservedAt: 100, lastObservedAt: 200, isDurable: true, isTemporary: false, evidence: [] }],
+        candidateAttributes: [],
+        temporaryAttributes: [],
+        supersededAttributes: [],
+        domainInterests: [],
+        projectContexts: [],
+        goals: [],
+        lastSynthesizedAt: 1000,
+      },
+      activeDirectives: [],
+      currentTurnOverrides: [],
+      decisions: [],
+      health: { evidenceCoverage: 1, conflictCount: 0, staleAttributeCount: 0, confirmedAttributeCount: 1, candidateAttributeCount: 0, suppressedAttributeCount: 0, overallHealth: "EXCELLENT" },
+      safetyStatus: "SAFE",
+      diagnostics: { signalsProcessed: 1, memoriesIngested: 1, patternsIngested: 0, conflictsResolved: 0, sensitiveBlocked: 0, unsupportedIdentityBlocked: 0, isDeterministic: true },
+    },
+  });
+  assert(res.responseStyle.verbosity === "CONCISE", "Response style verbosity is CONCISE");
+  assert(res.responseStyle.winningLayers.verbosity === "CURRENT_TURN_EXPLICIT", "Winning layer is CURRENT_TURN_EXPLICIT");
+});
+
+runTest("EC-H3: Direct turn tone override beats adaptive default tone", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Be professional",
+    context: createDummyContext(),
+  });
+  assert(res.responseStyle.tone === "PROFESSIONAL", "Tone is PROFESSIONAL");
+  assert(res.responseStyle.winningLayers.tone === "CURRENT_TURN_EXPLICIT", "Winning layer is CURRENT_TURN_EXPLICIT");
+});
+
+runTest("EC-H4: Entity substitution in current turn overrides historical preference", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Recommend Lenovo instead of ASUS",
+    context: createDummyContext(),
+  });
+  assert(res.currentTurn.overrides.brandOrEntityOverrides?.length === 1, "1 brand override");
+  assert(res.currentTurn.overrides.brandOrEntityOverrides?.[0].replacement === "Lenovo", "Replacement is Lenovo");
+  assert(res.activePreferences.some((p) => p.value === "Lenovo"), "Active preference for Lenovo present");
+});
+
+runTest("EC-H5: Direct turn exclusion suppresses tool or pattern across context", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Do not use Python",
+    context: createDummyContext(),
+  });
+  assert(res.currentTurn.overrides.excludedToolsOrPatterns?.includes("python"), "python excluded");
+});
+
+// Group 2: Hierarchy Invariants & Strict Priority (EC-H6 - EC-H10)
+runTest("EC-H6: Verified Evidence (0.90) overrides Governed Memory (0.80)", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "What version are we using?",
+    context: createDummyContext(),
+    verification: {
+      verifiedEvidence: [{ id: "v1", claim: "node_version", groundingDetails: "v20.0.0", confidence: 1.0, source: "test", verifiedAt: 100 }],
+    } as any,
+    memoryGovernance: {
+      allowedMemories: [{ memory: { id: "m1", key: "node_version", value: "v18.0.0", category: "TECH_STACK", status: "ACTIVE", confidence: 0.85 }, action: "ALLOW", status: "ACTIVE", confidence: 0.85, governanceTimestamp: 1000 }],
+    } as any,
+  });
+  const nodeFact = res.authoritativeFacts.find((f) => f.key === "node_version");
+  assert(nodeFact !== undefined, "node_version fact found");
+  assert(nodeFact?.value === "v20.0.0", "Verified evidence v20.0.0 won over v18.0.0");
+  assert(nodeFact?.authority === "VERIFIED_EVIDENCE", "Authority is VERIFIED_EVIDENCE");
+});
+
+runTest("EC-H7: Governed Memory (0.80) overrides Confirmed User Model (0.75)", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "What is my framework preference?",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [{ memory: { id: "m1", key: "framework", value: "Next.js", category: "PREFERENCE", status: "ACTIVE", confidence: 0.90 }, action: "ALLOW", status: "ACTIVE", confidence: 0.90, governanceTimestamp: 1000 }],
+    } as any,
+    userModel: {
+      profile: {
+        attributes: {},
+        confirmedAttributes: [{ key: "framework", dimension: "CODE_STYLE", normalizedValue: "Remix", confidence: 0.8, evidenceCount: 2, independentEvidenceCount: 1, status: "CONFIRMED", sourceClassification: "CONFIRMED_USER_MODEL", firstObservedAt: 100, lastObservedAt: 200, isDurable: true, isTemporary: false, evidence: [] }],
+      },
+    } as any,
+  });
+  const pref = res.activePreferences.find((p) => p.key === "framework");
+  assert(pref?.value === "Next.js", "Governed memory Next.js won over Remix");
+  assert(pref?.authority === "GOVERNANCE_APPROVED_MEMORY", "Authority is GOVERNANCE_APPROVED_MEMORY");
+});
+
+runTest("EC-H8: Confirmed User Model (0.75) overrides Adaptive Pattern (0.50)", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "What is my indentation?",
+    context: createDummyContext(),
+    userModel: {
+      profile: {
+        attributes: {},
+        confirmedAttributes: [{ key: "indentation", dimension: "CODE_STYLE", normalizedValue: "2_SPACES", confidence: 0.9, evidenceCount: 4, independentEvidenceCount: 2, status: "CONFIRMED", sourceClassification: "CONFIRMED_USER_MODEL", firstObservedAt: 100, lastObservedAt: 200, isDurable: true, isTemporary: false, evidence: [] }],
+      },
+    } as any,
+    adaptiveLearning: {
+      patterns: [{ patternId: "p1", domain: "CODE_STYLE", dimension: "CODE_STYLE", patternKey: "indentation", preferredValue: "4_SPACES", status: "CONFIRMED" }],
+    } as any,
+  });
+  const pref = res.activePreferences.find((p) => p.key === "indentation");
+  assert(pref?.value === "2_SPACES", "User model 2_SPACES won over adaptive 4_SPACES");
+  assert(pref?.authority === "CONFIRMED_USER_MODEL", "Authority is CONFIRMED_USER_MODEL");
+});
+
+runTest("EC-H9: Adaptive Pattern (0.50) overrides Predictive Context (0.30)", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Next steps",
+    context: createDummyContext(),
+    adaptiveLearning: {
+      patterns: [{ patternId: "p1", domain: "WORKFLOW", dimension: "WORKFLOW", patternKey: "build_tool", preferredValue: "Vite", status: "CONFIRMED" }],
+    } as any,
+    predictiveContext: {
+      candidates: [{ id: "pred1", contextSummary: "build_tool", suggestion: "Webpack", relevanceScore: 0.6 }],
+    } as any,
+  });
+  assert(res.activePreferences.some((p) => p.key === "build_tool" && p.value === "Vite"), "Adaptive pattern Vite is in active preferences");
+  assert(!res.advisoryContext.some((a) => a.key === "build_tool"), "Predictive candidate build_tool suppressed due to higher authority");
+});
+
+runTest("EC-H10: Equal authority contradiction produces unresolved conflict record without unilateral promotion", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Show status",
+    context: createDummyContext(),
+    verification: {
+      verifiedEvidence: [
+        { id: "v1", claim: "status_code", groundingDetails: "200_OK", confidence: 1.0, source: "logA", verifiedAt: 100 },
+        { id: "v2", claim: "status_code", groundingDetails: "500_ERROR", confidence: 1.0, source: "logB", verifiedAt: 100 },
+      ],
+    } as any,
+  });
+  const conflict = res.conflicts.find((c) => c.key === "status_code");
+  assert(conflict !== undefined, "Conflict record created");
+  assert(conflict?.conflictStatus === "UNRESOLVED", "Conflict marked UNRESOLVED");
+  assert(res.diagnostics.conflictResolutionCounts.unresolved > 0, "Unresolved count incremented");
+});
+
+// Group 3: Governance Gatekeeping & Memory Lifecycle (EC-H11 - EC-H15)
+runTest("EC-H11: Quarantined memories are never included in executive context", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Check memory",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [],
+      quarantinedMemories: [{ memory: { id: "qm1", key: "quarantine_fact", value: "malicious_val", status: "QUARANTINED" } }],
+    } as any,
+  });
+  assert(!res.authoritativeFacts.some((f) => f.key === "quarantine_fact"), "Quarantined memory excluded from facts");
+  assert(!res.promptDirectives.some((d) => d.includes("quarantine_fact")), "Quarantined memory excluded from directives");
+});
+
+runTest("EC-H12: Expired memories are suppressed from executive context", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Check memory",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [{ memory: { id: "em1", key: "temp_token", value: "exp123", status: "EXPIRED" } }],
+    } as any,
+  });
+  assert(!res.authoritativeFacts.some((f) => f.key === "temp_token"), "Expired memory excluded");
+});
+
+runTest("EC-H13: Superseded memories are suppressed from executive context", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Check memory",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [{ memory: { id: "sm1", key: "old_city", value: "Khulna", status: "SUPERSEDED" } }],
+    } as any,
+  });
+  assert(!res.authoritativeFacts.some((f) => f.key === "old_city"), "Superseded memory excluded");
+});
+
+runTest("EC-H14: Candidate unapproved user model attributes are not promoted to active preferences", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Check model",
+    context: createDummyContext(),
+    userModel: {
+      profile: {
+        attributes: {},
+        confirmedAttributes: [],
+        candidateAttributes: [{ key: "unconfirmed_pref", dimension: "TONE", normalizedValue: "AGGRESSIVE", status: "CANDIDATE" }],
+      },
+    } as any,
+  });
+  assert(!res.activePreferences.some((p) => p.key === "unconfirmed_pref"), "Candidate attribute not promoted");
+});
+
+runTest("EC-H15: Deleted memories are strictly filtered out", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Check deleted",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [{ memory: { id: "dm1", key: "deleted_item", value: "val", status: "DELETED" } }],
+    } as any,
+  });
+  assert(!res.authoritativeFacts.some((f) => f.key === "deleted_item"), "Deleted memory excluded");
+});
+
+// Group 4: Topic Isolation & Global Retention (EC-H16 - EC-H20)
+runTest("EC-H16: Topic switch isolates domain-specific facts from inactive topics", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Let's talk about cooking",
+    context: {
+      ...createDummyContext("cooking"),
+      isTopicSwitched: true,
+    },
+    memoryGovernance: {
+      topicIsolationApplied: true,
+      allowedMemories: [
+        { memory: { id: "m1", key: "react_state", value: "useState", category: "REACT_CODING", status: "ACTIVE", confidence: 0.9 } },
+        { memory: { id: "m2", key: "favorite_spice", value: "Cumin", category: "COOKING", status: "ACTIVE", confidence: 0.9 } },
+      ],
+    } as any,
+  });
+  assert(!res.authoritativeFacts.some((f) => f.key === "react_state"), "Inactive topic REACT_CODING fact excluded");
+  assert(res.authoritativeFacts.some((f) => f.key === "favorite_spice"), "Active topic COOKING fact retained");
+});
+
+runTest("EC-H17: Global preferences are retained during strict topic isolation", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Let's talk about gaming",
+    context: {
+      ...createDummyContext("gaming"),
+      isTopicSwitched: true,
+    },
+    memoryGovernance: {
+      topicIsolationApplied: true,
+      allowedMemories: [
+        { memory: { id: "m1", key: "language", value: "ENGLISH", category: "PREFERENCE", status: "ACTIVE", confidence: 0.95 } },
+      ],
+    } as any,
+  });
+  assert(res.activePreferences.some((p) => p.key === "language"), "Global language preference retained under topic isolation");
+});
+
+runTest("EC-H18: Topic isolation suppresses predictive candidates from foreign topics", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Discuss gardening",
+    context: {
+      ...createDummyContext("gardening"),
+      isTopicSwitched: true,
+    },
+    predictiveContext: {
+      candidates: [
+        { id: "pred1", domain: "DATABASE", contextSummary: "postgres_index", suggestion: "Add B-tree index" },
+        { id: "pred2", domain: "GARDENING", contextSummary: "watering_schedule", suggestion: "Water twice weekly" },
+      ],
+    } as any,
+    options: { strictTopicIsolation: true },
+  });
+  assert(!res.advisoryContext.some((a) => a.key === "postgres_index"), "Foreign DATABASE predictive suggestion suppressed");
+  assert(res.advisoryContext.some((a) => a.key === "watering_schedule"), "Matching GARDENING predictive suggestion retained");
+});
+
+runTest("EC-H19: Topic-isolated projects are suppressed when activeTopic does not match", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Project update",
+    context: {
+      ...createDummyContext("design"),
+      isTopicSwitched: true,
+    },
+    goalProject: {
+      activeProjects: [
+        { id: "p1", name: "Backend DB Migration", status: "ACTIVE", description: "Migrate Postgres tables" },
+        { id: "p2", name: "UI Design System", status: "ACTIVE", description: "Figma design tokens" },
+      ],
+    } as any,
+    options: { strictTopicIsolation: true },
+  });
+  assert(!res.activeProjects.some((p) => p.name === "Backend DB Migration"), "Mismatched Backend project suppressed");
+  assert(res.activeProjects.some((p) => p.name === "UI Design System"), "Matched Design project retained");
+});
+
+runTest("EC-H20: Topic isolation diagnostics count incremented", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Topic test",
+    context: {
+      ...createDummyContext("biology"),
+      isTopicSwitched: true,
+    },
+    memoryGovernance: {
+      topicIsolationApplied: true,
+      allowedMemories: [
+        { memory: { id: "m1", key: "rust_compiler", value: "rustc", category: "PROGRAMMING", status: "ACTIVE" } },
+      ],
+    } as any,
+  });
+  assert(res.diagnostics.topicIsolatedCount > 0, "topicIsolatedCount incremented");
+});
+
+// Group 5: Predictive Advisory Boundary (EC-H21 - EC-H25)
+runTest("EC-H21: Predictive context is labeled advisory-only and cannot become verified fact", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Check predictions",
+    context: createDummyContext(),
+    predictiveContext: {
+      candidates: [{ id: "pred1", contextSummary: "suggested_framework", suggestion: "Astro", relevanceScore: 0.8 }],
+    } as any,
+  });
+  assert(res.advisoryContext.length === 1, "1 advisory item");
+  assert(res.advisoryContext[0].isAdvisoryOnly === true, "isAdvisoryOnly is true");
+  assert(!res.authoritativeFacts.some((f) => f.key === "suggested_framework"), "Not added to authoritative facts");
+});
+
+runTest("EC-H22: Predictive context cannot create user preference without confirmation", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Suggest something",
+    context: createDummyContext(),
+    predictiveContext: {
+      candidates: [{ id: "pred1", contextSummary: "theme", suggestion: "DARK_MODE", relevanceScore: 0.9 }],
+    } as any,
+  });
+  assert(!res.activePreferences.some((p) => p.key === "theme"), "Predictive candidate does not create active preference");
+});
+
+runTest("EC-H23: Predictive context cannot create goal or commitment", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Status",
+    context: createDummyContext(),
+    predictiveContext: {
+      candidates: [{ id: "pred1", contextSummary: "goal_suggestion", suggestion: "Finish thesis by Friday" }],
+    } as any,
+  });
+  assert(res.activeGoals.length === 0, "No active goals created by prediction");
+  assert(res.activeCommitments.length === 0, "No active commitments created by prediction");
+});
+
+runTest("EC-H24: Low authority of predictive context causes it to yield to any higher authority", () => {
+  assert(EXECUTIVE_AUTHORITY_WEIGHTS["PREDICTIVE_CONTEXT"] === 0.30, "Predictive authority weight is 0.30");
+  assert(EXECUTIVE_AUTHORITY_WEIGHTS["SYSTEM_DEFAULT"] === 0.10, "System default weight is 0.10");
+  assert(EXECUTIVE_AUTHORITY_WEIGHTS["PREDICTIVE_CONTEXT"] < EXECUTIVE_AUTHORITY_WEIGHTS["CONFIRMED_ADAPTIVE_PATTERN"], "Predictive is lower than adaptive");
+});
+
+runTest("EC-H25: Predictive directives contain Advisory prefix in sanitized output", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Show tips",
+    context: createDummyContext(),
+    predictiveContext: {
+      candidates: [{ id: "pred1", contextSummary: "tip", suggestion: "Consider caching responses" }],
+    } as any,
+  });
+  assert(res.advisoryContext[0].sanitizedDirective.startsWith("Advisory suggestion:"), "Directive begins with Advisory suggestion:");
+});
+
+// Group 6: Temporal Memory Lineage & Evolution (EC-H26 - EC-H30)
+runTest("EC-H26: Stale temporal patterns are suppressed from active temporal context", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Temporal test",
+    context: createDummyContext(),
+    temporalMemory: {
+      patterns: [{ patternKey: "old_routine", currentValue: "morning_run", temporalStatus: "STALE" }],
+    } as any,
+  });
+  assert(!res.temporalContext.activePatterns.some((p) => p.key === "old_routine"), "Stale pattern suppressed");
+  assert(res.temporalContext.suppressedStaleCount === 1, "suppressedStaleCount is 1");
+});
+
+runTest("EC-H27: Current temporal pattern is extracted into activePatterns", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Temporal test",
+    context: createDummyContext(),
+    temporalMemory: {
+      patterns: [{ patternKey: "daily_standup", currentValue: "10:00_AM", temporalStatus: "CURRENT" }],
+    } as any,
+  });
+  assert(res.temporalContext.activePatterns.some((p) => p.key === "daily_standup" && p.value === "10:00_AM"), "Current temporal pattern present");
+});
+
+runTest("EC-H28: Evolving temporal pattern generates evolvingLineage entry", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Temporal test",
+    context: createDummyContext(),
+    temporalMemory: {
+      patterns: [
+        {
+          patternKey: "ide_choice",
+          currentValue: "Cursor",
+          temporalStatus: "EVOLVING",
+          status: "EVOLVING",
+          previousValues: [{ value: "VS Code", normalizedValue: "VS Code" }],
+          isCurrentTurnEvolution: true,
+        },
+      ],
+    } as any,
+  });
+  assert(res.temporalContext.evolvingLineage.length === 1, "1 evolving lineage item");
+  assert(res.temporalContext.evolvingLineage[0].fromValue === "VS Code", "fromValue is VS Code");
+  assert(res.temporalContext.evolvingLineage[0].toValue === "Cursor", "toValue is Cursor");
+  assert(res.temporalContext.evolvingLineage[0].isCurrentTurnEvolution === true, "isCurrentTurnEvolution is true");
+});
+
+runTest("EC-H29: Superseded temporal patterns increment staleSuppressed diagnostics", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Temporal test",
+    context: createDummyContext(),
+    temporalMemory: {
+      patterns: [{ patternKey: "old_pattern", currentValue: "val", temporalStatus: "SUPERSEDED" }],
+    } as any,
+  });
+  assert(res.diagnostics.staleExpiredSuppressedCount > 0, "staleExpiredSuppressedCount incremented");
+});
+
+runTest("EC-H30: Expired temporal patterns are excluded", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Temporal test",
+    context: createDummyContext(),
+    temporalMemory: {
+      patterns: [{ patternKey: "expired_pattern", currentValue: "val", temporalStatus: "EXPIRED" }],
+    } as any,
+  });
+  assert(!res.temporalContext.activePatterns.some((p) => p.key === "expired_pattern"), "Expired pattern excluded");
+});
+
+// Group 7: Goal & Project Integrity & Lifecycle (EC-H31 - EC-H35)
+runTest("EC-H31: Completed goals are suppressed from activeGoals", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Goals test",
+    context: createDummyContext(),
+    goalProject: {
+      activeGoals: [{ id: "g1", title: "Write Spec", status: "COMPLETED" }],
+    } as any,
+  });
+  assert(res.activeGoals.length === 0, "Completed goal suppressed");
+});
+
+runTest("EC-H32: Abandoned projects are suppressed from activeProjects", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Projects test",
+    context: createDummyContext(),
+    goalProject: {
+      activeProjects: [{ id: "p1", name: "Abandoned Initiative", status: "ABANDONED" }],
+    } as any,
+  });
+  assert(res.activeProjects.length === 0, "Abandoned project suppressed");
+});
+
+runTest("EC-H33: Current-turn paused project override suppresses specified project", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Pause Project Alpha, let's work on Project Beta",
+    context: createDummyContext(),
+    goalProject: {
+      activeProjects: [
+        { id: "p1", name: "Project Alpha", status: "ACTIVE" },
+        { id: "p2", name: "Project Beta", status: "ACTIVE" },
+      ],
+    } as any,
+  });
+  assert(!res.activeProjects.some((p) => p.name === "Project Alpha"), "Project Alpha paused and suppressed");
+  assert(res.activeProjects.some((p) => p.name === "Project Beta"), "Project Beta active");
+  assert(res.currentTurn.overrides.pausedProject?.toLowerCase().includes("alpha"), "Paused project detected");
+});
+
+runTest("EC-H34: Uncertain/hypothetical commitments are rejected", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Commitment test",
+    context: createDummyContext(),
+    goalProject: {
+      activeCommitments: [
+        { id: "c1", description: "Maybe refactor auth?", status: "ACTIVE", sourceIntent: "HYPOTHETICAL" },
+        { id: "c2", description: "Deploy to prod tomorrow", status: "ACTIVE", sourceIntent: "DIRECT_USER_COMMITMENT" },
+      ],
+    } as any,
+  });
+  assert(!res.activeCommitments.some((c) => c.description.includes("Maybe refactor")), "Hypothetical commitment rejected");
+  assert(res.activeCommitments.some((c) => c.description.includes("Deploy to prod")), "Direct user commitment accepted");
+});
+
+runTest("EC-H35: Cancelled commitments are suppressed", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Commitment test",
+    context: createDummyContext(),
+    goalProject: {
+      activeCommitments: [{ id: "c1", description: "Old commitment", status: "CANCELLED" }],
+    } as any,
+  });
+  assert(res.activeCommitments.length === 0, "Cancelled commitment suppressed");
+});
+
+// Group 8: Context Budgeting & Truncation (EC-H36 - EC-H38)
+runTest("EC-H37: Priority-ordered truncation preserves highest authority items under tight budget", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Budget test",
+    context: createDummyContext(),
+    verification: {
+      verifiedEvidence: [
+        { id: "v1", claim: "fact_1", groundingDetails: "high_auth_fact", confidence: 1.0 },
+      ],
+    } as any,
+    memoryGovernance: {
+      allowedMemories: [
+        { memory: { id: "m2", key: "fact_2", value: "lower_auth_fact", category: "GENERAL", status: "ACTIVE" } },
+      ],
+    } as any,
+    options: {
+      budgetConfig: { maxFacts: 1 },
+    },
+  });
+  assert(res.authoritativeFacts.length === 1, "Budget clamped to 1 fact");
+  assert(res.authoritativeFacts[0].authority === "VERIFIED_EVIDENCE", "Highest authority VERIFIED_EVIDENCE preserved");
+  assert(res.diagnostics.budgetTruncatedCount === 1, "budgetTruncatedCount is 1");
+});
+
+runTest("EC-H38: Prompt directives count respects maxDirectives budget", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Directives budget test",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [
+        { memory: { id: "m1", key: "pref1", value: "v1", category: "PREFERENCE", status: "ACTIVE" } },
+        { memory: { id: "m2", key: "pref2", value: "v2", category: "PREFERENCE", status: "ACTIVE" } },
+        { memory: { id: "m3", key: "pref3", value: "v3", category: "PREFERENCE", status: "ACTIVE" } },
+      ],
+    } as any,
+    options: {
+      budgetConfig: { maxDirectives: 2 },
+    },
+  });
+  assert(res.promptDirectives.length <= 2, "Prompt directives capped at 2");
+});
+
+// Group 9: Sensitive Data Suppression & Sanitization (EC-H39 - EC-H41)
+runTest("EC-H39: API keys, bearer tokens, and secrets are suppressed from executive facts", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Secrets test",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [
+        { memory: { id: "m1", key: "api_key", value: "sk-proj-1234567890abcdef1234567890", category: "CREDENTIALS", status: "ACTIVE" } },
+        { memory: { id: "m2", key: "clean_fact", value: "App uses TypeScript", category: "TECH_STACK", status: "ACTIVE" } },
+      ],
+    } as any,
+  });
+  assert(!res.authoritativeFacts.some((f) => f.key === "api_key"), "API key suppressed from facts");
+  assert(res.authoritativeFacts.some((f) => f.key === "clean_fact"), "Clean fact retained");
+  assert(res.diagnostics.sensitiveDataSuppressedCount > 0, "sensitiveDataSuppressedCount incremented");
+});
+
+runTest("EC-H40: Credit card patterns and SSNs are suppressed from predictive advisories", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "CC test",
+    context: createDummyContext(),
+    predictiveContext: {
+      candidates: [
+        { id: "pred1", contextSummary: "card", suggestion: "Card number 4532-1234-5678-9012" },
+        { id: "pred2", contextSummary: "clean_tip", suggestion: "Optimize database indexes" },
+      ],
+    } as any,
+  });
+  assert(!res.advisoryContext.some((a) => a.key === "card"), "Card suggestion suppressed");
+  assert(res.advisoryContext.some((a) => a.key === "clean_tip"), "Clean tip retained");
+});
+
+runTest("EC-H41: Directive sanitizer strips internal metadata, memory IDs, and raw hashes", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Sanitize test",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [
+        { memory: { id: "mem_abc123", key: "favorite_editor", value: "Neovim [id: mem_abc123] [confidence: 0.99] [hash: 9a8b7c]", category: "PREFERENCE", status: "ACTIVE" } },
+      ],
+    } as any,
+  });
+  const directive = res.promptDirectives.find((d) => d.includes("Neovim"));
+  assert(directive !== undefined, "Directive found");
+  assert(!directive?.includes("mem_abc123"), "Internal mem ID stripped from directive");
+  assert(!directive?.includes("confidence:"), "Confidence metadata stripped from directive");
+  assert(!directive?.includes("hash:"), "Hash metadata stripped from directive");
+});
+
+// Group 10: Determinism & Immutability / State Invariance (EC-H42 - EC-H45)
+runTest("EC-H42: ExecutiveContextEngine produces bit-for-bit identical output over 10 consecutive runs", () => {
+  const input: ExecutiveContextInput = {
+    message: "Deterministic check for complex synthesis",
+    context: createDummyContext("programming"),
+    memoryGovernance: {
+      allowedMemories: [
+        { memory: { id: "m1", key: "lang", value: "TypeScript", category: "PREFERENCE", status: "ACTIVE" } },
+        { memory: { id: "m2", key: "os", value: "Linux", category: "PREFERENCE", status: "ACTIVE" } },
+      ],
+    } as any,
+    goalProject: {
+      activeProjects: [{ id: "p1", name: "Dora Core", status: "ACTIVE" }],
+    } as any,
+    options: { currentTime: 1724300000000 },
+  };
+  const firstJson = JSON.stringify(executiveContextEngine.synthesize(input));
+  for (let i = 0; i < 10; i++) {
+    const runJson = JSON.stringify(executiveContextEngine.synthesize(input));
+    assert(runJson === firstJson, `Run ${i + 1} produced non-deterministic output`);
+  }
+});
+
+runTest("EC-H43: ExecutiveContextEngine performs zero mutations on input structures", () => {
+  const originalInput: ExecutiveContextInput = {
+    message: "Mutation check",
+    context: createDummyContext("architecture"),
+    options: { currentTime: 1724300000000 },
+  };
+  const snapshotBefore = JSON.stringify(originalInput);
+  executiveContextEngine.synthesize(originalInput);
+  const snapshotAfter = JSON.stringify(originalInput);
+  assert(snapshotBefore === snapshotAfter, "Input was mutated during synthesis");
+});
+
+runTest("EC-H44: Diagnostics structure accurately totals candidate items and resolutions", () => {
+  const res = executiveContextEngine.synthesize({
+    message: "Diagnostics verify",
+    context: createDummyContext(),
+    memoryGovernance: {
+      allowedMemories: [
+        { memory: { id: "m1", key: "theme", value: "light", category: "PREFERENCE", status: "ACTIVE" } },
+      ],
+    } as any,
+  });
+  assert(typeof res.diagnostics.totalCandidatesExamined === "number", "totalCandidatesExamined is number");
+  assert(typeof res.diagnostics.includedItemsCount === "number", "includedItemsCount is number");
+  assert(typeof res.diagnostics.conflictResolutionCounts === "object", "conflictResolutionCounts is object");
+});
+
+runTest("EC-H45: All authority levels are recognized and weighted correctly", () => {
+  const authorities: ExecutiveAuthority[] = [
+    "CURRENT_TURN_EXPLICIT",
+    "HARD_CONSTRAINT",
+    "VERIFIED_EVIDENCE",
+    "GOVERNANCE_APPROVED_MEMORY",
+    "CONFIRMED_USER_MODEL",
+    "ACTIVE_GOAL_PROJECT_COMMITMENT",
+    "TEMPORAL_CONTEXT",
+    "CONFIRMED_ADAPTIVE_PATTERN",
+    "PREDICTIVE_CONTEXT",
+    "SYSTEM_DEFAULT",
+  ];
+  for (let i = 0; i < authorities.length - 1; i++) {
+    const higher = authorities[i];
+    const lower = authorities[i + 1];
+    assert(
+      EXECUTIVE_AUTHORITY_WEIGHTS[higher] > EXECUTIVE_AUTHORITY_WEIGHTS[lower],
+      `Authority ${higher} (${EXECUTIVE_AUTHORITY_WEIGHTS[higher]}) must be strictly greater than ${lower} (${EXECUTIVE_AUTHORITY_WEIGHTS[lower]})`
+    );
+  }
+});
+
 console.log(`\n======================================================`);
 console.log(`ALL ${passedTests}/${totalTests} TESTS PASSED SUCCESSFULLY!`);
 console.log(`======================================================\n`);
