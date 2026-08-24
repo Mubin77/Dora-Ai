@@ -1,6 +1,6 @@
 /**
  * Dora Cross-Session Context Continuity & Intelligent Recall Orchestration Engine
- * Phase 2 — Step 11 (Hardened Architecture)
+ * Phase 2 — Step 11
  * 
  * Deterministic, bounded, non-LLM engine that safely selects, ranks, filters,
  * deduplicates, compresses, and presents already-authorized historical context,

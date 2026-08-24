@@ -52,6 +52,20 @@ export class ContextStore {
   }
 
   /**
+   * Retrieves the existing context for a session if present (read-only query)
+   */
+  public get(sessionId: string = "default"): ConversationContext | undefined {
+    return this.contexts.get(sessionId);
+  }
+
+  /**
+   * Checks if a session context exists in the store
+   */
+  public has(sessionId: string = "default"): boolean {
+    return this.contexts.has(sessionId);
+  }
+
+  /**
    * Retrieves the current context for a session, initializing one if needed
    */
   public getOrCreate(sessionId: string = "default", currentTime?: number): ConversationContext {

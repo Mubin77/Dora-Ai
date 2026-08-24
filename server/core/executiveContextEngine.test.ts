@@ -670,10 +670,11 @@ runTest("EC-H1: Direct turn language override beats confirmed user model & gover
     message: "Respond in English please",
     context: createDummyContext(),
     userModel: {
+      userId: "u1",
       profile: {
         userId: "u1",
         attributes: {},
-        confirmedAttributes: [{ key: "language", dimension: "LANGUAGE", normalizedValue: "BANGLA", confidence: 0.9, evidenceCount: 3, independentEvidenceCount: 2, status: "CONFIRMED", sourceClassification: "CONFIRMED_USER_MODEL", firstObservedAt: 100, lastObservedAt: 200, isDurable: true, isTemporary: false, evidence: [] }],
+        confirmedAttributes: [{ key: "language", dimension: "LANGUAGE", normalizedValue: "BANGLA", confidence: 0.9, evidenceCount: 3, independentEvidenceCount: 2, status: "CONFIRMED", sourceClassification: "CONFIRMED_PREFERENCE", firstObservedAt: 100, lastObservedAt: 200, isDurable: true, isTemporary: false, evidence: [] }],
         candidateAttributes: [],
         temporaryAttributes: [],
         supersededAttributes: [],
@@ -690,16 +691,20 @@ runTest("EC-H1: Direct turn language override beats confirmed user model & gover
       diagnostics: { signalsProcessed: 1, memoriesIngested: 1, patternsIngested: 0, conflictsResolved: 0, sensitiveBlocked: 0, unsupportedIdentityBlocked: 0, isDeterministic: true },
     },
     memoryGovernance: {
-      isSafe: true,
-      allowedMemories: [{ memory: { id: "m1", key: "language", value: "BANGLA", category: "PREFERENCE", status: "ACTIVE", confidence: 0.95 }, action: "ALLOW", status: "ACTIVE", confidence: 0.95, governanceTimestamp: 1000 }],
-      quarantinedMemories: [],
-      rejectedMemories: [],
+      governanceRequired: true,
+      memoryInfluenceAllowed: true,
+      allowedMemories: [{ memoryId: "m1", key: "language", value: "BANGLA", type: "PREFERENCE", source: "EXPLICIT_USER", status: "ACTIVE", usageDecision: "ALLOW", usageScore: 0.95, confidence: 0.95, relevance: 0.9, reasons: ["ACTIVE_USER_PREFERENCE"], canAffectResponseContent: true, canPersonalize: true, canSupportFactualClaim: false, requiresExplicitAttribution: false, isCandidateInferred: false }],
+      cautiousMemories: [],
+      internalOnlyMemories: [],
       suppressedMemories: [],
-      staleMemories: [],
-      supersededMemories: [],
+      governedCandidates: [],
       conflicts: [],
+      privacyBlocks: [],
       topicIsolationApplied: false,
-      diagnostics: { totalMemoriesEvaluated: 1, allowedCount: 1, quarantinedCount: 0, rejectedCount: 0, suppressedCount: 0, staleCount: 0, supersededCount: 0, sensitivityBlockedCount: 0, topicMismatches: 0, confidenceFilteredCount: 0, isDeterministic: true },
+      explicitReferenceDetected: false,
+      directives: [],
+      sanitizedMemoryContext: "",
+      governanceConfidence: 0.95,
     },
   });
   assert(res.currentTurn.overrides.language === "ENGLISH", "Current turn language is ENGLISH");
@@ -712,10 +717,11 @@ runTest("EC-H2: Direct turn verbosity override beats confirmed user model verbos
     message: "Keep it brief and concise",
     context: createDummyContext(),
     userModel: {
+      userId: "u1",
       profile: {
         userId: "u1",
         attributes: {},
-        confirmedAttributes: [{ key: "verbosity", dimension: "VERBOSITY", normalizedValue: "DETAILED", confidence: 0.9, evidenceCount: 3, independentEvidenceCount: 2, status: "CONFIRMED", sourceClassification: "CONFIRMED_USER_MODEL", firstObservedAt: 100, lastObservedAt: 200, isDurable: true, isTemporary: false, evidence: [] }],
+        confirmedAttributes: [{ key: "verbosity", dimension: "VERBOSITY", normalizedValue: "DETAILED", confidence: 0.9, evidenceCount: 3, independentEvidenceCount: 2, status: "CONFIRMED", sourceClassification: "CONFIRMED_PREFERENCE", firstObservedAt: 100, lastObservedAt: 200, isDurable: true, isTemporary: false, evidence: [] }],
         candidateAttributes: [],
         temporaryAttributes: [],
         supersededAttributes: [],

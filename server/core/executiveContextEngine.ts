@@ -33,13 +33,19 @@ import {
   DEFAULT_EXECUTIVE_BUDGET,
   ExecutiveContextBudgetConfig,
 } from "./executiveContextTypes";
-import { Project, Goal, Commitment, ProjectTask, ProjectMilestone, ProjectBlocker } from "./goalProjectTypes";
-import { TemporalPatternItem } from "./temporalMemoryTypes";
-import { PredictiveCandidate } from "./predictiveContextTypes";
+import { Project, Goal, Commitment, ProjectTask, Milestone } from "./goalProjectTypes";
+import { TemporalPattern } from "./temporalMemoryTypes";
+import { ProactiveContextCandidate } from "./predictiveContextTypes";
 import { UserModelAttribute } from "./longTermUserModelTypes";
-import { GovernedMemoryDecision } from "./memoryGovernanceTypes";
-import { VerificationConstraint, VerifiedEvidenceItem } from "./verificationTypes";
-import { ReasoningConstraint } from "./reasoningTypes";
+import { MemoryGovernanceCandidate } from "./memoryGovernanceTypes";
+import { VerificationAnalysis, ClaimVerification } from "./verificationTypes";
+import { ReasoningAnalysis, StructuredReasoningConstraint } from "./reasoningTypes";
+import {
+  ResponseLanguage,
+  ResponseVerbosity,
+  ResponseTone,
+  ResponseFormatStyle,
+} from "./responseAdaptationTypes";
 
 export class ExecutiveContextEngine {
   private static instance: ExecutiveContextEngine;
@@ -494,9 +500,8 @@ export class ExecutiveContextEngine {
     let count = 1;
 
     // 1. Safety & Verification constraints
-    if (input.verification?.constraints && Array.isArray(input.verification.constraints)) {
-      for (const c of input.verification.constraints) {
-        const desc = c.description || c.type || "Verification constraint";
+    if (input.verification?.constraintCompliance?.violatedHardConstraints) {
+      for (const desc of input.verification.constraintCompliance.violatedHardConstraints) {
         rawConstraints.push({
           id: `exec_const_${count++}`,
           type: "VERIFICATION",
@@ -508,8 +513,10 @@ export class ExecutiveContextEngine {
       }
     }
 
-    if (input.verification?.cautionDirectives && Array.isArray(input.verification.cautionDirectives)) {
-      for (const desc of input.verification.cautionDirectives) {
+    const verDirectives = (input.verification as any)?.cautionDirectives || input.verification?.directives || (input.verification as any)?.constraints;
+    if (verDirectives && Array.isArray(verDirectives)) {
+      for (const c of verDirectives) {
+        const desc = typeof c === "string" ? c : (c.description || c.type || JSON.stringify(c));
         rawConstraints.push({
           id: `exec_const_${count++}`,
           type: "VERIFICATION",
@@ -522,10 +529,11 @@ export class ExecutiveContextEngine {
     }
 
     // 2. Reasoning constraints
-    if (input.reasoning?.constraints && Array.isArray(input.reasoning.constraints)) {
-      for (const c of input.reasoning.constraints) {
-        const desc = c.description || "Reasoning constraint";
-        const hard = c.isHardConstraint ?? true;
+    const rConstraints = (input.reasoning as any)?.constraints || input.reasoning?.relevantConstraints;
+    if (rConstraints && Array.isArray(rConstraints)) {
+      for (const c of rConstraints) {
+        const desc = typeof c === "string" ? c : (c.description || (c.key ? `${c.key}: ${JSON.stringify(c.value)}` : JSON.stringify(c)));
+        const hard = typeof c === "object" ? (c.isHardConstraint ?? true) : true;
         rawConstraints.push({
           id: `exec_const_${count++}`,
           type: "REASONING",
@@ -553,15 +561,16 @@ export class ExecutiveContextEngine {
     let factIdCount = 1;
 
     // 1. Verified Evidence facts from VerificationEngine
-    const verifiedList: VerifiedEvidenceItem[] =
-      input.verification?.verifiedEvidence ||
+    const verifiedList: any[] =
       (input.verification as any)?.evidence ||
+      (input.verification as any)?.verifiedEvidence ||
+      input.verification?.supportedClaims ||
       [];
     if (verifiedList && Array.isArray(verifiedList)) {
       for (const ev of verifiedList) {
         if (ev && typeof ev === "object") {
-          const key = ev.claim || (ev as any).key || "verified_fact";
-          const val = ev.groundingDetails || (ev as any).content || (ev as any).value || ev.claim || String(key);
+          const key = ev.claim || ev.key || "verified_fact";
+          const val = ev.content || ev.groundingDetails || ev.value || ev.claim || String(key);
           const isSens = this.containsSensitiveData(`${key} ${val}`);
 
           rawFacts.push({
@@ -586,13 +595,13 @@ export class ExecutiveContextEngine {
     }
 
     // 2. Governed Memories (ONLY memories authorized by MemoryGovernanceEngine)
-    const governedList: GovernedMemoryDecision[] =
+    const governedList: MemoryGovernanceCandidate[] =
       input.memoryGovernance?.allowedMemories ||
       (input.memoryGovernance as any)?.governedMemories ||
       [];
     if (governedList && Array.isArray(governedList)) {
       for (const gm of governedList) {
-        const mem = gm.memory;
+        const mem = (gm as any).memory || gm;
         if (!mem) continue;
 
         // Lifecycle check
@@ -604,7 +613,7 @@ export class ExecutiveContextEngine {
         // Category & Fact check (we only extract factual / profile memories as facts)
         const key = mem.key || "memory";
         const val = mem.value || "";
-        const cat = (mem.category || "GENERAL").toUpperCase();
+        const cat = ((mem as any).category || (mem as any).type || "GENERAL").toUpperCase();
         const scope = this.determineScope(key, cat);
         const isGlobal = scope === "GLOBAL";
         const isSens = this.containsSensitiveData(`${key} ${val}`);
@@ -877,13 +886,13 @@ export class ExecutiveContextEngine {
     }
 
     // 3. Governed Memory Preferences (Authority: GOVERNANCE_APPROVED_MEMORY = 0.80)
-    const governedList: GovernedMemoryDecision[] =
+    const governedList: MemoryGovernanceCandidate[] =
       input.memoryGovernance?.allowedMemories ||
       (input.memoryGovernance as any)?.governedMemories ||
       [];
     if (governedList && Array.isArray(governedList)) {
       for (const gm of governedList) {
-        const mem = gm.memory;
+        const mem = (gm as any).memory || gm;
         if (!mem) continue;
 
         const status = (mem.status || gm.status || "ACTIVE").toUpperCase();
@@ -891,7 +900,7 @@ export class ExecutiveContextEngine {
           continue;
         }
 
-        const cat = (mem.category || "GENERAL").toUpperCase();
+        const cat = ((mem as any).category || (mem as any).type || "GENERAL").toUpperCase();
         if (cat === "PREFERENCE" || cat === "PERSONALIZATION" || cat === "STYLE") {
           const key = mem.key || "memory_preference";
           const val = mem.value || "";
@@ -928,9 +937,9 @@ export class ExecutiveContextEngine {
         const status = (pat.status || "OBSERVED").toUpperCase();
         if (status !== "CONFIRMED") continue; // Only confirmed patterns
 
-        const key = pat.patternKey || pat.dimension || "adaptive_habit";
-        const val = pat.preferredValue || "";
-        const domain = pat.domain || pat.dimension || key;
+        const key = (pat as any).patternKey || pat.key || (pat as any).dimension || pat.category || "adaptive_habit";
+        const val = (pat as any).preferredValue || pat.value || "";
+        const domain = (pat as any).domain || (pat as any).dimension || pat.category || key;
         const scope = this.determineScope(key, domain);
         const isGlobal = scope === "GLOBAL";
         const isSens = this.containsSensitiveData(`${key} ${val}`);
@@ -1025,9 +1034,10 @@ export class ExecutiveContextEngine {
           }
         }
 
+        const projId = proj.projectId || (proj as any).id;
         const isPrimaryActive = Boolean(
-          ((input.goalProject as any).primaryActiveProject && (input.goalProject as any).primaryActiveProject.id === proj.id) ||
-          (input.goalProject.state?.activeProjects?.[0]?.id === proj.id) ||
+          ((input.goalProject as any).primaryActiveProject && ((input.goalProject as any).primaryActiveProject.projectId === projId || (input.goalProject as any).primaryActiveProject.id === projId)) ||
+          (input.goalProject.state?.activeProjects?.[0]?.projectId === projId) ||
           (currentTurn.overrides.switchedProject &&
             proj.name.toLowerCase().includes(currentTurn.overrides.switchedProject.toLowerCase()))
         );
@@ -1040,16 +1050,21 @@ export class ExecutiveContextEngine {
           .filter((t) => t.status === "READY")
           .map((t) => t.title);
 
-        const blockers = (proj.blockers || []).map((b) =>
-          typeof b === "string" ? b : b.description || b.blockerId || String(b)
-        );
+        const rawBlockers = (proj as any).blockers || [];
+        const taskBlockers = (proj.tasks || [])
+          .filter((t) => t.status === "BLOCKED")
+          .map((t) => t.title);
+        const blockers = [
+          ...rawBlockers.map((b: any) => typeof b === "string" ? b : (b.description || b.blockerId || b.id || String(b))),
+          ...taskBlockers,
+        ];
 
         projects.push({
-          id: proj.id || `exec_proj_${proj.name}`,
+          id: projId || `exec_proj_${proj.name}`,
           name: proj.name,
           status: proj.status,
           description: proj.description,
-          currentMilestone: proj.milestones?.find((m) => m.status === "IN_PROGRESS")?.title,
+          currentMilestone: proj.milestones?.find((m) => m.status === "ACTIVE")?.title,
           activeTasks,
           readyTasks,
           blockers,
@@ -1076,12 +1091,13 @@ export class ExecutiveContextEngine {
           continue;
         }
 
+        const goalId = goal.goalId || (goal as any).id;
         goals.push({
-          id: goal.id || `exec_goal_${goal.title}`,
+          id: goalId || `exec_goal_${goal.title}`,
           title: goal.title,
           status: goal.status,
           priority: goal.priority || "MEDIUM",
-          targetDate: typeof goal.targetDate === "number" ? new Date(goal.targetDate).toISOString() : goal.targetDate,
+          targetDate: typeof goal.targetDate === "number" ? new Date(goal.targetDate).toISOString() : (goal as any).targetDate,
           scope: goal.scope || "GLOBAL",
           sanitizedDirective: this.sanitizeDirective(`Active Goal: ${goal.title} (Priority: ${goal.priority || "MEDIUM"})`),
         });
@@ -1095,26 +1111,29 @@ export class ExecutiveContextEngine {
         totalExamined++;
         const status = (comm.status || "ACTIVE").toUpperCase();
 
-        if (status === "COMPLETED" || status === "EXPIRED" || status === "CANCELLED") {
+        if (status === "COMPLETED" || status === "EXPIRED" || status === "ARCHIVED" || status === "CANCELLED" || status === "ABANDONED") {
           staleExpired++;
           suppressed++;
           continue;
         }
 
-        // Must originate from direct user commitment, not uncertain/question/assistant statement
-        const sourceIntent = comm.sourceIntent || "DIRECT_USER_COMMITMENT";
+        const commId = comm.commitmentId || (comm as any).id;
+        const commDesc = (comm as any).description || comm.title || "commitment";
+        const dueDate = comm.deadline ? (typeof comm.deadline === "number" ? new Date(comm.deadline).toISOString() : (comm as any).deadline) : (comm as any).dueDate;
+        const sourceIntent = (comm as any).sourceIntent || "DIRECT_USER_COMMITMENT";
+
         if (sourceIntent === "QUESTION" || sourceIntent === "HYPOTHETICAL" || sourceIntent === "ASSISTANT_STATEMENT") {
           suppressed++;
           continue;
         }
 
         commitments.push({
-          id: comm.id || `exec_commit_${comm.description}`,
-          description: comm.description,
+          id: commId || `exec_commit_${commDesc}`,
+          description: commDesc,
           status: comm.status,
-          dueDate: typeof comm.dueDate === "number" ? new Date(comm.dueDate).toISOString() : comm.dueDate,
+          dueDate,
           sourceIntent,
-          sanitizedDirective: this.sanitizeDirective(`Active Commitment: ${comm.description}${comm.dueDate ? ` (Due: ${comm.dueDate})` : ""}`),
+          sanitizedDirective: this.sanitizeDirective(`Active Commitment: ${commDesc}${dueDate ? ` (Due: ${dueDate})` : ""}`),
         });
       }
     }
@@ -1161,7 +1180,7 @@ export class ExecutiveContextEngine {
     if (input.temporalMemory.patterns && Array.isArray(input.temporalMemory.patterns)) {
       for (const pat of input.temporalMemory.patterns) {
         totalExamined++;
-        const status = (pat.status || pat.temporalStatus || "CURRENT").toUpperCase();
+        const status = (pat.temporalStatus || (pat as any).status || "CURRENT").toUpperCase();
 
         // Stale & Expired lifecycle suppression
         if (status === "STALE" || status === "SUPERSEDED" || status === "EXPIRED" || status === "UNKNOWN") {
@@ -1171,7 +1190,7 @@ export class ExecutiveContextEngine {
         }
 
         // Topic isolation
-        const key = pat.patternKey || pat.attributeKey || "temporal_pattern";
+        const key = pat.attributeKey || (pat as any).patternKey || "temporal_pattern";
         const val = pat.currentValue || "";
         const topic = pat.dimension;
         const scope = this.determineScope(key, topic);
@@ -1193,14 +1212,14 @@ export class ExecutiveContextEngine {
             key,
             fromValue: fromVal,
             toValue: val,
-            isCurrentTurnEvolution: pat.isCurrentTurnEvolution ?? false,
+            isCurrentTurnEvolution: (pat as any).isCurrentTurnEvolution ?? (pat as any).isCurrentTurnOverride ?? false,
           });
         }
 
         activePatterns.push({
           key,
           value: val,
-          status: pat.status || pat.temporalStatus || "CURRENT",
+          status: pat.temporalStatus || (pat as any).status || "CURRENT",
           authority: "TEMPORAL_CONTEXT",
           sanitizedDirective: this.sanitizeDirective(`Temporal context: ${key} = ${val} (${status.toLowerCase()})`),
         });
@@ -1503,9 +1522,9 @@ export class ExecutiveContextEngine {
       };
     }
 
-    const candidateList: PredictiveCandidate[] =
+    const candidateList: ProactiveContextCandidate[] =
       input.predictiveContext.acceptedCandidates ||
-      input.predictiveContext.candidates ||
+      (input.predictiveContext as any).candidates ||
       [];
 
     const authoritativeKeys = new Set([
@@ -1515,8 +1534,8 @@ export class ExecutiveContextEngine {
 
     for (const cand of candidateList) {
       totalExamined++;
-      const key = cand.contextSummary || (cand as any).key || (cand as any).title || cand.type || "predictive_suggestion";
-      const val = cand.suggestion || (cand as any).content || (cand.directives && cand.directives[0]) || (cand as any).directive || String(key);
+      const key = cand.contextSummary || (cand as any).key || (cand as any).title || cand.predictionType || "predictive_suggestion";
+      const val = cand.directive || (cand as any).suggestion || (cand as any).content || String(key);
       const normKey = this.normalizeKey(key);
 
       // 1. Sensitive check
@@ -1546,7 +1565,7 @@ export class ExecutiveContextEngine {
       }
 
       // 4. Topic isolation check
-      const candTopic = cand.domain;
+      const candTopic = cand.topic || (cand as any).domain;
       if (isTopicIsolated && activeTopic && candTopic) {
         const isCompat = this.isCompatibleWithTopic(candTopic, activeTopic, false);
         if (!isCompat) {
@@ -1560,7 +1579,7 @@ export class ExecutiveContextEngine {
         id: cand.id || `exec_adv_${list.length + 1}`,
         key,
         suggestion: val,
-        relevanceScore: cand.relevanceScore || 0.5,
+        relevanceScore: cand.relevance || 0.5,
         topic: candTopic,
         isAdvisoryOnly: true,
         sanitizedDirective: this.sanitizeDirective(`Advisory suggestion: ${val}`),
@@ -1582,12 +1601,12 @@ export class ExecutiveContextEngine {
     const styleProf = adaptation?.styleProfile;
 
     // Default style
-    let language = styleProf?.language?.value || "ENGLISH";
-    let verbosity = styleProf?.verbosity?.value || "NORMAL";
-    let tone = styleProf?.tone?.value || "WARM_FRIENDLY";
-    let formatStyle = styleProf?.formatStyle?.value || "PROSE";
-    let codeDensity = styleProf?.codeDensity?.value || "BALANCED";
-    let explanationDepth = styleProf?.explanationDepth?.value || "INTERMEDIATE";
+    let language: string = styleProf?.language?.value || "ENGLISH";
+    let verbosity: string = styleProf?.verbosity?.value || "NORMAL";
+    let tone: string = styleProf?.tone?.value || "WARM_FRIENDLY";
+    let formatStyle: string = styleProf?.formatStyle?.value || "PROSE";
+    let codeDensity: string = styleProf?.codeDensity?.value || "BALANCED";
+    let explanationDepth: string = styleProf?.explanationDepth?.value || "INTERMEDIATE";
 
     const winningLayers: Record<string, string> = {
       language: styleProf?.language?.winningLayer || "SYSTEM_DEFAULT",

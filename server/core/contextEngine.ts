@@ -167,11 +167,17 @@ export class ContextEngine {
     message: string,
     history: ConversationTurn[] = [],
     existingContext?: ConversationContext,
-    sessionId: string = "default"
+    sessionId: string = "default",
+    options?: { persist?: boolean; currentTime?: number }
   ): ContextAnalysisResult {
-    const rawContext = existingContext || contextStore.getOrCreate(sessionId);
+    const rawContext =
+      existingContext ||
+      (options?.persist === false
+        ? (contextStore.get(sessionId) || contextStore.createBlankContext(sessionId, options?.currentTime))
+        : contextStore.getOrCreate(sessionId, options?.currentTime));
     const trimmed = (message || "").trim();
     const turnIndex = rawContext.turnsCount + 1;
+    const now = options?.currentTime !== undefined ? options.currentTime : (rawContext.updatedAt || 0);
 
     const reasoningTrace: string[] = [];
     const signals: Record<string, number> = {};
@@ -193,7 +199,7 @@ export class ContextEngine {
     let workingContext = rawContext;
     if (isTopicSwitch && rawContext.activeTopic) {
       reasoningTrace.push(`Topic switched from "${rawContext.activeTopic}" to "${activeTopic}". Archiving old context.`);
-      workingContext = contextStore.archiveCurrentTopic(rawContext, turnIndex);
+      workingContext = contextStore.archiveCurrentTopic(rawContext, turnIndex, now);
     }
 
     // 4. Extract Entities from current message & merge with active entities
@@ -214,7 +220,7 @@ export class ContextEngine {
       isTopicSwitch,
       reasoningTrace,
       workingContext.id || sessionId,
-      workingContext.updatedAt || 0
+      now
     );
 
     // 6. Perform Multi-Turn Reference & Anaphora Resolution with Ambiguity Safety
@@ -268,12 +274,14 @@ export class ContextEngine {
       turnsCount: turnIndex,
       isTopicSwitched: isTopicSwitch,
       isAmbiguousReference: isAmbiguous,
-      updatedAt: workingContext.updatedAt || 0,
-      contextTimestamp: workingContext.contextTimestamp || workingContext.updatedAt || 0,
+      updatedAt: now,
+      contextTimestamp: now,
     };
 
-    // Save in context store
-    contextStore.save(sessionId, updatedContext);
+    // Save in context store if persistence enabled (default true)
+    if (options?.persist !== false) {
+      contextStore.save(sessionId, updatedContext, now);
+    }
 
     return {
       context: updatedContext,

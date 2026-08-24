@@ -13,6 +13,7 @@
 
 import { brainEngine, BrainAnalysis } from "./brainEngine";
 import { memoryStore } from "./memoryStore";
+import { contextStore } from "./contextStore";
 import { ConversationContext, ConversationTurn } from "./contextTypes";
 import { MemoryRecord } from "./memoryTypes";
 
@@ -377,6 +378,215 @@ runTest("DET-BRAIN-7.1: Multi-turn comparison, goal setting, and executive synth
   assert(analysis.executiveContext !== undefined, "Executive context present");
   assert(analysis.executiveContext.responseStyle.verbosity === "CONCISE", "Verbosity override respected");
   assert(analysis.promptDirectives.length > 0, "Prompt directives generated");
+});
+
+// =========================================================================
+// MUTATION BOUNDARY TESTS (MB-1 through MB-6)
+// =========================================================================
+
+runTest("MB-1: persistDecisions: false must NOT persist memory decisions to MemoryStore", () => {
+  const userId = "mb_user_1";
+  memoryStore.clear(userId);
+
+  assert(memoryStore.get(userId).length === 0, "Initial memories are empty");
+
+  brainEngine.analyze(
+    "Remember that my laptop budget is 150000 BDT and my name is Fahim.",
+    [],
+    undefined,
+    "mb_sess_1",
+    undefined,
+    {
+      userId,
+      currentTime: 1724300000000,
+      persistDecisions: false,
+    }
+  );
+
+  const memoriesAfter = memoryStore.get(userId);
+  const patternsAfter = memoryStore.getPatterns(userId);
+
+  assert(memoriesAfter.length === 0, "MemoryStore must have 0 memories when persistDecisions is false");
+  assert(patternsAfter.length === 0, "MemoryStore must have 0 patterns when persistDecisions is false");
+});
+
+runTest("MB-2: persistDecisions: false must NOT mutate or persist session context to ContextStore", () => {
+  const sessionId = "mb_sess_unpersisted_2";
+
+  // ContextStore should not have this session yet
+  assert(contextStore.get(sessionId) === undefined, "Session does not exist initially in contextStore");
+
+  brainEngine.analyze(
+    "I am looking for an ASUS TUF laptop with RTX 4060.",
+    [],
+    undefined,
+    sessionId,
+    undefined,
+    {
+      userId: "mb_user_2",
+      currentTime: 1724300000000,
+      persistDecisions: false,
+    }
+  );
+
+  const storedContext = contextStore.get(sessionId);
+  assert(storedContext === undefined, "ContextStore must NOT store session context when persistDecisions: false");
+});
+
+runTest("MB-3: persistDecisions: false produces valid, complete cognitive analysis (dry-run preview)", () => {
+  const userId = "mb_user_3";
+  const analysis = brainEngine.analyze(
+    "Explain binary search algorithm in Python concisely in Banglish.",
+    [],
+    undefined,
+    "mb_sess_preview",
+    undefined,
+    {
+      userId,
+      currentTime: 1724300000000,
+      persistDecisions: false,
+    }
+  );
+
+  assert(analysis !== undefined, "Analysis must be generated");
+  assert(Boolean(analysis.intent), "Intent classified");
+  assert(analysis.reasoningAnalysis !== undefined, "Reasoning analysis present");
+  assert(analysis.planningAnalysis !== undefined, "Planning analysis present");
+  assert(analysis.verificationAnalysis !== undefined, "Verification analysis present");
+  assert(analysis.executiveContext !== undefined, "Executive context generated");
+  assert(analysis.promptDirectives.length > 0, "Prompt directives populated");
+  assert(analysis.confidence > 0, "Calibrated confidence score is positive");
+});
+
+runTest("MB-4: persistDecisions: true (or default) persists context and memory decisions as expected", () => {
+  const userId = "mb_user_4";
+  const sessionId = "mb_sess_persisted_4";
+  memoryStore.clear(userId);
+
+  brainEngine.analyze(
+    "Remember that my favorite tech brand is Apple.",
+    [],
+    undefined,
+    sessionId,
+    undefined,
+    {
+      userId,
+      currentTime: 1724300000000,
+      persistDecisions: true,
+    }
+  );
+
+  const storedMemories = memoryStore.get(userId);
+  const storedContext = contextStore.get(sessionId);
+
+  assert(storedMemories.length > 0, "MemoryStore must contain saved memory when persistDecisions: true");
+  assert(storedContext !== undefined, "ContextStore must contain session context when persistDecisions: true");
+  assert(storedContext?.turnsCount === 1, "Context turnsCount incremented");
+});
+
+runTest("MB-5: Current-turn overrides update active context ephemerally and do NOT overwrite long-term memory", () => {
+  const userId = "mb_user_5";
+  const sessionId = "mb_sess_ephemeral_5";
+  memoryStore.clear(userId);
+
+  // Seed a long-term preference: Banglish
+  const seededMemories: MemoryRecord[] = [
+    {
+      id: "mem_lang_banglish",
+      userId,
+      type: "PREFERENCE",
+      tags: ["COMMUNICATION_STYLE"],
+      evidence: [],
+      version: 1,
+      importance: 80,
+      normalizedValue: "banglish",
+      key: "language",
+      value: "Banglish",
+      confidence: 0.95,
+      source: "EXPLICIT_USER",
+      status: "ACTIVE",
+      createdAt: 1000,
+      updatedAt: 1000,
+      lastAccessedAt: 1000,
+      accessCount: 10,
+    },
+  ];
+  memoryStore.replace(userId, seededMemories);
+
+  // Current turn requests a one-off override: "Answer in pure English this time only."
+  const analysis = brainEngine.analyze(
+    "Answer in English this time only. Give me 3 tips for clean code.",
+    [],
+    undefined,
+    sessionId,
+    undefined,
+    {
+      userId,
+      currentTime: 1724300000000,
+      persistDecisions: false,
+    }
+  );
+
+  // Active executive context reflects current-turn English override
+  assert(
+    analysis.executiveContext?.responseStyle.language === "ENGLISH" ||
+    analysis.promptDirectives.some((d) => d.toLowerCase().includes("english")),
+    "Current-turn override reflects English in executive context"
+  );
+
+  // Long-term memory store remains unchanged with original Banglish preference
+  const currentLongTerm = memoryStore.get(userId);
+  const langPref = currentLongTerm.find((m) => m.key === "language");
+  assert(langPref !== undefined, "Language preference exists in long-term store");
+  assert(langPref?.value === "Banglish", "Long-term preference remains Banglish (not overwritten)");
+});
+
+runTest("MB-6: Read-only cognitive analysis across all 12 Phase 2 steps does not mutate external stores during analysis", () => {
+  const userId = "mb_user_6";
+  const sessionId = "mb_sess_readonly_6";
+  memoryStore.clear(userId);
+
+  const initialContext: ConversationContext = {
+    id: sessionId,
+    activeTopic: "career planning",
+    currentTask: "roadmap",
+    userGoal: "Become a Staff Engineer",
+    entities: [],
+    constraints: [],
+    preferences: [],
+    recentReferences: [],
+    conversationState: "active",
+    lastMeaningfulUserIntent: "QUESTION",
+    lastMeaningfulAssistantResponse: null,
+    createdAt: 1000,
+    updatedAt: 1000,
+    contextTimestamp: 1000,
+    turnsCount: 3,
+    isTopicSwitched: false,
+    isAmbiguousReference: false,
+    archivedContexts: [],
+    topicHistory: [],
+  };
+
+  const contextSnapshot = JSON.stringify(initialContext);
+
+  brainEngine.analyze(
+    "What milestones should I target this quarter?",
+    [],
+    initialContext,
+    sessionId,
+    undefined,
+    {
+      userId,
+      currentTime: 1724300000000,
+      persistDecisions: false,
+    }
+  );
+
+  assert(memoryStore.get(userId).length === 0, "No memories written during dry-run analysis");
+  assert(memoryStore.getPatterns(userId).length === 0, "No patterns written during dry-run analysis");
+  assert(contextStore.get(sessionId) === undefined, "No context stored during dry-run analysis");
+  assert(JSON.stringify(initialContext) === contextSnapshot, "Initial context object passed was not mutated in place");
 });
 
 console.log("======================================================");

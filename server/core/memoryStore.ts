@@ -1,6 +1,6 @@
 /**
  * Dora Long-Term Memory Store
- * Phase 2 — Step 3 Targeted Fix
+ * Phase 2 — Step 3: Memory Consolidation & Lifecycle (Storage Boundary)
  * 
  * Provides a clean, isolated persistence boundary for persistent user memories.
  * Decouples cognitive engines (Reasoning, Planning, Verification, Retrieval, Consolidation)
