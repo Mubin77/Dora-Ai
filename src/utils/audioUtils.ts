@@ -17,6 +17,11 @@ export class AudioEngine {
   private activeSourceNodes: AudioBufferSourceNode[] = [];
   private isListening: boolean = false;
   private isSpeaking: boolean = false;
+  private isStreamComplete: boolean = false;
+  private pendingPcmChunks: Float32Array[] = [];
+  private drainTimeout: any = null;
+  private startTimer: any = null;
+  private readonly PREBUFFER_DURATION_SEC: number = 0.045; // 45ms adaptive jitter buffer
 
   // Callbacks
   public onAudioChunk?: (base64Pcm: string) => void;
@@ -244,34 +249,86 @@ export class AudioEngine {
   }
 
   /**
-   * Schedules a chunk of 24kHz raw PCM base64 audio with gapless low-latency playback
+   * Decodes a base64 PCM chunk into a 32-bit float array with boundary anti-clipping micro-envelope
    */
-  public playAudioChunk(base64Pcm: string, sampleRate = 24000): void {
+  private decodeAndSmoothPcm(base64Pcm: string): Float32Array | null {
     try {
-      console.log(`[VOICE DEBUG] audio decode started (base64 length: ${base64Pcm?.length || 0})`);
-      const ctx = this.ensureOutputContext();
-      console.log(`[VOICE DEBUG] audio context state: ${ctx.state}`);
-      if (ctx.state === "suspended") {
-        ctx.resume().catch((err) => {
-          console.warn("[VOICE DEBUG] audio context resume failed:", err);
-        });
-      }
-
+      if (!base64Pcm) return null;
       const binary = atob(base64Pcm);
       const len = binary.length;
+      if (len < 2) return null;
+
       const bytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) {
         bytes[i] = binary.charCodeAt(i);
       }
 
-      console.log(`[VOICE DEBUG] audio data received: ${bytes.byteLength} bytes`);
-
       // Safe 16-bit PCM conversion with alignment protection
       const alignedLength = Math.floor(bytes.byteLength / 2);
+      if (alignedLength === 0) return null;
+
       const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, alignedLength);
       const float32 = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) {
         float32[i] = int16[i] / 32768.0;
+      }
+
+      // Apply subtle 24-sample linear micro-fade at boundaries to eliminate digital pops & clipping
+      const fadeSamples = Math.min(24, Math.floor(float32.length / 4));
+      if (fadeSamples > 1) {
+        for (let i = 0; i < fadeSamples; i++) {
+          const factor = i / fadeSamples;
+          float32[i] *= factor;
+          float32[float32.length - 1 - i] *= factor;
+        }
+      }
+
+      return float32;
+    } catch (err) {
+      console.warn("[VOICE DEBUG] Error decoding PCM chunk:", err);
+      return null;
+    }
+  }
+
+  /**
+   * Flushes and schedules any pending PCM chunks in order
+   */
+  private flushPendingChunks(sampleRate = 24000): void {
+    if (this.startTimer) {
+      clearTimeout(this.startTimer);
+      this.startTimer = null;
+    }
+
+    if (this.pendingPcmChunks.length === 0) return;
+
+    const chunksToPlay = this.pendingPcmChunks.slice();
+    this.pendingPcmChunks = [];
+
+    const isFirstStart = !this.isSpeaking;
+    if (isFirstStart) {
+      this.isSpeaking = true;
+      const ctx = this.ensureOutputContext();
+      // Lookahead of 15ms ensures browser audio thread has room to start without underrun
+      this.nextPlayTime = Math.max(ctx.currentTime + 0.015, this.nextPlayTime);
+      console.log("[VOICE DEBUG] Audio playback queue ignited, first start");
+      if (this.onPlaybackStarted) {
+        this.onPlaybackStarted();
+      }
+    }
+
+    for (const chunk of chunksToPlay) {
+      this.scheduleBufferNode(chunk, sampleRate);
+    }
+  }
+
+  /**
+   * Schedules an individual Float32 audio chunk to play on the output context
+   */
+  private scheduleBufferNode(float32: Float32Array, sampleRate = 24000): void {
+    try {
+      const ctx = this.ensureOutputContext();
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
       }
 
       const audioBuffer = ctx.createBuffer(1, float32.length, sampleRate);
@@ -287,39 +344,103 @@ export class AudioEngine {
       }
 
       const currentTime = ctx.currentTime;
-      const isFirstInQueue = this.activeSourceNodes.length === 0;
       if (this.nextPlayTime < currentTime) {
-        this.nextPlayTime = currentTime + 0.005; // Immediate start (5ms lookahead for gapless scheduling)
+        // Small network jitter gap occurred, smoothly attach with minimal safe lookahead
+        this.nextPlayTime = currentTime + 0.008;
       }
 
-      console.log(`[VOICE DEBUG] audio playback scheduled: targetTime=${this.nextPlayTime.toFixed(3)}, currentTime=${currentTime.toFixed(3)}, duration=${audioBuffer.duration.toFixed(3)}s`);
-
-      source.start(this.nextPlayTime);
-      this.isSpeaking = true;
+      const targetTime = this.nextPlayTime;
+      source.start(targetTime);
       this.activeSourceNodes.push(source);
-
-      if (isFirstInQueue && this.onPlaybackStarted) {
-        console.log("[VOICE DEBUG] audio playback started");
-        this.onPlaybackStarted();
-      }
-
-      const duration = audioBuffer.duration;
-      this.nextPlayTime += duration;
+      this.nextPlayTime += audioBuffer.duration;
 
       source.onended = () => {
         const index = this.activeSourceNodes.indexOf(source);
         if (index > -1) {
           this.activeSourceNodes.splice(index, 1);
         }
-        if (this.activeSourceNodes.length === 0) {
-          this.isSpeaking = false;
-          if (this.onPlaybackEnded) {
-            this.onPlaybackEnded();
+
+        // If no active nodes are currently playing, check for graceful end-of-turn completion
+        if (this.activeSourceNodes.length === 0 && this.pendingPcmChunks.length === 0) {
+          if (this.drainTimeout) {
+            clearTimeout(this.drainTimeout);
           }
+          // Debounce completion by 75ms to bridge small network gaps between live chunks
+          this.drainTimeout = setTimeout(() => {
+            if (
+              this.activeSourceNodes.length === 0 &&
+              this.pendingPcmChunks.length === 0 &&
+              this.isSpeaking
+            ) {
+              console.log("[VOICE DEBUG] Audio playback fully completed and queue drained");
+              this.isSpeaking = false;
+              this.isStreamComplete = false;
+              if (this.onPlaybackEnded) {
+                this.onPlaybackEnded();
+              }
+            }
+          }, 75);
         }
       };
     } catch (err: any) {
+      console.error("[VOICE DEBUG] Error scheduling audio buffer node:", err);
+    }
+  }
+
+  /**
+   * Schedules a chunk of 24kHz raw PCM base64 audio with gapless low-latency playback
+   */
+  public playAudioChunk(base64Pcm: string, sampleRate = 24000): void {
+    try {
+      if (this.drainTimeout) {
+        clearTimeout(this.drainTimeout);
+        this.drainTimeout = null;
+      }
+
+      const float32 = this.decodeAndSmoothPcm(base64Pcm);
+      if (!float32 || float32.length === 0) return;
+
+      const chunkDuration = float32.length / sampleRate;
+
+      if (this.isSpeaking) {
+        // Stream already active, schedule immediately onto the existing timeline
+        this.scheduleBufferNode(float32, sampleRate);
+      } else {
+        // Buffer a tiny initial slice (~45ms) before starting audio context clock to protect against packet arrival variance
+        this.pendingPcmChunks.push(float32);
+
+        let totalBufferedSec = 0;
+        for (const p of this.pendingPcmChunks) {
+          totalBufferedSec += p.length / sampleRate;
+        }
+
+        if (totalBufferedSec >= this.PREBUFFER_DURATION_SEC) {
+          this.flushPendingChunks(sampleRate);
+        } else if (!this.startTimer) {
+          // Fallback timer: start within 35ms regardless so there is zero perceptible startup latency
+          this.startTimer = setTimeout(() => {
+            this.flushPendingChunks(sampleRate);
+          }, 35);
+        }
+      }
+    } catch (err: any) {
       console.error("[VOICE DEBUG] audio playback error:", err);
+    }
+  }
+
+  /**
+   * Marks that the server has completed sending audio chunks for the current turn
+   */
+  public markStreamComplete(): void {
+    this.isStreamComplete = true;
+    if (this.pendingPcmChunks.length > 0) {
+      this.flushPendingChunks(24000);
+    } else if (this.activeSourceNodes.length === 0 && this.isSpeaking) {
+      this.isSpeaking = false;
+      this.isStreamComplete = false;
+      if (this.onPlaybackEnded) {
+        this.onPlaybackEnded();
+      }
     }
   }
 
@@ -327,6 +448,18 @@ export class AudioEngine {
    * Instantly stops all scheduled audio playback (for live interruptions)
    */
   public interruptPlayback(): void {
+    if (this.drainTimeout) {
+      clearTimeout(this.drainTimeout);
+      this.drainTimeout = null;
+    }
+    if (this.startTimer) {
+      clearTimeout(this.startTimer);
+      this.startTimer = null;
+    }
+
+    this.pendingPcmChunks = [];
+    this.isStreamComplete = false;
+
     for (const source of this.activeSourceNodes) {
       try {
         source.stop();

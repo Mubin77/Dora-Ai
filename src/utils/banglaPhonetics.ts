@@ -129,9 +129,20 @@ const BANGLISH_PHONETIC_MAP: Record<string, string> = {
   "kichu": "কিছু",
   "chinta": "চিন্তা",
   "koro na": "করো না",
+  "koris na": "করিস না",
   "dhonnobad": "ধন্যবাদ",
   "shagotom": "স্বাগতম",
   "biday": "বিদায়",
+  "chup": "চুপ",
+  "shanto": "শান্ত",
+  "jomjomat": "জমজমাট",
+  "ekdom": "একদম",
+  "shobai": "সবাই",
+  "shobar": "সবার",
+  "kichui": "কিছুই",
+  "kotha": "কথা",
+  "shune": "শুনে",
+  "bhalo laglo": "ভালো লাগলো",
 };
 
 // Common English words frequently mixed in Banglish that should be preserved as English

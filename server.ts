@@ -9,7 +9,10 @@ import { DORA_SYSTEM_INSTRUCTION } from "./src/doraSystemPrompt";
 import { normalizeBanglishPhonetics, containsBanglaOrBanglish } from "./src/utils/banglaPhonetics";
 import { providerManager } from "./server/core/providerManager";
 import { taskDetector } from "./server/core/taskDetector";
-import { brainEngine } from "./server/core/brainEngine";
+import { brainEngine, conversationalBehaviorEngine, sharedExperienceEngine, languageStyleAdapter } from "./server/core/brainEngine";
+import { runAllLanguageStyleAdapterTests } from "./server/core/languageStyleAdapter.test";
+import { proactiveCompanionCore } from "./server/core/proactiveCompanionEngine";
+import { runAllProactiveEngineTests } from "./server/core/proactiveCompanionEngine.test";
 import { validateAndRankSearchResults } from "./server/core/searchFreshness";
 import { AIMessage, AIRequest, SearchRequest } from "./server/providers/types";
 
@@ -67,6 +70,21 @@ async function startServer() {
   // Sanitized Central Provider diagnostics endpoint (Safe, no credentials exposed)
   app.get("/api/providers/status", (_req, res) => {
     res.json(providerManager.getStatusSummary());
+  });
+
+  // Diagnostic endpoint to run Proactive Engine test suite
+  app.get("/api/test-proactive", (_req, res) => {
+    try {
+      runAllProactiveEngineTests();
+      runAllLanguageStyleAdapterTests();
+      res.json({
+        status: "ok",
+        message: "All Proactive Companion Engine and Language Style Adapter tests passed successfully.",
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: "error", error: err?.message || String(err) });
+    }
   });
 
   // Chat endpoint for conversational turn (Powered by Central Provider Core)
@@ -418,6 +436,11 @@ Then organize key headlines with:
       }
 
 
+      // Apply LanguageStyleAdapter to eliminate formal assistant-speak and harmonize Banglish flow
+      const conversationalMood = (brainAnalysis.languageStyle?.mood as any) || languageStyleAdapter.detectMood(message);
+      const languageMode = (brainAnalysis.languageStyle?.languageMode as any) || languageStyleAdapter.detectLanguageMode(message);
+      reply = languageStyleAdapter.adaptResponseText(reply, conversationalMood, languageMode);
+
       // Determine emotional tone and quick reaction for visual resonance
       let emotion = "warm";
       let reaction = "";
@@ -443,6 +466,8 @@ Then organize key headlines with:
         reply,
         emotion,
         reaction,
+        mood: conversationalMood,
+        languageMode,
         provider: providerUsed,
         model: modelUsed,
         context: brainAnalysis.activeContext,
@@ -456,6 +481,50 @@ Then organize key headlines with:
         reaction: "Listening",
         timestamp: Date.now(),
       });
+    }
+  });
+
+  // Companion Decision & Proactive Behavior Endpoint
+  app.post("/api/companion/decision", (req, res) => {
+    try {
+      const {
+        userMessage = "",
+        history = [],
+        timeSinceLastUserMessageMs = 0,
+        timeSinceLastDoraMessageMs = 0,
+        isCallActive = false,
+        isUserSpeaking = false,
+        activeTopic = "",
+        currentTask = "",
+        screenVisualCue = "",
+        cameraVisualCue = "",
+        currentMode = "CHILL_COMPANION",
+      } = req.body;
+
+      const decision = conversationalBehaviorEngine.evaluate({
+        userMessage,
+        history,
+        timeSinceLastUserMessageMs,
+        timeSinceLastDoraMessageMs,
+        isCallActive,
+        isUserSpeaking,
+        activeTopic,
+        currentTask,
+        screenVisualCue,
+        cameraVisualCue,
+        currentMode,
+      });
+
+      const sharedContext = sharedExperienceEngine.getContext();
+
+      res.json({
+        decision,
+        sharedContext,
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      console.error("Companion decision error:", err);
+      res.status(500).json({ error: "Failed to evaluate companion decision" });
     }
   });
 
@@ -911,6 +980,33 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
           } else {
             console.error("[VOICE DEBUG] Cannot send text to Gemini Live: liveSession is null");
           }
+        } else if (data.type === "proactive_trigger") {
+          console.log(`[PROACTIVE RUNTIME] Received proactive_trigger event: "${data.promptInstruction}"`);
+          if (!liveSession) {
+            await initLiveSession(data.voiceName || "Aoede", data.memoryContext || "", data.historyContext || "");
+          }
+          if (liveSession) {
+            const proactiveText = data.promptInstruction || "[PROACTIVE INITIATION: Greet user warmly in natural Banglish.]";
+            const userParts: any[] = [{ text: proactiveText }];
+            const activeVisual = activeCameraFrame || activeScreenFrame;
+            if (activeVisual) {
+              userParts.push({
+                inlineData: {
+                  mimeType: "image/jpeg",
+                  data: activeVisual,
+                },
+              });
+            }
+            try {
+              liveSession.sendClientContent({
+                turns: [{ role: "user", parts: userParts }],
+                turnComplete: true,
+              });
+              console.log("[PROACTIVE RUNTIME] Proactive trigger sent to Gemini Live successfully");
+            } catch (err: any) {
+              console.warn("[PROACTIVE RUNTIME] Failed to send proactive trigger to Live API:", err?.message);
+            }
+          }
         } else if (data.type === "interrupt") {
           if (liveSession) {
             // Signal interruption to clear any queued model generation
@@ -954,6 +1050,12 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Dora Voice Assistant server running on http://localhost:${PORT}`);
+    try {
+      runAllProactiveEngineTests();
+      runAllLanguageStyleAdapterTests();
+    } catch (e) {
+      console.warn("Startup tests warning:", e);
+    }
   });
 }
 

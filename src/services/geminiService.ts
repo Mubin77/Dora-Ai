@@ -21,6 +21,7 @@ export interface LiveStreamCallbacks {
   onAudio?: (base64Audio: string) => void;
   onTranscript?: (text: string, isFinal: boolean) => void;
   onUserTranscript?: (text: string, isFinal: boolean) => void;
+  onTurnComplete?: () => void;
   onInterrupted?: () => void;
   onError?: (err: any) => void;
   onReady?: () => void;
@@ -259,6 +260,7 @@ export class DoraService {
               this.activeMetrics = null;
             }
             this.wsCallbacks.onTranscript?.("", true);
+            this.wsCallbacks.onTurnComplete?.();
           } else if (data.type === "interrupted") {
             console.log("[VOICE DEBUG] Gemini Live response interrupted by user");
             this.activeMetrics = null;
@@ -374,6 +376,38 @@ export class DoraService {
         clientTimeZone,
         clientTimestamp,
       });
+    }
+  }
+
+  /**
+   * Transmits a proactive companion initiation trigger to the active Gemini Live session
+   */
+  public sendProactiveTrigger(promptInstruction: string, language: string = "auto") {
+    this.activeMetrics = {
+      messageSentAt: performance.now(),
+      responseStartedAt: null,
+      firstAudioChunkAt: null,
+      playbackStartedAt: null,
+      responseCompletedAt: null,
+    };
+    console.log(`[PROACTIVE RUNTIME] Dispatching proactive trigger to Gemini Live: "${promptInstruction}"`);
+
+    const effectiveMemoryContext = this.lastMemoryContext || MemoryManager.getInstance().buildContext("");
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isWsReady) {
+      try {
+        this.ws.send(
+          JSON.stringify({
+            type: "proactive_trigger",
+            promptInstruction,
+            language,
+            memoryContext: effectiveMemoryContext,
+          })
+        );
+      } catch (err) {
+        console.warn("[PROACTIVE RUNTIME] Error sending proactive trigger over WS:", err);
+      }
+    } else {
+      this.sendLiveText(promptInstruction, language, effectiveMemoryContext, false);
     }
   }
 

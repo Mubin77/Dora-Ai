@@ -31,6 +31,7 @@ import { SpeechRecognizer } from "./utils/speechRecognizer";
 import { memoryManager } from "./memory/MemoryManager";
 import { screenVisionService } from "./services/screenVisionService";
 import { cameraVisionService } from "./services/cameraVisionService";
+import { proactiveCompanionEngine } from "./services/proactiveCompanionEngine";
 
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
@@ -269,6 +270,7 @@ export default function App() {
 
   // Stop / Interrupt Dora playback
   const interruptDora = useCallback(() => {
+    proactiveCompanionEngine.onUserSpeechStarted();
     if (audioEngineRef.current) {
       audioEngineRef.current.interruptPlayback();
     }
@@ -296,6 +298,7 @@ export default function App() {
         const cleanText = userText.trim();
         if (!cleanText) return;
 
+        proactiveCompanionEngine.onUserSpeechStarted();
         lastUserPromptRef.current = cleanText;
 
         // Update existing speech bubble or create single streaming message
@@ -335,6 +338,7 @@ export default function App() {
         });
 
         if (isFinal) {
+          proactiveCompanionEngine.onUserSpeechFinal(cleanText);
           currentUserVoiceMessageIdRef.current = null;
           const memCmd = memoryManager.checkAndHandleMemoryCommand(cleanText);
           if (memCmd.isCommand) {
@@ -346,6 +350,7 @@ export default function App() {
 
       onAudio: (base64Chunk: string) => {
         console.log(`[VOICE DEBUG] Frontend onAudio received chunk: ${base64Chunk.length} base64 chars`);
+        proactiveCompanionEngine.onDoraSpeechStarted();
         if (audioEngineRef.current) {
           audioEngineRef.current.playAudioChunk(base64Chunk, 24000);
           doraService.recordPlaybackStarted();
@@ -453,10 +458,18 @@ export default function App() {
           }
           isProcessingTurnRef.current = false;
           currentDoraMessageIdRef.current = null;
+          proactiveCompanionEngine.onDoraSpeechEnded();
+        }
+      },
+
+      onTurnComplete: () => {
+        if (audioEngineRef.current) {
+          audioEngineRef.current.markStreamComplete();
         }
       },
 
       onInterrupted: () => {
+        proactiveCompanionEngine.onUserSpeechStarted();
         if (audioEngineRef.current) {
           audioEngineRef.current.interruptPlayback();
         }
@@ -495,10 +508,12 @@ export default function App() {
     };
 
     engine.onPlaybackStarted = () => {
+      proactiveCompanionEngine.onDoraSpeechStarted();
       setState("speaking");
     };
 
     engine.onPlaybackEnded = () => {
+      proactiveCompanionEngine.onDoraSpeechEnded();
       setCurrentSpokenText("");
       setState(isCallActiveRef.current ? "listening" : "idle");
       isProcessingTurnRef.current = false;
@@ -508,6 +523,7 @@ export default function App() {
     };
 
     engine.onSpeechStart = () => {
+      proactiveCompanionEngine.onUserSpeechStarted();
       if (engine.getIsSpeaking() || stateRef.current === "speaking") {
         interruptDoraRef.current?.();
       }
@@ -524,6 +540,7 @@ export default function App() {
       language: settingsRef.current.language,
       pauseThresholdMs: settingsRef.current.pauseThresholdMs,
       onSpeechStart: () => {
+        proactiveCompanionEngine.onUserSpeechStarted();
         if (engine.getIsSpeaking() || stateRef.current === "speaking") {
           interruptDoraRef.current?.();
         }
@@ -532,6 +549,7 @@ export default function App() {
       onInterimResult: (interimText) => {
         const cleanText = interimText.trim();
         if (!cleanText) return;
+        proactiveCompanionEngine.onUserSpeechStarted();
         lastUserPromptRef.current = cleanText;
 
         setMessages((prev) => {
@@ -646,6 +664,7 @@ export default function App() {
         interruptDora();
       }
 
+      proactiveCompanionEngine.onUserSpeechFinal(cleanText);
       isProcessingTurnRef.current = true;
       lastUserPromptRef.current = cleanText;
 
@@ -845,6 +864,7 @@ export default function App() {
   // Toggle Live Conversational Voice Mode (NEVER clears messages)
   const handleToggleCall = async () => {
     if (isCallActive) {
+      proactiveCompanionEngine.stop();
       speechRecognizerRef.current?.stop();
       if (audioEngineRef.current) {
         audioEngineRef.current.stopMicrophone();
@@ -876,6 +896,24 @@ export default function App() {
         setSelectedModel("Dora Live");
         console.log("[VOICE DEBUG] voice mode started");
 
+        // Start proactive companion monitoring for spontaneous, unprompted turns
+        proactiveCompanionEngine.start({
+          onProactiveTrigger: (payload) => {
+            if (!isCallActiveRef.current || isProcessingTurnRef.current || stateRef.current === "speaking") {
+              return;
+            }
+            console.log(`[PROACTIVE RUNTIME] Executing proactive companion initiation (${payload.triggerType})`);
+            if (doraService.isLiveReady()) {
+              doraService.sendProactiveTrigger(payload.promptInstruction, settingsRef.current.language);
+            } else {
+              handleSendMessageRef.current?.(payload.promptInstruction, undefined, true);
+            }
+          },
+          onStateChange: (engineState, reason) => {
+            console.log(`[Proactive Companion Engine] -> ${engineState} (${reason || ""})`);
+          },
+        });
+
         // Pass recent conversation history context so Dora seamlessly continues from chat
         const historyContext = getRecentHistoryContext();
         const memoryContext = memoryManager.buildContext();
@@ -887,6 +925,7 @@ export default function App() {
         );
       } catch (err: any) {
         console.error("Failed to start voice stream:", err);
+        proactiveCompanionEngine.stop();
         speechRecognizerRef.current?.stop();
         if (audioEngineRef.current) {
           audioEngineRef.current.stopMicrophone();
@@ -1037,6 +1076,7 @@ export default function App() {
       setIsCameraActive(false);
       setCameraStream(null);
       doraService.clearCameraFrame();
+      proactiveCompanionEngine.clearVisual("camera");
     } else {
       setScreenSharingNotice(null);
       if (!cameraVisionService.isSupported()) {
@@ -1048,22 +1088,26 @@ export default function App() {
         const success = await cameraVisionService.startCamera({
           onFrame: (base64Jpeg) => {
             doraService.sendCameraFrame(base64Jpeg);
+            proactiveCompanionEngine.onVisualUpdate("camera");
           },
           onStarted: (stream) => {
             setIsCameraActive(true);
             setCameraStream(stream);
             setScreenSharingNotice(null);
+            proactiveCompanionEngine.onVisualUpdate("camera");
           },
           onStopped: () => {
             setIsCameraActive(false);
             setCameraStream(null);
             doraService.clearCameraFrame();
+            proactiveCompanionEngine.clearVisual("camera");
           },
           onError: (err: any) => {
             console.warn("[Camera Vision] Error:", err);
             setIsCameraActive(false);
             setCameraStream(null);
             doraService.clearCameraFrame();
+            proactiveCompanionEngine.clearVisual("camera");
             setScreenSharingNotice(
               err?.isPermissionDenied || err?.message?.toLowerCase().includes("denied")
                 ? "Camera permission was denied. Please allow camera access to use live vision."
@@ -1076,11 +1120,13 @@ export default function App() {
         if (success) {
           setIsCameraActive(true);
           setCameraStream(cameraVisionService.getStream());
+          proactiveCompanionEngine.onVisualUpdate("camera");
         }
       } catch (err: any) {
         console.warn("[Camera Vision] Initialization error:", err);
         setIsCameraActive(false);
         setCameraStream(null);
+        proactiveCompanionEngine.clearVisual("camera");
         setScreenSharingNotice("Camera error. Please verify device permissions.");
         setTimeout(() => setScreenSharingNotice(null), 4000);
       }
@@ -1098,6 +1144,7 @@ export default function App() {
       screenVisionService.stopCapture();
       setIsScreenVisionActive(false);
       doraService.clearScreenFrame();
+      proactiveCompanionEngine.clearVisual("screen");
     } else {
       setScreenSharingNotice(null);
 
@@ -1115,19 +1162,23 @@ export default function App() {
         const success = await screenVisionService.startCapture({
           onFrame: (base64Jpeg) => {
             doraService.sendScreenFrame(base64Jpeg);
+            proactiveCompanionEngine.onVisualUpdate("screen");
           },
           onStarted: () => {
             setIsScreenVisionActive(true);
             setScreenSharingNotice(null);
+            proactiveCompanionEngine.onVisualUpdate("screen");
           },
           onStopped: () => {
             setIsScreenVisionActive(false);
             doraService.clearScreenFrame();
+            proactiveCompanionEngine.clearVisual("screen");
           },
           onError: (err) => {
             console.warn("[Screen Vision] Capture error:", err);
             setIsScreenVisionActive(false);
             doraService.clearScreenFrame();
+            proactiveCompanionEngine.clearVisual("screen");
             if (err?.message?.toLowerCase().includes("not supported")) {
               setScreenSharingNotice("Screen sharing isn't supported on this browser yet.");
             }
@@ -1136,10 +1187,12 @@ export default function App() {
 
         if (success) {
           setIsScreenVisionActive(true);
+          proactiveCompanionEngine.onVisualUpdate("screen");
         }
       } catch (err) {
         console.warn("[Screen Vision] Initialization error:", err);
         setIsScreenVisionActive(false);
+        proactiveCompanionEngine.clearVisual("screen");
         setScreenSharingNotice("Screen sharing isn't supported on this browser yet.");
       }
     }
@@ -1271,6 +1324,7 @@ export default function App() {
               }
               setIsMuted((prev) => {
                 const next = !prev;
+                proactiveCompanionEngine.setMuted(next);
                 if (next) {
                   speechRecognizerRef.current?.pauseForPlayback();
                 } else {

@@ -92,6 +92,11 @@ import { deepReasoningEngine } from "./deepReasoningEngine";
 import { DeepReasoningAnalysis } from "./deepReasoningTypes";
 import { contradictionResolutionEngine } from "./contradictionResolutionEngine";
 import { ContradictionResolutionAnalysis } from "./contradictionResolutionTypes";
+import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
+import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
+import { sharedExperienceEngine } from "./sharedExperienceEngine";
+import { SharedExperienceContext } from "./sharedExperienceTypes";
+import { languageStyleAdapter } from "./languageStyleAdapter";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -113,6 +118,14 @@ export * from "./executiveContextTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./deepReasoningTypes";
+export * from "./conversationalBehaviorTypes";
+export * from "./sharedExperienceTypes";
+export type {
+  ConversationalMood,
+  LanguageMode,
+  StyleAdaptationOptions,
+  StyleAdaptationResult,
+} from "./languageStyleAdapter";
 export type {
   ContradictionClassification,
   ResolutionOutcome,
@@ -146,6 +159,9 @@ export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { deepReasoningEngine } from "./deepReasoningEngine";
 export { contradictionResolutionEngine } from "./contradictionResolutionEngine";
+export { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
+export { sharedExperienceEngine } from "./sharedExperienceEngine";
+export { languageStyleAdapter } from "./languageStyleAdapter";
 export { memoryStore } from "./memoryStore";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
@@ -183,6 +199,13 @@ export interface BrainAnalysis {
   executiveContext?: ExecutiveContextPackage;
   deepReasoningAnalysis?: DeepReasoningAnalysis;
   contradictionResolutionAnalysis?: ContradictionResolutionAnalysis;
+  conversationalBehavior?: ConversationalBehaviorDecision;
+  sharedExperience?: SharedExperienceContext;
+  languageStyle?: {
+    mood: string;
+    languageMode: string;
+    styleDirectives: string[];
+  };
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -749,8 +772,38 @@ export class BrainEngine {
       },
     });
 
+    // Step 15: Conversational Behavior & Proactive Companion Engine
+    const conversationalBehavior = conversationalBehaviorEngine.evaluate({
+      userMessage: trimmed,
+      history: recentHistory,
+      timeSinceLastUserMessageMs: 0,
+      timeSinceLastDoraMessageMs: 0,
+      activeTopic: contextResult.context.activeTopic,
+      currentTask: planningAnalysis.plan?.objective || planningAnalysis.plan?.goal,
+      injectedCurrentTime: currentTime,
+    });
+
+    const sharedExperience = sharedExperienceEngine.getContext();
+
     // Add sanitized contradiction resolution directives to promptDirectives
     for (const d of contradictionResolutionAnalysis.activeDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add companion directives to promptDirectives
+    for (const d of conversationalBehavior.companionDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Step 16: Language Style & Anti-Assistant-Speak Adapter
+    const detectedMood = languageStyleAdapter.detectMood(trimmed, conversationalBehavior.companionTone);
+    const detectedLang = languageStyleAdapter.detectLanguageMode(trimmed);
+    const styleDirectives = languageStyleAdapter.getStylePromptDirectives(detectedMood, detectedLang, trimmed);
+    for (const d of styleDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -779,6 +832,13 @@ export class BrainEngine {
       executiveContext,
       deepReasoningAnalysis,
       contradictionResolutionAnalysis,
+      conversationalBehavior,
+      sharedExperience,
+      languageStyle: {
+        mood: detectedMood,
+        languageMode: detectedLang,
+        styleDirectives,
+      },
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,

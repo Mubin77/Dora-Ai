@@ -8,6 +8,22 @@ export type DoraEmotion =
   | 'attentive'
   | 'surprised';
 
+export type CompanionEngagementMode =
+  | 'CHILL_COMPANION'
+  | 'TASK_FOCUSED'
+  | 'QUIET_OBSERVER'
+  | 'IMMERSIVE_VOICE'
+  | 'EXPLICIT_SILENCE';
+
+export interface CompanionStatus {
+  mode: CompanionEngagementMode;
+  statusLabel: string;
+  isSilent: boolean;
+  silenceReason?: string;
+  activeEnvironment?: string;
+  activeScreenActivity?: string;
+}
+
 export type ConversationState = 
   | 'idle'
   | 'requesting_permission'
