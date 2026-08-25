@@ -143,22 +143,6 @@ export class ContextEngine {
     { token: "oigula", type: "deictic" as const },
   ];
 
-  private deterministicHash(str: string): number {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return Math.abs(hash);
-  }
-
-  public generateDeterministicId(prefix: string, sessionId: string, turn: number | string, seed: string): string {
-    const raw = `${sessionId}_${turn}_${seed}`;
-    const hash = this.deterministicHash(raw).toString(36).substring(0, 6);
-    return `${prefix}_${sessionId}_t${turn}_${hash}`;
-  }
-
   /**
    * Primary entry point: Analyzes user input in the context of the conversation,
    * updates the persistent structured ConversationContext state, and returns rich analysis results.
@@ -168,16 +152,12 @@ export class ContextEngine {
     history: ConversationTurn[] = [],
     existingContext?: ConversationContext,
     sessionId: string = "default",
-    options?: { persist?: boolean; currentTime?: number }
+    options?: { currentTime?: number }
   ): ContextAnalysisResult {
-    const rawContext =
-      existingContext ||
-      (options?.persist === false
-        ? (contextStore.get(sessionId) || contextStore.createBlankContext(sessionId, options?.currentTime))
-        : contextStore.getOrCreate(sessionId, options?.currentTime));
+    const currentTime = options?.currentTime ?? 1724300000000;
+    const rawContext = existingContext || contextStore.getOrCreate(sessionId, currentTime);
     const trimmed = (message || "").trim();
     const turnIndex = rawContext.turnsCount + 1;
-    const now = options?.currentTime !== undefined ? options.currentTime : (rawContext.updatedAt || 0);
 
     const reasoningTrace: string[] = [];
     const signals: Record<string, number> = {};
@@ -199,7 +179,7 @@ export class ContextEngine {
     let workingContext = rawContext;
     if (isTopicSwitch && rawContext.activeTopic) {
       reasoningTrace.push(`Topic switched from "${rawContext.activeTopic}" to "${activeTopic}". Archiving old context.`);
-      workingContext = contextStore.archiveCurrentTopic(rawContext, turnIndex, now);
+      workingContext = contextStore.archiveCurrentTopic(rawContext, turnIndex, currentTime);
     }
 
     // 4. Extract Entities from current message & merge with active entities
@@ -208,8 +188,7 @@ export class ContextEngine {
       workingContext.entities,
       turnIndex,
       isTopicSwitch,
-      reasoningTrace,
-      workingContext.id || sessionId
+      reasoningTrace
     );
 
     // 5. Extract & In-Place Update Constraints
@@ -219,8 +198,7 @@ export class ContextEngine {
       turnIndex,
       isTopicSwitch,
       reasoningTrace,
-      workingContext.id || sessionId,
-      now
+      currentTime
     );
 
     // 6. Perform Multi-Turn Reference & Anaphora Resolution with Ambiguity Safety
@@ -274,14 +252,12 @@ export class ContextEngine {
       turnsCount: turnIndex,
       isTopicSwitched: isTopicSwitch,
       isAmbiguousReference: isAmbiguous,
-      updatedAt: now,
-      contextTimestamp: now,
+      updatedAt: currentTime,
+      contextTimestamp: currentTime,
     };
 
-    // Save in context store if persistence enabled (default true)
-    if (options?.persist !== false) {
-      contextStore.save(sessionId, updatedContext, now);
-    }
+    // Save in context store
+    contextStore.save(sessionId, updatedContext, currentTime);
 
     return {
       context: updatedContext,
@@ -497,8 +473,7 @@ export class ContextEngine {
     existingEntities: TrackedEntity[],
     turnIndex: number,
     isTopicSwitch: boolean,
-    reasoningTrace: string[],
-    sessionId: string = "default"
+    reasoningTrace: string[]
   ): { newEntities: TrackedEntity[]; allEntities: TrackedEntity[] } {
     // If topic switched, active entities from old topic are archived
     const baseEntities = isTopicSwitch
@@ -562,7 +537,7 @@ export class ContextEngine {
         };
       } else {
         const newEntity: TrackedEntity = {
-          id: this.generateDeterministicId("ent", sessionId, turnIndex, item.name),
+          id: `ent-${turnIndex}-${item.type}-${item.name.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
           name: item.name,
           type: item.type,
           role: roleToAssign,
@@ -589,8 +564,7 @@ export class ContextEngine {
     turnIndex: number,
     isTopicSwitch: boolean,
     reasoningTrace: string[],
-    sessionId: string = "default",
-    currentTimestamp: number = 0
+    currentTime?: number
   ): {
     newlyExtractedConstraints: ConversationConstraint[];
     updatedConstraintList: ConversationConstraint[];
@@ -601,7 +575,7 @@ export class ContextEngine {
       : [...existingConstraints];
 
     const newlyExtractedConstraints: ConversationConstraint[] = [];
-    const now = currentTimestamp;
+    const now = currentTime ?? 1724300000000;
 
     // 1. Budget Constraint Extraction (e.g., "budget 80k", "under 90k", "actually 90k is okay", "max 1 lakh")
     const budgetMatch = text.match(
@@ -620,7 +594,7 @@ export class ContextEngine {
       const calculatedValue = rawNum * multiplier;
 
       if (calculatedValue >= 5000 || unit || /\b(?:budget|khoroch)\b/i.test(text)) {
-        const newConstraintId = this.generateDeterministicId("c-budget", sessionId, turnIndex, String(calculatedValue));
+        const newConstraintId = `c-budget-${now}`;
 
         // In-place override: mark any existing active budget constraint as overridden
         constraintList = constraintList.map((c) => {
@@ -663,7 +637,7 @@ export class ContextEngine {
       const featureName = requireMatch[1].trim();
       if (featureName.length >= 2 && !/^(?:a|the|an|some)$/i.test(featureName)) {
         const newConstraint: ConversationConstraint = {
-          id: this.generateDeterministicId("c-feat", sessionId, turnIndex, featureName),
+          id: `c-feat-${turnIndex}-${featureName.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
           category: "feature_required",
           key: "feature",
           value: featureName,
@@ -687,7 +661,7 @@ export class ContextEngine {
       const excludedItem = excludeMatch[1].trim();
       if (excludedItem.length >= 2 && !/^(?:a|the|problem|issue)$/i.test(excludedItem)) {
         const newConstraint: ConversationConstraint = {
-          id: this.generateDeterministicId("c-excl", sessionId, turnIndex, excludedItem),
+          id: `c-excl-${turnIndex}-${excludedItem.toLowerCase().replace(/[^a-z0-9]/g, "_")}`,
           category: "brand_exclusion",
           key: "excluded_brand_or_feature",
           value: excludedItem,

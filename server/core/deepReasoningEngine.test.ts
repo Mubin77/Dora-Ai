@@ -9,6 +9,7 @@ import { deepReasoningEngine } from "./deepReasoningEngine";
 import { brainEngine } from "./brainEngine";
 import { DeepReasoningInput } from "./deepReasoningTypes";
 import { ExecutiveContextPackage } from "./executiveContextTypes";
+import { contextStore } from "./contextStore";
 
 let passedTests = 0;
 let totalTests = 0;
@@ -1194,7 +1195,9 @@ runTest("DR-37: Phase 1 and Phase 2 determinism regression remains green with St
     persistDecisions: false,
   };
 
+  contextStore.clear("sess_dr37");
   const a1 = brainEngine.analyze("Keep it concise and in English", [], undefined, "sess_dr37", undefined, options);
+  contextStore.clear("sess_dr37");
   const a2 = brainEngine.analyze("Keep it concise and in English", [], undefined, "sess_dr37", undefined, options);
 
   assert(JSON.stringify(a1) === JSON.stringify(a2), "Bit-for-bit identical BrainAnalysis across repeated runs");

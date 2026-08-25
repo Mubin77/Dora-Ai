@@ -27,7 +27,7 @@ export class ContextStore {
    * Generates a fresh blank active conversation context
    */
   public createBlankContext(sessionId: string = "default", currentTime?: number): ConversationContext {
-    const now = currentTime !== undefined ? currentTime : 0;
+    const now = currentTime ?? 1724300000000;
     return {
       id: sessionId,
       activeTopic: null,
@@ -52,17 +52,10 @@ export class ContextStore {
   }
 
   /**
-   * Retrieves the existing context for a session if present (read-only query)
+   * Retrieves the raw stored context for a session if it exists
    */
   public get(sessionId: string = "default"): ConversationContext | undefined {
     return this.contexts.get(sessionId);
-  }
-
-  /**
-   * Checks if a session context exists in the store
-   */
-  public has(sessionId: string = "default"): boolean {
-    return this.contexts.has(sessionId);
   }
 
   /**
@@ -70,16 +63,16 @@ export class ContextStore {
    */
   public getOrCreate(sessionId: string = "default", currentTime?: number): ConversationContext {
     const existing = this.contexts.get(sessionId);
-    const now = currentTime !== undefined ? currentTime : 0;
+    const now = currentTime ?? 1724300000000;
 
     if (existing) {
       // Check freshness TTL
-      if (now === 0 || (now - existing.updatedAt < this.TTL_MS)) {
+      if (now - existing.updatedAt < this.TTL_MS) {
         return existing;
       }
     }
 
-    const fresh = this.createBlankContext(sessionId, currentTime);
+    const fresh = this.createBlankContext(sessionId, now);
     this.contexts.set(sessionId, fresh);
     return fresh;
   }
@@ -88,12 +81,12 @@ export class ContextStore {
    * Saves or updates an active conversation context for a session
    */
   public save(sessionId: string = "default", context: ConversationContext, currentTime?: number): ConversationContext {
-    const ts = currentTime !== undefined ? currentTime : (context.updatedAt ?? 0);
+    const now = currentTime ?? context.updatedAt ?? 1724300000000;
     const updated: ConversationContext = {
       ...context,
       id: sessionId,
-      updatedAt: ts,
-      contextTimestamp: ts,
+      updatedAt: now,
+      contextTimestamp: now,
     };
     this.contexts.set(sessionId, updated);
     return updated;
@@ -109,8 +102,7 @@ export class ContextStore {
     currentTime?: number
   ): ConversationContext {
     if (!context.activeTopic) return context;
-
-    const now = currentTime !== undefined ? currentTime : (context.updatedAt ?? 0);
+    const now = currentTime ?? context.updatedAt ?? 1724300000000;
 
     const snapshot: InactiveContextSnapshot = {
       topic: context.activeTopic,
@@ -157,13 +149,6 @@ export class ContextStore {
    */
   public clear(sessionId: string = "default"): void {
     this.contexts.delete(sessionId);
-  }
-
-  /**
-   * Clears all contexts (useful for tests)
-   */
-  public clearAll(): void {
-    this.contexts.clear();
   }
 }
 

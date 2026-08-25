@@ -113,8 +113,20 @@ export * from "./executiveContextTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./deepReasoningTypes";
-export * from "./contradictionResolutionTypes";
-export type { ContradictionSeverity } from "./contradictionResolutionTypes";
+export type {
+  ContradictionClassification,
+  ResolutionOutcome,
+  BeliefRevisionDecisionType,
+  ContradictionRecord,
+  ResolutionCandidate,
+  BeliefRevisionDecision,
+  ContradictionResolutionBudgetConfig,
+  ContradictionResolutionDiagnostics,
+  ContradictionResolutionAnalysis,
+  ContradictionResolutionOptions,
+  ContradictionInput,
+} from "./contradictionResolutionTypes";
+export { DEFAULT_CONTRADICTION_RESOLUTION_BUDGET } from "./contradictionResolutionTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -130,10 +142,10 @@ export { temporalMemoryEngine } from "./temporalMemoryEngine";
 export { goalProjectEngine } from "./goalProjectEngine";
 export { contextContinuityEngine } from "./contextContinuityEngine";
 export { executiveContextEngine } from "./executiveContextEngine";
-export { deepReasoningEngine } from "./deepReasoningEngine";
-export { contradictionResolutionEngine } from "./contradictionResolutionEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
+export { deepReasoningEngine } from "./deepReasoningEngine";
+export { contradictionResolutionEngine } from "./contradictionResolutionEngine";
 export { memoryStore } from "./memoryStore";
 
 export type KnowledgeType = "STATIC" | "DYNAMIC";
@@ -214,28 +226,13 @@ export class BrainEngine {
   private referenceRegex =
     /\b(?:eta|eita|oita|oitar|sheta|seta|eigula|oigula|ager\s*ta|ager\s*ti|last\s*one|previous\s*one|same\s*thing|that\s*one|this\s*one|the\s*other\s*one|second\s*one|first\s*one|last\s*thing|which\s*one)\b|[ওইএই][টত]া|[ওইএই]গুলো|[ওইএই]গুলা|আগেরটা/i;
 
-  /**
-   * Deterministic hash function (zero Math.random, zero Date.now, zero random UUIDs).
-   */
   public deterministicHash(str: string): string {
-    let hash = 0x811c9dc5;
+    let hash = 0;
     for (let i = 0; i < str.length; i++) {
-      hash ^= str.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193);
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
     }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-  }
-
-  /**
-   * Generates a clean, reproducible deterministic identifier.
-   */
-  public generateDeterministicId(prefix: string, ...components: (string | number | undefined)[]): string {
-    const raw = components
-      .map((c) => String(c ?? "").trim().toLowerCase())
-      .join("::");
-    const hash = this.deterministicHash(raw);
-    const sanitizedPrefix = prefix.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
-    return `${sanitizedPrefix}_${hash}`;
+    return Math.abs(hash).toString(16);
   }
 
   /**
@@ -257,65 +254,37 @@ export class BrainEngine {
     const trimmed = (message || "").trim();
     const recentHistory = Array.isArray(history) ? history.slice(-12) : [];
     const userId = options?.userId || sessionId || "default";
-    const currentTime = options?.currentTime ?? 0;
-
-    // =========================================================================
-    // BRAIN ENGINE MUTATION BOUNDARY
-    // A. READ-ONLY COGNITIVE ANALYSIS:
-    //    All downstream cognitive engines (Context, Intent, Reasoning, Planning,
-    //    Verification, Retrieval, Consolidation, Governance, Adaptive Learning,
-    //    User Model, Temporal Memory, Goal/Project, Context Continuity, Predictive
-    //    Context, Response Adaptation, Executive Synthesis) perform pure deterministic
-    //    evaluations and transformations without mutating persistent storage.
-    //
-    // B. INTENTIONAL CONVERSATIONAL STATE PERSISTENCE:
-    //    - If options.persistDecisions !== false (default: true):
-    //      Intentional persistence is applied for active session context (contextStore)
-    //      and governed long-term memory decisions / user patterns (memoryStore).
-    //    - If options.persistDecisions === false (dry-run / preview mode):
-    //      Zero writes occur to memoryStore or contextStore; execution is 100% side-effect free.
-    //
-    // C. EPHEMERAL CURRENT-TURN OVERRIDES:
-    //    Current-turn corrections (language override, entity replacement, verbosity,
-    //    negation, project switch) modify the active working turn context ephemerally
-    //    and do NOT silently overwrite durable long-term memories in memoryStore.
-    // =========================================================================
+    const currentTime = options?.currentTime ?? 1724300000000;
 
     // 0. Load active long-term memories from MemoryStore if not explicitly passed
     let userMemories: MemoryRecord[] =
       memories && memories.length > 0 ? memories : memoryStore.get(userId);
 
-    // 1. Run Structured Active Context Engine (Phase 1, Step 1)
+    // 1. Run Structured Active Context Engine
     const contextResult = contextEngine.analyze(
       trimmed,
       recentHistory,
       existingContext,
-      sessionId,
-      { persist: options?.persistDecisions !== false, currentTime }
+      sessionId
     );
 
-    // 2. Run Context-First Structured Intent Engine (Phase 1, Step 2)
+    // 2. Run Context-First Structured Intent Engine
     const structuredIntent = intentEngine.classifyIntent(
       trimmed,
       recentHistory,
       contextResult.context
     );
 
-    // Handle correction side-effects on active conversation context
+    // Handle correction side-effects on context
     if (structuredIntent.primaryIntent === "CORRECTION" && structuredIntent.targetEntity) {
       for (const entity of contextResult.context.entities) {
         if (entity.status === "active" && entity.role === "primary") {
           entity.status = "superseded";
         }
       }
-      const correctionEntityId = this.generateDeterministicId(
-        "entity",
-        sessionId,
-        String(recentHistory.length),
-        structuredIntent.targetEntity
-      );
+      const entityId = `entity_${this.deterministicHash(`${sessionId}_${structuredIntent.targetEntity}_${recentHistory.length}`)}`;
       contextResult.context.entities.unshift({
-        id: correctionEntityId,
+        id: entityId,
         name: structuredIntent.targetEntity,
         type: "brand",
         role: "primary",
@@ -324,15 +293,13 @@ export class BrainEngine {
         mentionCount: 1,
         status: "active",
       });
-      if (options?.persistDecisions !== false) {
-        contextStore.save(sessionId, contextResult.context, currentTime);
-      }
+      contextStore.save(sessionId, contextResult.context);
     }
 
     // Update last meaningful user intent on active context
     contextResult.context.lastMeaningfulUserIntent = structuredIntent.primaryIntent;
 
-    // 3. Run Structured Reasoning Engine (Phase 1, Step 3)
+    // 3. Run Structured Reasoning Engine
     const reasoningAnalysis = reasoningEngine.analyze(
       trimmed,
       structuredIntent,
@@ -340,7 +307,7 @@ export class BrainEngine {
       recentHistory
     );
 
-    // 4. Run Structured Planning & Task Orchestration Engine (Phase 1, Step 4)
+    // 4. Run Structured Planning & Task Orchestration Engine
     const planningAnalysis = planningEngine.generatePlan(
       trimmed,
       structuredIntent,
@@ -349,7 +316,7 @@ export class BrainEngine {
       recentHistory
     );
 
-    // 5. Run Verification, Confidence Calibration & Self-Correction Engine (Phase 1, Step 5)
+    // 5. Run Verification, Confidence Calibration & Self-Correction Engine
     const verificationAnalysis = verificationEngine.verify({
       message: trimmed,
       context: contextResult.context,
@@ -359,9 +326,7 @@ export class BrainEngine {
     });
 
     // Save updated active context (including activeTaskPlan) to persistent session store
-    if (options?.persistDecisions !== false) {
-      contextStore.save(sessionId, contextResult.context, currentTime);
-    }
+    contextStore.save(sessionId, contextResult.context);
 
     const isCorrection = structuredIntent.primaryIntent === "CORRECTION";
     const refMatches = trimmed.match(this.referenceRegex);
@@ -431,7 +396,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 1 — Long-Term Memory Foundation: Memory Decision Engine Evaluation (Non-intrusive to Context)
+    // Step 6 / Phase 2: Memory Decision Engine Evaluation (Non-intrusive to Context)
     const memoryDecision = memoryDecisionEngine.evaluate({
       message,
       context: contextResult.context,
@@ -446,7 +411,7 @@ export class BrainEngine {
       userMemories = memoryStore.get(userId);
     }
 
-    // Step 2 — Long-Term Memory Retrieval & Recall: Memory Retrieval Engine
+    // Step 7 / Phase 2: Long-Term Memory Retrieval & Recall Engine
     // NOTE: Retrieval results remain strictly internal until MemoryGovernanceEngine evaluates them
     const memoryRetrieval = memoryRetrievalEngine.retrieve({
       message,
@@ -454,13 +419,10 @@ export class BrainEngine {
       intent: structuredIntent,
       memories: userMemories,
       userId,
-      options: {
-        now: currentTime,
-      },
     });
 
     // Optional automated consolidation maintenance
-    if (options?.autoMaintain && options?.persistDecisions !== false) {
+    if (options?.autoMaintain) {
       const maintenanceResult = memoryConsolidationEngine.maintain(userMemories, {
         currentTime,
       });
@@ -468,7 +430,7 @@ export class BrainEngine {
       userMemories = memoryStore.get(userId);
     }
 
-    // Step 3 — Memory Consolidation & Lifecycle: Memory Consolidation Diagnostics (Analysis)
+    // Step 8 / Phase 2: Memory Consolidation & Lifecycle Diagnostics (Analysis)
     let memoryConsolidation: MemoryConsolidationAnalysis | undefined;
     if (userMemories && userMemories.length > 0) {
       memoryConsolidation = memoryConsolidationEngine.analyze(userMemories, {
@@ -476,7 +438,7 @@ export class BrainEngine {
       });
     }
 
-    // Step 4 — Memory Governance & Safety: Memory Governance Engine
+    // Step 9 / Phase 2: Memory Governance & Response Integration Engine
     // Authoritative boundary: ONLY governance-approved directives and sanitizedMemoryContext may influence the prompt
     const memoryGovernanceAnalysis = memoryGovernanceEngine.evaluate({
       context: contextResult.context,
@@ -499,7 +461,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 5 — Adaptive Learning: Adaptive Learning Engine
+    // Step 10 / Phase 2: Adaptive Memory Learning & User Model Engine
     // Downstream of MemoryGovernanceEngine — learns stable personalization, task patterns, & interaction styles
     const existingPatterns = memoryStore.getPatterns(userId);
     const adaptiveLearningAnalysis = adaptiveLearningEngine.analyze({
@@ -530,7 +492,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 8 — Long-Term User Model Synthesis: Long-Term User Model Engine
+    // Step 10.5 / Phase 2: Long-Term User Model Synthesis & Identity-Aware Context Engine
     // Downstream of AdaptiveLearningEngine — synthesizes stable, bounded characteristics without hallucination
     const longTermUserModelAnalysis = longTermUserModelEngine.synthesize({
       userId,
@@ -554,7 +516,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 9 — Temporal Memory & Life-Pattern Reasoning: Temporal Memory Engine
+    // Step 9 / Phase 2: Temporal Memory & Life-Pattern Reasoning Engine
     // Downstream of LongTermUserModelEngine & AdaptiveLearningEngine — reasons about temporal state, evolution, & stability
     const temporalMemoryAnalysis = temporalMemoryEngine.evaluate({
       userId,
@@ -581,7 +543,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 10 — Goal, Project & Commitment Memory: Goal, Project & Commitment Memory Engine
+    // Step 10 / Phase 2: Goal, Project & Commitment Memory Engine (Deterministic, Bounded, Non-LLM)
     // Downstream of LongTermUserModelEngine & TemporalMemoryEngine — safely maintains validated goals, projects, commitments, blockers, & state
     const goalProjectAnalysis = goalProjectEngine.evaluate({
       userId,
@@ -611,7 +573,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 11 — Cross-Session Context Continuity: Context Continuity Engine
+    // Step 11 / Phase 2: Cross-Session Context Continuity & Intelligent Recall Orchestration Engine (Deterministic, Bounded, Non-LLM)
     // Downstream of GoalProjectEngine, UserModelEngine, TemporalMemoryEngine & GovernanceEngine — safely orchestrates validated historical context across sessions
     const contextContinuityAnalysis = contextContinuityEngine.evaluate({
       userId,
@@ -643,7 +605,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 6 — Predictive Context & Proactive Memory: Predictive Context Engine
+    // Step 12 / Phase 2: Predictive Context & Proactive Memory Orchestration Engine
     // Downstream of AdaptiveLearningEngine, UserModelEngine & TemporalMemoryEngine — safely prepares context for active plans & confirmed preferences
     const predictiveContextAnalysis = predictiveContextEngine.evaluate({
       message,
@@ -668,7 +630,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 7 — Response Adaptation & Personalization: Response Adaptation Engine
+    // Step 12 / Phase 2: Response Adaptation & Personalization Engine (Deterministic, Bounded, Non-LLM)
     // Downstream of PredictiveContextEngine, UserModelEngine & TemporalMemoryEngine — resolves multi-layer style profiling, format constraints, & safe personalization
     const responseAdaptationAnalysis = responseAdaptationEngine.evaluate({
       message: trimmed,
@@ -696,7 +658,7 @@ export class BrainEngine {
       }
     }
 
-    // Step 12 — Executive Context Synthesis: Executive Context Engine
+    // Step 12 / Phase 2: Executive Context Synthesis & Decision-Ready Context Engine (Deterministic, Bounded, Non-LLM)
     // Centralized context-composition engine that transforms authorized outputs into a compact, conflict-free package
     const executiveContext = executiveContextEngine.synthesize({
       userId,
@@ -729,68 +691,65 @@ export class BrainEngine {
       }
     }
 
-    // Step 13 — Deep Reasoning & Hypothesis Management Engine
-    // Transforms authorized cognitive inputs into grounded hypotheses, explicit contradictions, calibrated uncertainty, and reasoned conclusions
+    // Step 13 / Phase 3 Step 1: Deep Reasoning & Hypothesis Management Engine (Deterministic, Bounded, Non-LLM)
     const deepReasoningAnalysis = deepReasoningEngine.evaluate({
       userId,
       message: trimmed,
-      history: recentHistory,
       context: contextResult.context,
       intent: structuredIntent,
       reasoning: reasoningAnalysis,
       planning: planningAnalysis,
       verification: verificationAnalysis,
-      memoryGovernance: memoryGovernanceAnalysis,
+      executiveContext,
+      contextContinuity: contextContinuityAnalysis,
       userModel: longTermUserModelAnalysis,
       temporalMemory: temporalMemoryAnalysis,
       goalProject: goalProjectAnalysis,
-      contextContinuity: contextContinuityAnalysis,
       predictiveContext: predictiveContextAnalysis,
-      executiveContext,
+      governanceAnalysis: memoryGovernanceAnalysis,
+      history: recentHistory,
       options: {
         userId,
         currentTime,
         strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
-        activeTopic: contextResult.context?.activeTopic,
+        activeTopic: contextResult.context.activeTopic,
       },
     });
 
-    // Add sanitized reasoned directives from Deep Reasoning Engine
+    // Add sanitized deep reasoning directives to promptDirectives
     for (const d of deepReasoningAnalysis.sanitizedDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
     }
 
-    // Step 14 — Contradiction Resolution & Belief Revision Engine
-    // Deterministically evaluates authorized evidence, detected conflicts, and DeepReasoning outputs
-    // to resolve conflicts, determine belief revision decisions, and issue sanitized directives.
+    // Step 14 / Phase 3 Step 2: Contradiction Resolution & Belief Revision Engine (Deterministic, Bounded, Non-LLM)
     const contradictionResolutionAnalysis = contradictionResolutionEngine.evaluate({
       userId,
       message: trimmed,
-      history: recentHistory,
       context: contextResult.context,
       intent: structuredIntent,
       reasoning: reasoningAnalysis,
       planning: planningAnalysis,
       verification: verificationAnalysis,
+      deepReasoning: deepReasoningAnalysis,
+      executiveContext,
       memoryGovernance: memoryGovernanceAnalysis,
-      userModel: longTermUserModelAnalysis,
       temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
       goalProject: goalProjectAnalysis,
       contextContinuity: contextContinuityAnalysis,
       predictiveContext: predictiveContextAnalysis,
-      executiveContext,
-      deepReasoning: deepReasoningAnalysis,
+      history: recentHistory,
       options: {
         userId,
         currentTime,
         strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
-        activeTopic: contextResult.context?.activeTopic,
+        activeTopic: contextResult.context.activeTopic,
       },
     });
 
-    // Add sanitized directives from Contradiction Resolution Engine
+    // Add sanitized contradiction resolution directives to promptDirectives
     for (const d of contradictionResolutionAnalysis.activeDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);

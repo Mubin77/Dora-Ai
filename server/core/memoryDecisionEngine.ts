@@ -32,6 +32,15 @@ export class MemoryDecisionEngine {
     return MemoryDecisionEngine.instance;
   }
 
+  public deterministicHash(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(16);
+  }
+
   /**
    * Evaluates a user message, active dialog context, intent, and existing memories
    * to deterministically decide on long-term memory lifecycle actions.
@@ -335,8 +344,9 @@ export class MemoryDecisionEngine {
 
     // 2. Same key BUT different value -> Update & Supersede old memory
     if (existingRecord && existingRecord.normalizedValue !== parsed.normalizedValue) {
+      const memId = `mem_${this.deterministicHash(`${userId}_${parsed.key}_${parsed.normalizedValue}_${(existingRecord.version || 1) + 1}`)}`;
       const newRecord: MemoryRecord = {
-        id: `mem_${now}_${Math.random().toString(36).substring(2, 8)}`,
+        id: memId,
         userId,
         type: parsed.type,
         key: parsed.key,
@@ -369,8 +379,9 @@ export class MemoryDecisionEngine {
     }
 
     // 3. New Record -> SAVE
+    const memId = `mem_${this.deterministicHash(`${userId}_${parsed.key}_${parsed.normalizedValue}`)}`;
     const newRecord: MemoryRecord = {
-      id: `mem_${now}_${Math.random().toString(36).substring(2, 8)}`,
+      id: memId,
       userId,
       type: parsed.type,
       key: parsed.key,
@@ -466,7 +477,7 @@ export class MemoryDecisionEngine {
       const existingProject = existing.find((m) => m.key === "project_dora" && m.status === "ACTIVE");
 
       const target: MemoryRecord = {
-        id: existingProject ? existingProject.id : `mem_${now}_${Math.random().toString(36).substring(2, 8)}`,
+        id: existingProject ? existingProject.id : `mem_${this.deterministicHash(`${userId}_project_dora`)}`,
         userId,
         type: "PROJECT_CONTEXT",
         key: "project_dora",
@@ -527,8 +538,9 @@ export class MemoryDecisionEngine {
         );
 
         const now = Date.now();
+        const memId = `mem_${this.deterministicHash(`${userId}_preference_laptop_brand_${brandMatch.toLowerCase()}_${existingPref ? existingPref.version + 1 : 1}`)}`;
         const newRecord: MemoryRecord = {
-          id: `mem_${now}_${Math.random().toString(36).substring(2, 8)}`,
+          id: memId,
           userId,
           type: "PREFERENCE",
           key: "preference_laptop_brand",

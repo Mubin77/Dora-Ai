@@ -96,7 +96,7 @@ export class AdaptiveLearningEngine {
     } = params;
 
     const userId = options?.userId || context?.id || "default";
-    const currentTime = options?.currentTime ?? 0;
+    const currentTime = options?.currentTime ?? 1724300000000;
     const currentTurnOverrides: string[] = [];
     let currentTurnOverrideApplied = false;
 
@@ -725,7 +725,7 @@ export class AdaptiveLearningEngine {
     context: ConversationContext,
     intent: StructuredIntent,
     planning?: PlanningAnalysis,
-    currentTime: number = 0
+    currentTime: number = 1724300000000
   ): LearningSignal | undefined {
     const task = context?.currentTask;
     if (task && task !== "general_chat" && task !== "greeting" && task !== "chat") {

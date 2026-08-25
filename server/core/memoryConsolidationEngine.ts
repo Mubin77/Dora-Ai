@@ -70,7 +70,8 @@ export class MemoryConsolidationEngine {
    * Scans a memory record for sensitive data and flags it for quarantine.
    */
   public quarantineSensitive(
-    memory: MemoryRecord
+    memory: MemoryRecord,
+    currentTime: number = 1724300000000
   ): { isSensitive: boolean; updatedMemory?: MemoryRecord; action?: MemoryMaintenanceAction } {
     if (memory.status === "DELETED" && memory.isQuarantined) {
       return { isSensitive: true, updatedMemory: memory };
@@ -89,7 +90,7 @@ export class MemoryConsolidationEngine {
         importance: 0,
         value: "[REDACTED_SENSITIVE_DATA]",
         normalizedValue: "[redacted]",
-        updatedAt: Date.now(),
+        updatedAt: currentTime,
         version: memory.version + 1,
       };
 
@@ -119,7 +120,7 @@ export class MemoryConsolidationEngine {
    */
   public checkExpiration(
     memory: MemoryRecord,
-    currentTime = Date.now()
+    currentTime = 1724300000000
   ): { isExpired: boolean; updatedMemory?: MemoryRecord; action?: MemoryMaintenanceAction } {
     if (memory.status === "EXPIRED" || memory.status === "DELETED") {
       return { isExpired: memory.status === "EXPIRED" };
@@ -195,7 +196,7 @@ export class MemoryConsolidationEngine {
    */
   public consolidateDuplicates(
     memories: MemoryRecord[],
-    currentTime = Date.now()
+    currentTime = 1724300000000
   ): {
     updatedMemories: MemoryRecord[];
     merges: MemoryMergeCandidate[];
@@ -367,7 +368,7 @@ export class MemoryConsolidationEngine {
    */
   public resolveConflicts(
     memories: MemoryRecord[],
-    currentTime = Date.now()
+    currentTime = 1724300000000
   ): {
     updatedMemories: MemoryRecord[];
     conflicts: MemoryConflict[];
@@ -514,7 +515,7 @@ export class MemoryConsolidationEngine {
   public reinforceMemory(
     memory: MemoryRecord,
     evidence: string,
-    currentTime = Date.now(),
+    currentTime = 1724300000000,
     isExplicit = true
   ): { updatedMemory: MemoryRecord; reinforcement: MemoryReinforcement } {
     const prevCount = memory.reinforcementCount || 1;
@@ -708,7 +709,7 @@ export class MemoryConsolidationEngine {
    */
   public assessDecay(
     memory: MemoryRecord,
-    currentTime = Date.now()
+    currentTime = 1724300000000
   ): MemoryDecayAssessment {
     const ageMs = Math.max(0, currentTime - memory.createdAt);
     const lastActiveTime =
@@ -771,7 +772,7 @@ export class MemoryConsolidationEngine {
   public evaluateHealth(
     memory: MemoryRecord,
     allMemories: MemoryRecord[] = [],
-    currentTime = Date.now()
+    currentTime = 1724300000000
   ): MemoryHealth {
     const issues: string[] = [];
 
@@ -876,7 +877,7 @@ export class MemoryConsolidationEngine {
   public executeForget(
     memories: MemoryRecord[],
     directive: MemoryForgetDirective,
-    currentTime = Date.now()
+    currentTime = 1724300000000
   ): {
     updatedMemories: MemoryRecord[];
     forgottenCount: number;

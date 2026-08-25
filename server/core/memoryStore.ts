@@ -36,6 +36,15 @@ export class MemoryStore {
     return MemoryStore.instance;
   }
 
+  public deterministicHash(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(16);
+  }
+
   /**
    * Retrieves a cloned snapshot of all memory records for a given user.
    * Never returns raw internal mutable references.
@@ -146,7 +155,7 @@ export class MemoryStore {
 
     if (isSensitive) {
       const quarantinedRecord: MemoryRecord = {
-        id: target.id || `mem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        id: target.id || `mem_${this.deterministicHash(`${userId}_sensitive_${normKey}_${currentTime}`)}`,
         userId,
         type: (target.type as MemoryType) || "FACT",
         key: normKey,
@@ -179,7 +188,6 @@ export class MemoryStore {
           (m.status === "ACTIVE" && m.key.toLowerCase().trim().replace(/[\s-]+/g, "_") === normKey)
       );
 
-      const newId = target.id || `mem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       let predecessorId: string | null = null;
       let prevVersion = 0;
 
@@ -187,6 +195,12 @@ export class MemoryStore {
         const old = pool[existingIdx];
         predecessorId = old.id;
         prevVersion = old.version || 1;
+      }
+
+      const newId = target.id || `mem_${this.deterministicHash(`${userId}_${normKey}_${normVal}_${prevVersion + 1}`)}`;
+
+      if (existingIdx !== -1) {
+        const old = pool[existingIdx];
         // Mark old as SUPERSEDED
         pool[existingIdx] = {
           ...old,
@@ -226,7 +240,7 @@ export class MemoryStore {
     // 4. CANDIDATE action (Creates unpromoted candidate memory)
     if (decision.action === "CANDIDATE") {
       const candidateRecord: MemoryRecord = {
-        id: target.id || `mem_cand_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        id: target.id || `mem_cand_${this.deterministicHash(`${userId}_${normKey}_${normVal}`)}`,
         userId,
         type: "CANDIDATE",
         key: target.key,
@@ -255,7 +269,7 @@ export class MemoryStore {
     if (decision.action === "TEMPORARY") {
       const expiresAt = target.expiresAt || currentTime + 3 * 24 * 60 * 60 * 1000;
       const tempRecord: MemoryRecord = {
-        id: target.id || `mem_temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        id: target.id || `mem_temp_${this.deterministicHash(`${userId}_${normKey}_${normVal}`)}`,
         userId,
         type: "TEMPORARY",
         key: target.key,
@@ -311,7 +325,6 @@ export class MemoryStore {
           m.value.toLowerCase().trim() !== normVal
       );
 
-      const newId = target.id || `mem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       let supersededId: string | null = null;
       let prevVersion = 0;
 
@@ -319,6 +332,12 @@ export class MemoryStore {
         const old = pool[conflictingIdx];
         supersededId = old.id;
         prevVersion = old.version || 1;
+      }
+
+      const newId = target.id || `mem_${this.deterministicHash(`${userId}_${normKey}_${normVal}`)}`;
+
+      if (conflictingIdx !== -1) {
+        const old = pool[conflictingIdx];
         pool[conflictingIdx] = {
           ...old,
           status: "SUPERSEDED",

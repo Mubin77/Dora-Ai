@@ -62,7 +62,6 @@ export class MemoryGovernanceEngine {
    * Main evaluation entry point for Memory Governance & Response Integration
    */
   public evaluate(input: MemoryGovernanceInput): MemoryGovernanceAnalysis {
-    const startTime = 0; // Deterministic execution time tracking
     const {
       context,
       intent,
@@ -76,7 +75,8 @@ export class MemoryGovernanceEngine {
     } = input;
 
     const trimmedMsg = message.trim();
-    const currentTime = options?.currentTime ?? 0;
+    const currentTime = options?.currentTime ?? 1724300000000;
+    const startTime = currentTime;
 
     // 1. Detect explicit memory recall reference
     const explicitReferenceDetected =
@@ -366,14 +366,9 @@ export class MemoryGovernanceEngine {
       // GATE 4: TOPIC & TASK ISOLATION GATE
       // -------------------------------------------------------------------
       const isGlobalStablePreference =
-        key === "language" ||
-        key === "preferred_language" ||
         key.startsWith("preference_ui") ||
         key.startsWith("preference_language") ||
         key.startsWith("user_name") ||
-        cand.category === "COMMUNICATION_STYLE" ||
-        mem?.tags?.includes("COMMUNICATION_STYLE") ||
-        mem?.type === "PERSONALIZATION" ||
         mem?.tags?.includes("global_profile");
 
       if (isTopicSwitched && !explicitReferenceDetected && !isGlobalStablePreference) {

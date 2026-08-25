@@ -45,13 +45,12 @@ export class MemoryRetrievalEngine {
     userId?: string;
     options?: MemoryRetrievalOptions;
   }): MemoryRetrievalAnalysis {
-    const startTime = 0; // Deterministic tracking
     const rawMessage = (params.message || "").trim();
     const lowerMessage = rawMessage.toLowerCase();
     const context = params.context;
     const intent = params.intent;
     const allMemories = params.memories || [];
-    const now = params.options?.now ?? 0;
+    const now = params.options?.now ?? 1724300000000;
     const topK = Math.min(params.options?.topK || this.DEFAULT_TOP_K, this.MAX_TOP_K);
     const minScore = params.options?.minRelevanceScore ?? this.DEFAULT_MIN_SCORE;
     const allowedTypes = params.options?.allowedTypes;
@@ -461,11 +460,6 @@ export class MemoryRetrievalEngine {
       }
     }
 
-    // Global communication style & language preferences
-    if (memory.key === "language" || memory.key === "preferred_language" || memory.tags?.includes("COMMUNICATION_STYLE")) {
-      rawScore = Math.max(rawScore, 0.55);
-    }
-
     // Special Boost for Project Context
     if (memory.type === "PROJECT_CONTEXT" && (message.includes("dora") || message.includes("project") || context.activeTopic?.includes("project"))) {
       rawScore = Math.max(rawScore, 0.90);
@@ -498,14 +492,7 @@ export class MemoryRetrievalEngine {
     const tags = (mem.tags || []).map(t => t.toLowerCase());
 
     // Identity, personalization, and general developer facts are not isolated
-    if (
-      mem.type === "PERSONALIZATION" ||
-      mem.type === "PROJECT_CONTEXT" ||
-      memKey === "user_preferred_name" ||
-      memKey === "language" ||
-      memKey === "preferred_language" ||
-      mem.tags?.includes("COMMUNICATION_STYLE")
-    ) {
+    if (mem.type === "PERSONALIZATION" || mem.type === "PROJECT_CONTEXT" || memKey === "user_preferred_name") {
       return false;
     }
 

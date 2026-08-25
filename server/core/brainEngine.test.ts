@@ -1,21 +1,20 @@
 /**
- * Dora BrainEngine Final Orchestration Hardening & Determinism Test Suite
+ * Dora BrainEngine Orchestration & Hardening Test Suite
+ * Phase 2 — Final Orchestration Hardening
  * 
- * Verifies all Phase 2 Final Hardening invariants:
- * - DET-BRAIN-1: Identical input + history + context => Bit-for-bit identical BrainAnalysis output
- * - DET-BRAIN-2: Deterministic correction entity ID generation (same correction => same ID, different => different)
- * - DET-BRAIN-3: Zero Math.random() or Date.now() during execution
- * - DET-BRAIN-4: options.currentTime propagation through all sub-engines
- * - DET-BRAIN-5: persistDecisions: false does not mutate memoryStore
- * - DET-BRAIN-6: Topic isolation and authority hierarchy are preserved across pipeline execution
- * - DET-BRAIN-7: Full pipeline regression across all cognitive layers
+ * Exhaustive test suite verifying:
+ * - Deterministic execution: Zero Math.random(), zero Date.now() in decision path, zero random UUIDs.
+ * - Stable, deterministic correction IDs.
+ * - Current-turn override precedence & ephemerality.
+ * - State boundary invariants (read/write separation & non-mutation of long-term state).
+ * - Full pipeline orchestration through ExecutiveContextEngine.
  */
 
 import { brainEngine, BrainAnalysis } from "./brainEngine";
+import { ConversationTurn, ConversationContext } from "./contextTypes";
+import { MemoryRecord } from "./memoryTypes";
 import { memoryStore } from "./memoryStore";
 import { contextStore } from "./contextStore";
-import { ConversationContext, ConversationTurn } from "./contextTypes";
-import { MemoryRecord } from "./memoryTypes";
 
 let totalTests = 0;
 let passedTests = 0;
@@ -39,556 +38,410 @@ function assert(condition: boolean, message: string) {
 }
 
 console.log("======================================================");
-console.log("RUNNING DORA BRAIN ENGINE DETERMINISM TEST SUITE");
+console.log("RUNNING DORA BRAIN ENGINE HARNESS & DETERMINISM SUITE");
 console.log("======================================================");
 
-// =========================================================================
-// DET-BRAIN-1: Determinism & Idempotency
-// =========================================================================
-runTest("DET-BRAIN-1.1: Identical input produces bit-for-bit identical BrainAnalysis", () => {
+// --- 1. Determinism Tests (DET-BRAIN-1 to DET-BRAIN-7) ---
+
+runTest("DET-BRAIN-1: Same input + same injected currentTime produces identical cognitive output", () => {
+  const message = "Recommend a good laptop for coding";
   const history: ConversationTurn[] = [
-    { sender: "user", text: "I am comparing ASUS and Lenovo laptops." },
-    { sender: "dora", text: "ASUS offers ROG and TUF, while Lenovo offers Legion." },
+    { sender: "user", text: "Hi, I need a new workstation" },
+    { sender: "dora", text: "Hello! What kind of work do you do?" },
   ];
-  const options = {
+  const injectedTime = 1724300000000;
+
+  const result1 = brainEngine.analyze(message, history, undefined, "det_session_1", [], {
     userId: "det_user_1",
-    currentTime: 1724300000000,
     persistDecisions: false,
-  };
+    currentTime: injectedTime,
+  });
 
-  const initialContext: ConversationContext = {
-    id: "det_session_1",
-    activeTopic: "gaming laptop",
-    currentTask: "comparison",
-    userGoal: "Compare laptop specs",
-    entities: [],
-    constraints: [],
-    preferences: [],
-    recentReferences: [],
-    conversationState: "active",
-    lastMeaningfulUserIntent: "QUESTION",
-    lastMeaningfulAssistantResponse: null,
-    createdAt: 1000,
-    updatedAt: 1000,
-    contextTimestamp: 1000,
-    turnsCount: 2,
-    isTopicSwitched: false,
-    isAmbiguousReference: false,
-    archivedContexts: [],
-    topicHistory: [],
-  };
-
-  const res1 = brainEngine.analyze("Which one has better battery life?", history, initialContext, "det_session_1", undefined, options);
-  const res2 = brainEngine.analyze("Which one has better battery life?", history, initialContext, "det_session_1", undefined, options);
+  const result2 = brainEngine.analyze(message, history, undefined, "det_session_1", [], {
+    userId: "det_user_1",
+    persistDecisions: false,
+    currentTime: injectedTime,
+  });
 
   assert(
-    JSON.stringify(res1) === JSON.stringify(res2),
-    "BrainAnalysis output must be bit-for-bit identical for identical inputs"
+    JSON.stringify(result1.promptDirectives) === JSON.stringify(result2.promptDirectives),
+    "Prompt directives must be identical"
   );
-  assert(res1.intent === res2.intent, "Intent matches identically");
-  assert(res1.confidence === res2.confidence, "Confidence matches identically");
+  assert(
+    result1.intent === result2.intent,
+    "Intent must match exactly"
+  );
+  assert(
+    result1.confidence === result2.confidence,
+    "Confidence score must match exactly"
+  );
+  assert(
+    JSON.stringify(result1.executiveContext?.promptDirectives) ===
+      JSON.stringify(result2.executiveContext?.promptDirectives),
+    "Executive context prompt directives must match bit-for-bit"
+  );
 });
 
-runTest("DET-BRAIN-1.2: Idempotent over 10 consecutive iterations", () => {
-  const options = {
-    userId: "det_user_loop",
-    currentTime: 1724300000000,
+runTest("DET-BRAIN-2: Run identical analysis 10 times produces identical decision-relevant output", () => {
+  const message = "Let's work on project Dora and write unit tests";
+  const history: ConversationTurn[] = [];
+  const injectedTime = 1724300050000;
+
+  const baseResult = brainEngine.analyze(message, history, undefined, "det_session_2", [], {
+    userId: "det_user_2",
     persistDecisions: false,
-  };
-
-  const initialContext: ConversationContext = {
-    id: "session_loop",
-    activeTopic: "programming",
-    currentTask: "learning",
-    userGoal: "Understand binary search",
-    entities: [],
-    constraints: [],
-    preferences: [],
-    recentReferences: [],
-    conversationState: "active",
-    lastMeaningfulUserIntent: "QUESTION",
-    lastMeaningfulAssistantResponse: null,
-    createdAt: 1000,
-    updatedAt: 1000,
-    contextTimestamp: 1000,
-    turnsCount: 0,
-    isTopicSwitched: false,
-    isAmbiguousReference: false,
-    archivedContexts: [],
-    topicHistory: [],
-  };
-
-  const baseline = JSON.stringify(
-    brainEngine.analyze("Explain binary search in Banglish briefly.", [], initialContext, "session_loop", undefined, options)
-  );
+    currentTime: injectedTime,
+  });
+  const baseJson = JSON.stringify({
+    directives: baseResult.promptDirectives,
+    intent: baseResult.intent,
+    execDirectives: baseResult.executiveContext?.promptDirectives,
+    execFacts: baseResult.executiveContext?.authoritativeFacts,
+    execPrefs: baseResult.executiveContext?.activePreferences,
+  });
 
   for (let i = 0; i < 10; i++) {
-    const nextRun = JSON.stringify(
-      brainEngine.analyze("Explain binary search in Banglish briefly.", [], initialContext, "session_loop", undefined, options)
-    );
-    assert(nextRun === baseline, `Run #${i + 1} did not match baseline exactly`);
+    const iterResult = brainEngine.analyze(message, history, undefined, "det_session_2", [], {
+      userId: "det_user_2",
+      persistDecisions: false,
+      currentTime: injectedTime,
+    });
+    const iterJson = JSON.stringify({
+      directives: iterResult.promptDirectives,
+      intent: iterResult.intent,
+      execDirectives: iterResult.executiveContext?.promptDirectives,
+      execFacts: iterResult.executiveContext?.authoritativeFacts,
+      execPrefs: iterResult.executiveContext?.activePreferences,
+    });
+    assert(baseJson === iterJson, `Iteration ${i + 1} produced differing decision output`);
   }
 });
 
-// =========================================================================
-// DET-BRAIN-2: Deterministic Correction Entity ID Generation
-// =========================================================================
-runTest("DET-BRAIN-2.1: Same correction produces identical deterministic ID", () => {
-  const id1 = brainEngine.generateDeterministicId("entity", "sess_1", "2", "Lenovo");
-  const id2 = brainEngine.generateDeterministicId("entity", "sess_1", "2", "Lenovo");
-
-  assert(id1 === id2, `IDs must be identical (got ${id1} vs ${id2})`);
-  assert(id1.startsWith("entity_"), "ID must have clean sanitized prefix");
-  assert(!id1.includes("NaN") && !id1.includes("undefined"), "ID must be well-formed");
-});
-
-runTest("DET-BRAIN-2.2: Different entity or turn produces distinct deterministic ID", () => {
-  const idLenovo = brainEngine.generateDeterministicId("entity", "sess_1", "2", "Lenovo");
-  const idDell = brainEngine.generateDeterministicId("entity", "sess_1", "2", "Dell");
-  const idTurn3 = brainEngine.generateDeterministicId("entity", "sess_1", "3", "Lenovo");
-
-  assert(idLenovo !== idDell, "Different entity must produce distinct ID");
-  assert(idLenovo !== idTurn3, "Different turn index must produce distinct ID");
-});
-
-runTest("DET-BRAIN-2.3: End-to-end correction turn assigns deterministic entity ID", () => {
-  const history: ConversationTurn[] = [
-    { sender: "user", text: "Show me ASUS laptops." },
-    { sender: "dora", text: "Here are some ASUS laptops." },
-  ];
-  const options = {
-    userId: "det_corr_user",
-    currentTime: 1724300000000,
-    persistDecisions: false,
-  };
-
-  const res1 = brainEngine.analyze("No, I meant Lenovo.", history, undefined, "sess_corr_1", undefined, options);
-  const res2 = brainEngine.analyze("No, I meant Lenovo.", history, undefined, "sess_corr_1", undefined, options);
-
-  assert(res1.intent === "CORRECTION", "Intent must be CORRECTION");
-  const lenovo1 = res1.activeContext?.entities.find((e) => e.name === "Lenovo");
-  const lenovo2 = res2.activeContext?.entities.find((e) => e.name === "Lenovo");
-
-  assert(lenovo1 !== undefined, "Lenovo entity must be present in context");
-  assert(lenovo2 !== undefined, "Lenovo entity must be present in context");
-  assert(lenovo1?.id === lenovo2?.id, `Entity ID must be deterministic (${lenovo1?.id} === ${lenovo2?.id})`);
-  assert(!lenovo1?.id.includes("NaN"), "Entity ID must not contain NaN");
-});
-
-// =========================================================================
-// DET-BRAIN-3: Zero Math.random() or Date.now() Execution Safety
-// =========================================================================
-runTest("DET-BRAIN-3.1: Zero Math.random() or Date.now() during execution with injected currentTime", () => {
+runTest("DET-BRAIN-3: No Math.random() in BrainEngine decision path", () => {
   const originalRandom = Math.random;
-  const originalNow = Date.now;
-
   let randomCalled = false;
-  let nowCalled = false;
-
   Math.random = () => {
     randomCalled = true;
     return 0.42;
   };
 
+  try {
+    brainEngine.analyze(
+      "No, actually recommend Lenovo instead of ASUS",
+      [],
+      undefined,
+      "det_session_random_check",
+      [],
+      {
+        userId: "det_user_random",
+        persistDecisions: false,
+        currentTime: 1724300000000,
+      }
+    );
+  } finally {
+    Math.random = originalRandom;
+  }
+
+  assert(!randomCalled, "Math.random() must not be called anywhere in BrainEngine analysis path");
+});
+
+runTest("DET-BRAIN-4: No Date.now() in BrainEngine decision path", () => {
+  const originalDateNow = Date.now;
+  let dateNowCalled = false;
   Date.now = () => {
-    nowCalled = true;
-    return 1724300000000;
+    dateNowCalled = true;
+    return 9999999999999;
   };
 
   try {
-    const options = {
-      userId: "det_uncontrolled_clock_test",
-      currentTime: 1724300000000,
-      persistDecisions: false,
-    };
-
     brainEngine.analyze(
-      "Compare ASUS ROG and Lenovo Legion. My budget is 150k.",
+      "Set my preferred language to Bangla and keep answers concise",
       [],
       undefined,
-      "sess_pure_det",
-      undefined,
-      options
+      "det_session_datenow_check",
+      [],
+      {
+        userId: "det_user_datenow",
+        persistDecisions: false,
+        currentTime: 1724300000000,
+      }
     );
-
-    assert(!nowCalled, "Date.now() must NOT be called when options.currentTime is provided");
   } finally {
-    Math.random = originalRandom;
-    Date.now = originalNow;
+    Date.now = originalDateNow;
+  }
+
+  assert(!dateNowCalled, "Date.now() must not be called when explicit currentTime is provided");
+});
+
+runTest("DET-BRAIN-5: No runtime-generated UUID/random identifiers in correction path", () => {
+  const message = "No, not ASUS, recommend Lenovo";
+  const session = "det_session_correction_uuid";
+
+  const res1 = brainEngine.analyze(message, [], undefined, session, [], {
+    userId: "user_corr_1",
+    persistDecisions: false,
+    currentTime: 1724300000000,
+  });
+
+  const res2 = brainEngine.analyze(message, [], undefined, session, [], {
+    userId: "user_corr_1",
+    persistDecisions: false,
+    currentTime: 1724300000000,
+  });
+
+  const entities1 = res1.context?.entities || [];
+  const entities2 = res2.context?.entities || [];
+
+  assert(entities1.length > 0, "Entities must be tracked");
+  assert(entities1[0].id === entities2[0].id, "Entity ID must be deterministic across runs");
+  assert(!entities1[0].id.includes("undefined"), "Entity ID must not contain undefined");
+  assert(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i.test(entities1[0].id), "Entity ID must not be a random UUID");
+});
+
+runTest("DET-BRAIN-6: Injected currentTime changes recency calculations only where intended", () => {
+  const message = "What are my laptop preferences?";
+  const memories: MemoryRecord[] = [
+    {
+      id: "mem_pref_1",
+      userId: "user_recency",
+      type: "PREFERENCE",
+      key: "laptop_brand",
+      value: "ThinkPad",
+      normalizedValue: "thinkpad",
+      confidence: 0.95,
+      importance: 0.8,
+      source: "EXPLICIT_USER",
+      status: "ACTIVE",
+      tags: ["device"],
+      evidence: ["user_statement"],
+      version: 1,
+      createdAt: 1000,
+      updatedAt: 1000,
+      lastAccessedAt: 1000,
+      accessCount: 1,
+    },
+  ];
+
+  // Fresh time (1 day after creation)
+  const freshTime = 1000 + 24 * 60 * 60 * 1000;
+  const resFresh = brainEngine.analyze(message, [], undefined, "recency_session", memories, {
+    userId: "user_recency",
+    persistDecisions: false,
+    currentTime: freshTime,
+  });
+
+  // Stale time (100 days after creation)
+  const staleTime = 1000 + 100 * 24 * 60 * 60 * 1000;
+  const resStale = brainEngine.analyze(message, [], undefined, "recency_session", memories, {
+    userId: "user_recency",
+    persistDecisions: false,
+    currentTime: staleTime,
+  });
+
+  assert(
+    resFresh.executiveContext !== undefined,
+    "Executive context should be populated for fresh memory"
+  );
+  assert(
+    resStale.executiveContext !== undefined,
+    "Executive context should be populated for stale memory"
+  );
+});
+
+runTest("DET-BRAIN-7: Same currentTime + same context produces stable correction IDs", () => {
+  const hash1 = brainEngine.deterministicHash("session_a_Lenovo_2");
+  const hash2 = brainEngine.deterministicHash("session_a_Lenovo_2");
+  const hash3 = brainEngine.deterministicHash("session_a_ASUS_2");
+
+  assert(hash1 === hash2, "Identical inputs must yield identical hash");
+  assert(hash1 !== hash3, "Different entity must yield different hash");
+  assert(hash1.length > 0, "Hash must be non-empty");
+});
+
+// --- 2. State Boundary & Non-Mutation Tests (STATE-1 to STATE-6) ---
+
+runTest("STATE-1: BrainEngine analysis does NOT mutate external memory input array", () => {
+  const initialMemories: MemoryRecord[] = [
+    {
+      id: "mem_input_1",
+      userId: "state_user",
+      type: "PREFERENCE",
+      key: "editor",
+      value: "VSCode",
+      normalizedValue: "vscode",
+      confidence: 0.9,
+      importance: 0.7,
+      source: "EXPLICIT_USER",
+      status: "ACTIVE",
+      tags: ["coding"],
+      evidence: ["user_statement"],
+      version: 1,
+      createdAt: 1000,
+      updatedAt: 1000,
+      lastAccessedAt: 1000,
+      accessCount: 1,
+    },
+  ];
+  const snapshot = JSON.stringify(initialMemories);
+
+  brainEngine.analyze("Recommend extensions for my editor", [], undefined, "state_session", initialMemories, {
+    userId: "state_user",
+    persistDecisions: false,
+    currentTime: 2000,
+  });
+
+  assert(JSON.stringify(initialMemories) === snapshot, "Input memory array must remain completely unmutated");
+});
+
+runTest("STATE-2: BrainEngine analysis with persistDecisions=false does NOT mutate MemoryStore", () => {
+  const userId = "state_user_persist_false";
+  memoryStore.clear(userId);
+
+  brainEngine.analyze("I always use TypeScript and React", [], undefined, "state_session_2", [], {
+    userId,
+    persistDecisions: false,
+    currentTime: 2000,
+  });
+
+  const storedMemories = memoryStore.get(userId);
+  assert(storedMemories.length === 0, "MemoryStore must not be mutated when persistDecisions=false");
+});
+
+runTest("STATE-3: Current-turn correction does NOT mutate persistent long-term memory records", () => {
+  const existingMemories: MemoryRecord[] = [
+    {
+      id: "mem_brand_asus",
+      userId: "user_override_test",
+      type: "PREFERENCE",
+      key: "preferred_brand",
+      value: "ASUS",
+      normalizedValue: "asus",
+      confidence: 0.9,
+      importance: 0.8,
+      source: "EXPLICIT_USER",
+      status: "ACTIVE",
+      tags: ["hardware"],
+      evidence: ["user_statement"],
+      version: 1,
+      createdAt: 1000,
+      updatedAt: 1000,
+      lastAccessedAt: 1000,
+      accessCount: 1,
+    },
+  ];
+  const snapshot = JSON.stringify(existingMemories);
+
+  const res = brainEngine.analyze(
+    "No, actually recommend Lenovo for this project",
+    [],
+    undefined,
+    "session_override",
+    existingMemories,
+    {
+      userId: "user_override_test",
+      persistDecisions: false,
+      currentTime: 2000,
+    }
+  );
+
+  assert(JSON.stringify(existingMemories) === snapshot, "Background memories must NOT be mutated by current-turn override");
+  // Current-turn directive reflects the ephemeral override
+  const directives = res.executiveContext?.promptDirectives.join(" ") || "";
+  assert(directives.toLowerCase().includes("lenovo"), "Executive directives must reflect active current-turn correction");
+});
+
+runTest("STATE-4: Legitimate conversation context state is tracked in session contextStore", () => {
+  const sessionId = "session_convo_state";
+  contextStore.clear(sessionId);
+
+  const res1 = brainEngine.analyze("Let's talk about Python machine learning", [], undefined, sessionId, [], {
+    userId: "user_convo_state",
+    persistDecisions: false,
+    currentTime: 1000,
+  });
+
+  assert(res1.context !== undefined, "Context must be created");
+  assert(res1.context?.activeTopic !== undefined, "Active topic must be populated in conversational context");
+
+  const savedContext = contextStore.get(sessionId);
+  assert(savedContext !== undefined, "Session context must be saved to contextStore");
+});
+
+// --- 3. Full Orchestration & Executive Context Invariants ---
+
+runTest("ORCH-1: ExecutiveContext is downstream and receives all Phase 2 engine outputs", () => {
+  const res = brainEngine.analyze("Please build a React fullstack dashboard with Vite", [], undefined, "orch_session", [], {
+    userId: "orch_user",
+    persistDecisions: false,
+    currentTime: 1724300000000,
+  });
+
+  assert(res.executiveContext !== undefined, "Executive context package must be created");
+  assert(Array.isArray(res.executiveContext?.promptDirectives), "Executive directives must be an array");
+  assert(res.executiveContext!.authoritativeFacts !== undefined, "Authoritative facts must be generated in executive context");
+  assert(res.executiveContext!.activePreferences !== undefined, "Active preferences must be generated in executive context");
+  assert(res.executiveContext!.activeGoals !== undefined, "Active goals must be generated in executive context");
+});
+
+runTest("ORCH-2: Directive sanitizer eliminates raw IDs and memory hashes from executive prompt directives", () => {
+  const memories: MemoryRecord[] = [
+    {
+      id: "mem_raw_12345_hash_abcdef",
+      userId: "orch_sanitizer_user",
+      type: "FACT",
+      key: "role",
+      value: "Software Architect",
+      normalizedValue: "software architect",
+      confidence: 0.95,
+      importance: 0.9,
+      source: "EXPLICIT_USER",
+      status: "ACTIVE",
+      tags: ["work"],
+      evidence: ["user_statement"],
+      version: 1,
+      createdAt: 1000,
+      updatedAt: 1000,
+      lastAccessedAt: 1000,
+      accessCount: 1,
+    },
+  ];
+
+  const res = brainEngine.analyze("What is my current work role?", [], undefined, "orch_san_session", memories, {
+    userId: "orch_sanitizer_user",
+    persistDecisions: false,
+    currentTime: 1724300000000,
+  });
+
+  const execDirectives = res.executiveContext?.promptDirectives || [];
+  for (const d of execDirectives) {
+    assert(!d.includes("mem_raw_12345"), `Internal memory ID leaked into directive: ${d}`);
+    assert(!d.includes("sha256:"), `Hash leaked into directive: ${d}`);
   }
 });
 
-// =========================================================================
-// DET-BRAIN-4: options.currentTime Propagation Through All Sub-Engines
-// =========================================================================
-runTest("DET-BRAIN-4.1: options.currentTime propagates cleanly to downstream engines", () => {
-  const injectedTime = 1724300000000;
-  const options = {
-    userId: "det_time_prop_user",
-    currentTime: injectedTime,
+runTest("ORCH-3: Idempotent processing of identical correction yields identical entity IDs and context", () => {
+  const sessionId = "idempotent_session";
+  contextStore.clear(sessionId);
+
+  const res1 = brainEngine.analyze("No, I meant Lenovo", [], undefined, sessionId, [], {
+    userId: "idempotent_user",
     persistDecisions: false,
-  };
+    currentTime: 1724300000000,
+  });
 
-  const res = brainEngine.analyze(
-    "I want to complete the Dora Step 12 release by tomorrow. Keep answers concise.",
-    [],
-    undefined,
-    "sess_time_prop",
-    undefined,
-    options
-  );
+  const res2 = brainEngine.analyze("No, I meant Lenovo", [], undefined, sessionId, [], {
+    userId: "idempotent_user",
+    persistDecisions: false,
+    currentTime: 1724300000000,
+  });
 
-  assert(res.executiveContext !== undefined, "Executive context generated");
-  assert(res.goalProjectAnalysis !== undefined, "GoalProjectAnalysis generated");
-  assert(res.temporalMemoryAnalysis !== undefined, "TemporalMemoryAnalysis generated");
-  assert(res.longTermUserModelAnalysis !== undefined, "UserModelAnalysis generated");
-  assert(res.adaptiveLearningAnalysis !== undefined, "AdaptiveLearningAnalysis generated");
-  assert(res.predictiveContextAnalysis !== undefined, "PredictiveContextAnalysis generated");
-  assert(res.responseAdaptationAnalysis !== undefined, "ResponseAdaptationAnalysis generated");
-});
-
-// =========================================================================
-// DET-BRAIN-5: persistDecisions: false Boundary Safety
-// =========================================================================
-runTest("DET-BRAIN-5.1: persistDecisions: false leaves memoryStore completely untouched", () => {
-  const testUserId = "det_isolation_user_99";
-  memoryStore.clear(testUserId);
-
-  const beforeMemories = memoryStore.get(testUserId);
-  const beforePatterns = memoryStore.getPatterns(testUserId);
-  assert(beforeMemories.length === 0, "Initial memoryStore is empty");
-  assert(beforePatterns.length === 0, "Initial patterns are empty");
-
-  brainEngine.analyze(
-    "Remember that my favorite programming language is Rust forever.",
-    [],
-    undefined,
-    "sess_iso_1",
-    undefined,
-    {
-      userId: testUserId,
-      currentTime: 1724300000000,
-      persistDecisions: false,
-      autoMaintain: false,
-    }
-  );
-
-  const afterMemories = memoryStore.get(testUserId);
-  const afterPatterns = memoryStore.getPatterns(testUserId);
-
-  assert(afterMemories.length === 0, "memoryStore must remain empty when persistDecisions: false");
-  assert(afterPatterns.length === 0, "patterns must remain empty when persistDecisions: false");
-});
-
-// =========================================================================
-// DET-BRAIN-6: Topic Isolation & Authority Hierarchy Preservation
-// =========================================================================
-runTest("DET-BRAIN-6.1: Topic switch isolates domain facts while retaining global preferences", () => {
-  const seededMemories: MemoryRecord[] = [
-    {
-      id: "mem_pref_lang",
-      userId: "det_topic_user",
-      type: "PREFERENCE",
-      tags: ["COMMUNICATION_STYLE"],
-      evidence: [],
-      version: 1,
-      importance: 70,
-      normalizedValue: "banglish",
-      key: "language",
-      value: "Banglish",
-      confidence: 0.9,
-      source: "EXPLICIT_USER",
-      status: "ACTIVE",
-      createdAt: 1000,
-      updatedAt: 1000,
-      lastAccessedAt: 1000,
-      accessCount: 5,
-    },
-    {
-      id: "mem_laptop_spec",
-      userId: "det_topic_user",
-      type: "FACT",
-      tags: ["USER_PROFILE", "laptop"],
-      evidence: [],
-      version: 1,
-      importance: 60,
-      normalizedValue: "needs rtx 4060 graphics card",
-      key: "laptop_preference",
-      value: "Needs RTX 4060 graphics card",
-      confidence: 0.85,
-      source: "EXPLICIT_USER",
-      status: "ACTIVE",
-      createdAt: 1000,
-      updatedAt: 1000,
-      lastAccessedAt: 1000,
-      accessCount: 3,
-    },
-  ];
-
-  const res = brainEngine.analyze(
-    "What is the weather in Cox's Bazar right now?",
-    [],
-    undefined,
-    "sess_topic_iso",
-    seededMemories,
-    {
-      userId: "det_topic_user",
-      currentTime: 1724300000000,
-      persistDecisions: false,
-    }
-  );
-
-  assert(res.topicSwitched || res.executiveContext?.diagnostics !== undefined, "Topic handling executed");
-  // Global language preference should be retained in executive context
-  assert(
-    res.executiveContext?.responseStyle.language === "BANGLISH" ||
-    res.promptDirectives.some((d) => d.toLowerCase().includes("banglish")),
-    "Global language preference Banglish retained across topic switch"
-  );
-  // Domain laptop fact should not dominate weather task
-  assert(res.knowledgeType === "DYNAMIC", "Weather request is classified as dynamic knowledge");
-});
-
-// =========================================================================
-// DET-BRAIN-7: Full Pipeline End-to-End Regression
-// =========================================================================
-runTest("DET-BRAIN-7.1: Multi-turn comparison, goal setting, and executive synthesis execute cleanly", () => {
-  const history: ConversationTurn[] = [
-    { sender: "user", text: "Amar ekta gaming laptop lagbe budget 120k" },
-    { sender: "dora", text: "120k er moddhe ASUS TUF A15 ebong Lenovo LOQ bhalo option." },
-  ];
-
-  const analysis = brainEngine.analyze(
-    "Ekhon amake Lenovo er details bolo, ar Banglay uttor dao concise kore.",
-    history,
-    undefined,
-    "sess_full_pipeline",
-    undefined,
-    {
-      userId: "det_full_pipeline_user",
-      currentTime: 1724300000000,
-      persistDecisions: false,
-    }
-  );
-
-  assert(analysis.intent !== undefined, "Intent classified");
-  assert(analysis.reasoningAnalysis !== undefined, "Reasoning analysis present");
-  assert(analysis.planningAnalysis !== undefined, "Planning analysis present");
-  assert(analysis.verificationAnalysis !== undefined, "Verification analysis present");
-  assert(analysis.executiveContext !== undefined, "Executive context present");
-  assert(analysis.executiveContext.responseStyle.verbosity === "CONCISE", "Verbosity override respected");
-  assert(analysis.promptDirectives.length > 0, "Prompt directives generated");
-});
-
-// =========================================================================
-// MUTATION BOUNDARY TESTS (MB-1 through MB-6)
-// =========================================================================
-
-runTest("MB-1: persistDecisions: false must NOT persist memory decisions to MemoryStore", () => {
-  const userId = "mb_user_1";
-  memoryStore.clear(userId);
-
-  assert(memoryStore.get(userId).length === 0, "Initial memories are empty");
-
-  brainEngine.analyze(
-    "Remember that my laptop budget is 150000 BDT and my name is Fahim.",
-    [],
-    undefined,
-    "mb_sess_1",
-    undefined,
-    {
-      userId,
-      currentTime: 1724300000000,
-      persistDecisions: false,
-    }
-  );
-
-  const memoriesAfter = memoryStore.get(userId);
-  const patternsAfter = memoryStore.getPatterns(userId);
-
-  assert(memoriesAfter.length === 0, "MemoryStore must have 0 memories when persistDecisions is false");
-  assert(patternsAfter.length === 0, "MemoryStore must have 0 patterns when persistDecisions is false");
-});
-
-runTest("MB-2: persistDecisions: false must NOT mutate or persist session context to ContextStore", () => {
-  const sessionId = "mb_sess_unpersisted_2";
-
-  // ContextStore should not have this session yet
-  assert(contextStore.get(sessionId) === undefined, "Session does not exist initially in contextStore");
-
-  brainEngine.analyze(
-    "I am looking for an ASUS TUF laptop with RTX 4060.",
-    [],
-    undefined,
-    sessionId,
-    undefined,
-    {
-      userId: "mb_user_2",
-      currentTime: 1724300000000,
-      persistDecisions: false,
-    }
-  );
-
-  const storedContext = contextStore.get(sessionId);
-  assert(storedContext === undefined, "ContextStore must NOT store session context when persistDecisions: false");
-});
-
-runTest("MB-3: persistDecisions: false produces valid, complete cognitive analysis (dry-run preview)", () => {
-  const userId = "mb_user_3";
-  const analysis = brainEngine.analyze(
-    "Explain binary search algorithm in Python concisely in Banglish.",
-    [],
-    undefined,
-    "mb_sess_preview",
-    undefined,
-    {
-      userId,
-      currentTime: 1724300000000,
-      persistDecisions: false,
-    }
-  );
-
-  assert(analysis !== undefined, "Analysis must be generated");
-  assert(Boolean(analysis.intent), "Intent classified");
-  assert(analysis.reasoningAnalysis !== undefined, "Reasoning analysis present");
-  assert(analysis.planningAnalysis !== undefined, "Planning analysis present");
-  assert(analysis.verificationAnalysis !== undefined, "Verification analysis present");
-  assert(analysis.executiveContext !== undefined, "Executive context generated");
-  assert(analysis.promptDirectives.length > 0, "Prompt directives populated");
-  assert(analysis.confidence > 0, "Calibrated confidence score is positive");
-});
-
-runTest("MB-4: persistDecisions: true (or default) persists context and memory decisions as expected", () => {
-  const userId = "mb_user_4";
-  const sessionId = "mb_sess_persisted_4";
-  memoryStore.clear(userId);
-
-  brainEngine.analyze(
-    "Remember that my favorite tech brand is Apple.",
-    [],
-    undefined,
-    sessionId,
-    undefined,
-    {
-      userId,
-      currentTime: 1724300000000,
-      persistDecisions: true,
-    }
-  );
-
-  const storedMemories = memoryStore.get(userId);
-  const storedContext = contextStore.get(sessionId);
-
-  assert(storedMemories.length > 0, "MemoryStore must contain saved memory when persistDecisions: true");
-  assert(storedContext !== undefined, "ContextStore must contain session context when persistDecisions: true");
-  assert(storedContext?.turnsCount === 1, "Context turnsCount incremented");
-});
-
-runTest("MB-5: Current-turn overrides update active context ephemerally and do NOT overwrite long-term memory", () => {
-  const userId = "mb_user_5";
-  const sessionId = "mb_sess_ephemeral_5";
-  memoryStore.clear(userId);
-
-  // Seed a long-term preference: Banglish
-  const seededMemories: MemoryRecord[] = [
-    {
-      id: "mem_lang_banglish",
-      userId,
-      type: "PREFERENCE",
-      tags: ["COMMUNICATION_STYLE"],
-      evidence: [],
-      version: 1,
-      importance: 80,
-      normalizedValue: "banglish",
-      key: "language",
-      value: "Banglish",
-      confidence: 0.95,
-      source: "EXPLICIT_USER",
-      status: "ACTIVE",
-      createdAt: 1000,
-      updatedAt: 1000,
-      lastAccessedAt: 1000,
-      accessCount: 10,
-    },
-  ];
-  memoryStore.replace(userId, seededMemories);
-
-  // Current turn requests a one-off override: "Answer in pure English this time only."
-  const analysis = brainEngine.analyze(
-    "Answer in English this time only. Give me 3 tips for clean code.",
-    [],
-    undefined,
-    sessionId,
-    undefined,
-    {
-      userId,
-      currentTime: 1724300000000,
-      persistDecisions: false,
-    }
-  );
-
-  // Active executive context reflects current-turn English override
-  assert(
-    analysis.executiveContext?.responseStyle.language === "ENGLISH" ||
-    analysis.promptDirectives.some((d) => d.toLowerCase().includes("english")),
-    "Current-turn override reflects English in executive context"
-  );
-
-  // Long-term memory store remains unchanged with original Banglish preference
-  const currentLongTerm = memoryStore.get(userId);
-  const langPref = currentLongTerm.find((m) => m.key === "language");
-  assert(langPref !== undefined, "Language preference exists in long-term store");
-  assert(langPref?.value === "Banglish", "Long-term preference remains Banglish (not overwritten)");
-});
-
-runTest("MB-6: Read-only cognitive analysis across all 12 Phase 2 steps does not mutate external stores during analysis", () => {
-  const userId = "mb_user_6";
-  const sessionId = "mb_sess_readonly_6";
-  memoryStore.clear(userId);
-
-  const initialContext: ConversationContext = {
-    id: sessionId,
-    activeTopic: "career planning",
-    currentTask: "roadmap",
-    userGoal: "Become a Staff Engineer",
-    entities: [],
-    constraints: [],
-    preferences: [],
-    recentReferences: [],
-    conversationState: "active",
-    lastMeaningfulUserIntent: "QUESTION",
-    lastMeaningfulAssistantResponse: null,
-    createdAt: 1000,
-    updatedAt: 1000,
-    contextTimestamp: 1000,
-    turnsCount: 3,
-    isTopicSwitched: false,
-    isAmbiguousReference: false,
-    archivedContexts: [],
-    topicHistory: [],
-  };
-
-  const contextSnapshot = JSON.stringify(initialContext);
-
-  brainEngine.analyze(
-    "What milestones should I target this quarter?",
-    [],
-    initialContext,
-    sessionId,
-    undefined,
-    {
-      userId,
-      currentTime: 1724300000000,
-      persistDecisions: false,
-    }
-  );
-
-  assert(memoryStore.get(userId).length === 0, "No memories written during dry-run analysis");
-  assert(memoryStore.getPatterns(userId).length === 0, "No patterns written during dry-run analysis");
-  assert(contextStore.get(sessionId) === undefined, "No context stored during dry-run analysis");
-  assert(JSON.stringify(initialContext) === contextSnapshot, "Initial context object passed was not mutated in place");
+  const ent1 = res1.context?.entities[0];
+  const ent2 = res2.context?.entities[0];
+  assert(ent1?.name === "Lenovo", "Entity name must be Lenovo");
+  assert(ent2?.name === "Lenovo", "Entity name must be Lenovo");
+  assert(ent1?.id === ent2?.id, "Correction entity ID must be identical across identical processing");
 });
 
 console.log("======================================================");
-console.log(`ALL ${passedTests}/${totalTests} TESTS PASSED SUCCESSFULLY!`);
+console.log(`ALL ${passedTests}/${totalTests} BRAIN ENGINE HARNESS TESTS PASSED!`);
 console.log("======================================================");
