@@ -90,6 +90,8 @@ import { executiveContextEngine } from "./executiveContextEngine";
 import { ExecutiveContextPackage } from "./executiveContextTypes";
 import { deepReasoningEngine } from "./deepReasoningEngine";
 import { DeepReasoningAnalysis } from "./deepReasoningTypes";
+import { contradictionResolutionEngine } from "./contradictionResolutionEngine";
+import { ContradictionResolutionAnalysis } from "./contradictionResolutionTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -111,6 +113,8 @@ export * from "./executiveContextTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./deepReasoningTypes";
+export * from "./contradictionResolutionTypes";
+export type { ContradictionSeverity } from "./contradictionResolutionTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -127,6 +131,7 @@ export { goalProjectEngine } from "./goalProjectEngine";
 export { contextContinuityEngine } from "./contextContinuityEngine";
 export { executiveContextEngine } from "./executiveContextEngine";
 export { deepReasoningEngine } from "./deepReasoningEngine";
+export { contradictionResolutionEngine } from "./contradictionResolutionEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { memoryStore } from "./memoryStore";
@@ -165,6 +170,7 @@ export interface BrainAnalysis {
   responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
   executiveContext?: ExecutiveContextPackage;
   deepReasoningAnalysis?: DeepReasoningAnalysis;
+  contradictionResolutionAnalysis?: ContradictionResolutionAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -756,6 +762,41 @@ export class BrainEngine {
       }
     }
 
+    // Step 14 — Contradiction Resolution & Belief Revision Engine
+    // Deterministically evaluates authorized evidence, detected conflicts, and DeepReasoning outputs
+    // to resolve conflicts, determine belief revision decisions, and issue sanitized directives.
+    const contradictionResolutionAnalysis = contradictionResolutionEngine.evaluate({
+      userId,
+      message: trimmed,
+      history: recentHistory,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      userModel: longTermUserModelAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      executiveContext,
+      deepReasoning: deepReasoningAnalysis,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context?.activeTopic,
+      },
+    });
+
+    // Add sanitized directives from Contradiction Resolution Engine
+    for (const d of contradictionResolutionAnalysis.activeDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -778,6 +819,7 @@ export class BrainEngine {
       responseAdaptationAnalysis,
       executiveContext,
       deepReasoningAnalysis,
+      contradictionResolutionAnalysis,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,

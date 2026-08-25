@@ -14,6 +14,7 @@ import {
   Radio,
   Tv,
   Settings,
+  History,
 } from "lucide-react";
 import {
   ChatMessage,
@@ -37,6 +38,7 @@ import { VoiceModeView } from "./components/VoiceModeView";
 import { VoiceSettingsModal } from "./components/VoiceSettingsModal";
 import { ConversationMemoryModal } from "./components/ConversationMemoryModal";
 import { SkillsModal } from "./components/SkillsModal";
+import { ConversationHistoryPanel } from "./components/ConversationHistoryPanel";
 
 const SESSIONS_STORAGE_KEY = "dora_conversations_v1";
 const ACTIVE_SESSION_KEY = "dora_active_session_id";
@@ -88,6 +90,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isMemoryOpen, setIsMemoryOpen] = useState<boolean>(false);
   const [isSkillsOpen, setIsSkillsOpen] = useState<boolean>(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [showTranscriptOverlay, setShowTranscriptOverlay] = useState<boolean>(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState<boolean>(false);
@@ -1199,6 +1202,17 @@ export default function App() {
     });
   };
 
+  // Toggle pin status for a session
+  const handleTogglePinSession = (sessionId: string) => {
+    setSessions((prev) => {
+      const updated = prev.map((s) =>
+        s.id === sessionId ? { ...s, isPinned: !s.isPinned } : s
+      );
+      localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   return (
     <div
       id="dora-app-root"
@@ -1212,7 +1226,7 @@ export default function App() {
         <div className="absolute -bottom-36 left-1/2 -translate-x-1/2 w-[720px] sm:w-[900px] h-[360px] sm:h-[420px] bg-[#1A56DB]/[0.22] rounded-full blur-[120px]" />
       </div>
 
-      {/* Left Modern AI Sidebar (Desktop & Mobile Drawer) */}
+      {/* Left Modern AI Sidebar (Clean Navigation Only) */}
       <Sidebar
         isMobileOpen={isMobileDrawerOpen}
         onMobileClose={() => setIsMobileDrawerOpen(false)}
@@ -1226,12 +1240,6 @@ export default function App() {
         onOpenMemory={() => setIsMemoryOpen(true)}
         onOpenSkills={() => setIsSkillsOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        messages={messages}
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        onSelectSession={handleSelectSession}
-        onDeleteSession={handleDeleteSession}
-        onRenameSession={handleRenameSession}
       />
 
       {/* Main Content Workspace */}
@@ -1392,6 +1400,21 @@ export default function App() {
                     <span className="hidden sm:inline">Vision Active</span>
                   </button>
                 )}
+
+                {/* Conversation History Icon Button */}
+                <button
+                  id="btn-chat-history"
+                  type="button"
+                  onClick={() => setIsHistoryOpen(true)}
+                  title="Conversation history"
+                  aria-label="Conversation history"
+                  className="p-2 sm:p-2.5 rounded-full text-white/70 hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all flex items-center justify-center relative"
+                >
+                  <History className="w-5 h-5" />
+                  {sessions.length > 0 && (
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#38BDF8]" />
+                  )}
+                </button>
               </div>
             </header>
 
@@ -1561,6 +1584,18 @@ export default function App() {
       <SkillsModal
         isOpen={isSkillsOpen}
         onClose={() => setIsSkillsOpen(false)}
+      />
+
+      <ConversationHistoryPanel
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleNewChat}
+        onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
+        onTogglePinSession={handleTogglePinSession}
       />
     </div>
   );

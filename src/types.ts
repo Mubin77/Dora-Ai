@@ -40,6 +40,7 @@ export interface ConversationSession {
   updatedAt: number;
   messages: ChatMessage[];
   hasVoice?: boolean;
+  isPinned?: boolean;
 }
 
 export interface VoiceSettings {
