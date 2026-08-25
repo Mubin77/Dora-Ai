@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Menu,
   ChevronDown,
+  ChevronLeft,
   Check,
   AlertCircle,
   X,
@@ -28,6 +29,7 @@ import { AudioEngine, playNaturalBrowserSpeech } from "./utils/audioUtils";
 import { SpeechRecognizer } from "./utils/speechRecognizer";
 import { memoryManager } from "./memory/MemoryManager";
 import { screenVisionService } from "./services/screenVisionService";
+import { cameraVisionService } from "./services/cameraVisionService";
 
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
@@ -42,8 +44,9 @@ const ACTIVE_SESSION_KEY = "dora_active_session_id";
 export default function App() {
   // -------------------------------------------------------------
   // Interaction Mode ("chat" | "voice") & Unified Conversation State
+  // Default is VOICE-FIRST (Immersive Voice is the default home screen)
   // -------------------------------------------------------------
-  const [activeMode, setActiveMode] = useState<"chat" | "voice">("chat");
+  const [activeMode, setActiveMode] = useState<"chat" | "voice">("voice");
   const [isCallActive, setIsCallActive] = useState<boolean>(false);
   const [state, setState] = useState<ConversationState>("idle");
   const [emotion, setEmotion] = useState<DoraEmotion>("warm");
@@ -52,6 +55,8 @@ export default function App() {
   const [callDuration, setCallDuration] = useState<number>(0);
   const [currentSpokenText, setCurrentSpokenText] = useState<string>("");
   const [isScreenVisionActive, setIsScreenVisionActive] = useState<boolean>(false);
+  const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
 
   // Sessions and Active Conversation Messages
   const [sessions, setSessions] = useState<ConversationSession[]>(() => {
@@ -88,9 +93,52 @@ export default function App() {
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState<boolean>(false);
   const [screenSharingNotice, setScreenSharingNotice] = useState<string | null>(null);
 
-  // Model Selector Dropdown State
-  const [selectedModel, setSelectedModel] = useState<string>("Dora Flash");
+  // Model Selector Dropdown State (Defaults to Dora Live for voice-first experience)
+  const [selectedModel, setSelectedModel] = useState<string>("Dora Live");
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState<boolean>(false);
+
+  // Safe navigation helpers between Immersive Voice (home) and Chat
+  const navigateToChat = useCallback(() => {
+    setActiveMode("chat");
+    setSelectedModel("Dora Flash");
+    if (typeof window !== "undefined" && window.history.state?.doraMode !== "chat") {
+      window.history.pushState({ doraMode: "chat" }, "");
+    }
+  }, []);
+
+  const navigateToVoice = useCallback(() => {
+    setActiveMode("voice");
+    setSelectedModel("Dora Live");
+    if (typeof window !== "undefined") {
+      if (window.history.state?.doraMode === "chat") {
+        window.history.back();
+      } else {
+        window.history.replaceState({ doraMode: "voice" }, "");
+      }
+    }
+  }, []);
+
+  // Sync browser popstate so hardware/browser back buttons return from Chat to Immersive Voice safely
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (!window.history.state || window.history.state.doraMode !== "voice") {
+        window.history.replaceState({ doraMode: "voice" }, "");
+      }
+
+      const handlePopState = (e: PopStateEvent) => {
+        if (e.state?.doraMode === "chat") {
+          setActiveMode("chat");
+          setSelectedModel("Dora Flash");
+        } else {
+          setActiveMode("voice");
+          setSelectedModel("Dora Live");
+        }
+      };
+
+      window.addEventListener("popstate", handlePopState);
+      return () => window.removeEventListener("popstate", handlePopState);
+    }
+  }, []);
 
   // Action Menu, Deep Think Mode & Pending Attachment State
   const [isActionMenuOpen, setIsActionMenuOpen] = useState<boolean>(false);
@@ -858,14 +906,13 @@ export default function App() {
 
   // Switch between Chat and Voice mode views seamlessly
   const handleSwitchMode = (mode: "chat" | "voice") => {
-    setActiveMode(mode);
     if (mode === "voice") {
-      setSelectedModel("Dora Live");
+      navigateToVoice();
       if (!isCallActive) {
         handleToggleCall();
       }
     } else {
-      setSelectedModel("Dora Flash");
+      navigateToChat();
     }
   };
 
@@ -981,6 +1028,68 @@ export default function App() {
     e.target.value = "";
   };
 
+  const handleToggleCamera = async () => {
+    if (isCameraActive) {
+      cameraVisionService.stopCamera();
+      setIsCameraActive(false);
+      setCameraStream(null);
+      doraService.clearCameraFrame();
+    } else {
+      setScreenSharingNotice(null);
+      if (!cameraVisionService.isSupported()) {
+        setScreenSharingNotice("Camera is not supported on this browser/device.");
+        setTimeout(() => setScreenSharingNotice(null), 4000);
+        return;
+      }
+      try {
+        const success = await cameraVisionService.startCamera({
+          onFrame: (base64Jpeg) => {
+            doraService.sendCameraFrame(base64Jpeg);
+          },
+          onStarted: (stream) => {
+            setIsCameraActive(true);
+            setCameraStream(stream);
+            setScreenSharingNotice(null);
+          },
+          onStopped: () => {
+            setIsCameraActive(false);
+            setCameraStream(null);
+            doraService.clearCameraFrame();
+          },
+          onError: (err: any) => {
+            console.warn("[Camera Vision] Error:", err);
+            setIsCameraActive(false);
+            setCameraStream(null);
+            doraService.clearCameraFrame();
+            setScreenSharingNotice(
+              err?.isPermissionDenied || err?.message?.toLowerCase().includes("denied")
+                ? "Camera permission was denied. Please allow camera access to use live vision."
+                : err?.message || "Camera unavailable on this device."
+            );
+            setTimeout(() => setScreenSharingNotice(null), 5000);
+          },
+        });
+
+        if (success) {
+          setIsCameraActive(true);
+          setCameraStream(cameraVisionService.getStream());
+        }
+      } catch (err: any) {
+        console.warn("[Camera Vision] Initialization error:", err);
+        setIsCameraActive(false);
+        setCameraStream(null);
+        setScreenSharingNotice("Camera error. Please verify device permissions.");
+        setTimeout(() => setScreenSharingNotice(null), 4000);
+      }
+    }
+  };
+
+  const handleSwitchCameraFacing = async () => {
+    if (!isCameraActive) return;
+    await cameraVisionService.switchCamera();
+    setCameraStream(cameraVisionService.getStream());
+  };
+
   const handleToggleScreenVision = async () => {
     if (isScreenVisionActive) {
       screenVisionService.stopCapture();
@@ -1051,13 +1160,11 @@ export default function App() {
     setInputText("");
     currentUserVoiceMessageIdRef.current = null;
     currentDoraMessageIdRef.current = null;
-    setActiveMode("chat");
-    setSelectedModel("Dora Flash");
+    navigateToChat();
   };
 
   // Switch to a previous saved session
   const handleSelectSession = (sessionId: string) => {
-    if (sessionId === activeSessionId) return;
     const session = sessions.find((s) => s.id === sessionId);
     if (session) {
       setActiveSessionId(session.id);
@@ -1066,6 +1173,7 @@ export default function App() {
       setPendingAttachment(null);
       setInputText("");
     }
+    navigateToChat();
   };
 
   // Delete a session
@@ -1076,6 +1184,19 @@ export default function App() {
     if (sessionId === activeSessionId) {
       handleNewChat();
     }
+  };
+
+  // Rename a session title
+  const handleRenameSession = (sessionId: string, newTitle: string) => {
+    if (!newTitle.trim()) return;
+    const cleanTitle = newTitle.trim();
+    setSessions((prev) => {
+      const updated = prev.map((s) =>
+        s.id === sessionId ? { ...s, title: cleanTitle, updatedAt: Date.now() } : s
+      );
+      localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    });
   };
 
   return (
@@ -1098,6 +1219,9 @@ export default function App() {
         isDesktopCollapsed={isDesktopSidebarCollapsed}
         onToggleDesktopCollapse={() => setIsDesktopSidebarCollapsed((prev) => !prev)}
         userName={userName}
+        activeMode={activeMode}
+        onOpenChat={navigateToChat}
+        onOpenVoice={navigateToVoice}
         onNewChat={handleNewChat}
         onOpenMemory={() => setIsMemoryOpen(true)}
         onOpenSkills={() => setIsSkillsOpen(true)}
@@ -1107,6 +1231,7 @@ export default function App() {
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
       />
 
       {/* Main Content Workspace */}
@@ -1117,15 +1242,25 @@ export default function App() {
             emotion={emotion}
             volumeLevel={volumeLevel}
             isMuted={isMuted}
+            isCallActive={isCallActive}
             callDuration={callDuration}
             currentSpokenText={currentSpokenText}
             messages={messages}
             userName={userName}
             isScreenVisionActive={isScreenVisionActive}
             screenSharingNotice={screenSharingNotice}
+            isCameraActive={isCameraActive}
+            cameraStream={cameraStream}
+            onToggleCamera={handleToggleCamera}
+            onSwitchCameraFacing={handleSwitchCameraFacing}
             onDismissScreenNotice={() => setScreenSharingNotice(null)}
             onToggleScreenVision={handleToggleScreenVision}
             onToggleMute={() => {
+              if (!isCallActive) {
+                // If call is not active, user tapping mic starts the session
+                handleToggleCall();
+                return;
+              }
               setIsMuted((prev) => {
                 const next = !prev;
                 if (next) {
@@ -1138,12 +1273,8 @@ export default function App() {
                 return next;
               });
             }}
+            onToggleCall={handleToggleCall}
             onInterrupt={interruptDora}
-            onEndVoice={() => {
-              if (isCallActive) handleToggleCall();
-              setActiveMode("chat");
-              setSelectedModel("Dora Flash");
-            }}
             onOpenSidebar={() => {
               if (window.innerWidth >= 1024) {
                 setIsDesktopSidebarCollapsed(false);
@@ -1152,25 +1283,20 @@ export default function App() {
             }}
             onOpenMemory={() => setIsMemoryOpen(true)}
             onOpenSettings={() => setIsSettingsOpen(true)}
-            onSwitchToChat={() => {
-              setActiveMode("chat");
-              setSelectedModel("Dora Flash");
-            }}
+            onSwitchToChat={navigateToChat}
             onSendTextMessage={(text) => handleSendMessage(text)}
-            onSelectCamera={handleSelectCamera}
-            onSelectPhotos={handleSelectPhotos}
           />
         ) : (
           <>
             {/* ============================================================ */}
-            {/* TOP BAR (Header matching Immersive Voice style)             */}
+            {/* TOP BAR (Header with navigation & Model dropdown)           */}
             {/* ============================================================ */}
             <header
               id="dora-top-bar"
-              className="w-full px-5 sm:px-8 pt-5 pb-3 flex items-center justify-between z-30 shrink-0 border-b border-white/[0.04]"
+              className="w-full px-4 sm:px-8 pt-5 pb-3 flex items-center justify-between z-30 shrink-0 border-b border-white/[0.04]"
             >
-              {/* Left: Hamburger Menu & Model Dropdown */}
-              <div className="flex items-center gap-3">
+              {/* Left: Navigation Actions & Model Dropdown */}
+              <div className="flex items-center gap-2 sm:gap-3">
                 <button
                   id="btn-mobile-menu"
                   type="button"
@@ -1188,6 +1314,18 @@ export default function App() {
                     <span className="w-5 h-0.5 bg-white/90 rounded-full" />
                     <span className="w-3.5 h-0.5 bg-white/90 rounded-full" />
                   </div>
+                </button>
+
+                {/* Back to Immersive Voice Home Button */}
+                <button
+                  id="btn-back-to-voice"
+                  type="button"
+                  onClick={navigateToVoice}
+                  title="Back to Immersive Voice"
+                  aria-label="Back to Immersive Voice"
+                  className="p-2 rounded-full text-white/70 hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all flex items-center justify-center shrink-0"
+                >
+                  <ChevronLeft className="w-5 h-5" />
                 </button>
 
                 {/* Model Dropdown Trigger */}
@@ -1209,8 +1347,7 @@ export default function App() {
                     >
                       <button
                         onClick={() => {
-                          setSelectedModel("Dora Flash");
-                          setActiveMode("chat");
+                          navigateToChat();
                           setIsModelDropdownOpen(false);
                         }}
                         className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left transition-colors ${
@@ -1225,7 +1362,8 @@ export default function App() {
 
                       <button
                         onClick={() => {
-                          handleSwitchMode("voice");
+                          navigateToVoice();
+                          if (!isCallActive) handleToggleCall();
                           setIsModelDropdownOpen(false);
                         }}
                         className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left transition-colors ${

@@ -77,6 +77,7 @@ async function startServer() {
         history = [],
         language = "auto",
         memoryContext = "",
+        cameraFrame = null,
         screenFrame = null,
         imageAttachment = null,
         deepThink = false,
@@ -103,7 +104,7 @@ async function startServer() {
         }
       }
 
-      // Current user turn with optional image/screen attachment
+      // Current user turn with optional camera/screen/image attachment
       const currentMsg: AIMessage = {
         role: "user",
         content: message,
@@ -113,6 +114,11 @@ async function startServer() {
         currentMsg.image = {
           mimeType: "image/jpeg",
           base64Data: imageAttachment,
+        };
+      } else if (cameraFrame && typeof cameraFrame === "string") {
+        currentMsg.image = {
+          mimeType: "image/jpeg",
+          base64Data: cameraFrame,
         };
       } else if (screenFrame && typeof screenFrame === "string") {
         currentMsg.image = {
@@ -673,6 +679,7 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
     let liveSession: any = null;
     let isConnecting = false;
     let activeScreenFrame: string | null = null;
+    let activeCameraFrame: string | null = null;
 
     async function initLiveSession(voiceName = "Aoede", memoryContext = "", historyContext = "") {
       if (liveSession) {
@@ -830,6 +837,19 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
         if (data.type === "start_session") {
           console.log("[VOICE DEBUG] Received start_session from frontend client");
           await initLiveSession(data.voiceName || "Aoede", data.memoryContext || "", data.historyContext || "");
+        } else if (data.type === "camera_frame" && data.frame) {
+          activeCameraFrame = data.frame;
+          if (liveSession) {
+            try {
+              liveSession.sendRealtimeInput({
+                video: { data: data.frame, mimeType: "image/jpeg" },
+              });
+            } catch (err: any) {
+              console.warn("[Live Camera] Live API media stream frame error:", err?.message);
+            }
+          }
+        } else if (data.type === "camera_stop") {
+          activeCameraFrame = null;
         } else if (data.type === "screen_frame" && data.frame) {
           activeScreenFrame = data.frame;
           if (liveSession) {
@@ -865,11 +885,12 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
             }
 
             const userParts: any[] = [{ text: processedText }];
-            if (activeScreenFrame) {
+            const activeVisual = activeCameraFrame || activeScreenFrame;
+            if (activeVisual) {
               userParts.push({
                 inlineData: {
                   mimeType: "image/jpeg",
-                  data: activeScreenFrame,
+                  data: activeVisual,
                 },
               });
             }

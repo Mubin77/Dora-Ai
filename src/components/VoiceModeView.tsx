@@ -5,45 +5,48 @@ import {
   MicOff,
   Tv,
   Camera,
+  Keyboard,
   Share2,
   Copy,
   ThumbsUp,
   ThumbsDown,
   MoreHorizontal,
-  Brain,
-  Settings,
-  MessageSquare,
   Sparkles,
   Send,
-  Radio,
   Check,
+  SwitchCamera,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChatMessage, ConversationState, DoraEmotion } from "../types";
 
-interface VoiceModeViewProps {
+export interface VoiceModeViewProps {
   state: ConversationState;
   emotion: DoraEmotion;
   volumeLevel: number;
   isMuted: boolean;
+  isCallActive: boolean;
   callDuration: number;
   currentSpokenText: string;
   messages: ChatMessage[];
   userName: string;
   isScreenVisionActive: boolean;
   screenSharingNotice: string | null;
+  isCameraActive: boolean;
+  cameraStream: MediaStream | null;
+  onToggleCamera: () => void;
+  onSwitchCameraFacing?: () => void;
   onDismissScreenNotice: () => void;
   onToggleScreenVision: () => void;
   onToggleMute: () => void;
+  onToggleCall: () => void;
   onInterrupt: () => void;
-  onEndVoice: () => void;
   onOpenSidebar: () => void;
   onOpenMemory: () => void;
   onOpenSettings: () => void;
   onSwitchToChat: () => void;
   onSendTextMessage: (text: string) => void;
-  onSelectCamera: () => void;
-  onSelectPhotos: () => void;
 }
 
 export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
@@ -51,32 +54,53 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
   emotion,
   volumeLevel,
   isMuted,
+  isCallActive,
   callDuration,
   currentSpokenText,
   messages,
   userName,
   isScreenVisionActive,
   screenSharingNotice,
+  isCameraActive,
+  cameraStream,
+  onToggleCamera,
+  onSwitchCameraFacing,
   onDismissScreenNotice,
   onToggleScreenVision,
   onToggleMute,
+  onToggleCall,
   onInterrupt,
-  onEndVoice,
   onOpenSidebar,
   onOpenMemory,
   onOpenSettings,
   onSwitchToChat,
   onSendTextMessage,
-  onSelectCamera,
-  onSelectPhotos,
 }) => {
   const [isTextInputOpen, setIsTextInputOpen] = useState(false);
   const [textInput, setTextInput] = useState("");
-  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
   const [isOptionsMenuOpen, setIsOptionsMenuOpen] = useState(false);
+  const [isCameraExpanded, setIsCameraExpanded] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
   const contentEndRef = useRef<HTMLDivElement>(null);
+  const videoPreviewRef = useRef<HTMLVideoElement>(null);
+
+  // Reset expanded state if camera is stopped
+  useEffect(() => {
+    if (!isCameraActive) {
+      setIsCameraExpanded(false);
+    }
+  }, [isCameraActive]);
+
+  // Attach camera stream to live video preview element
+  useEffect(() => {
+    if (videoPreviewRef.current && cameraStream) {
+      videoPreviewRef.current.srcObject = cameraStream;
+      videoPreviewRef.current.play().catch((e) => {
+        console.log("[CameraPreview] Autoplay suppressed, retrying on user interaction:", e);
+      });
+    }
+  }, [cameraStream, isCameraActive, isCameraExpanded]);
 
   // Identify the latest user voice turn & latest Dora response
   const latestUserVoiceMsg = [...messages]
@@ -117,10 +141,10 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
   };
 
   const isSpeaking = state === "speaking";
-  const isListening = state === "listening" && !isMuted;
+  const isListening = isCallActive && state === "listening" && !isMuted;
   const isThinking = state === "thinking";
 
-  // Active streaming display text logic
+  // Active streaming display text logic:
   // Priority: 1. Current real-time spoken streaming text
   //           2. If speaking without active subtitle: latest Dora message
   //           3. If user speaking: live user transcript
@@ -134,7 +158,7 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
       id="dora-voice-mode-root"
       className="fixed inset-0 z-30 flex flex-col justify-between bg-black text-[#E3E3E3] font-sans select-none overflow-hidden"
     >
-      {/* Background Cinematic Deep-Blue Ambient Bottom Glow (70-80% AMOLED Black / 20-30% Visible Ambient Glow) */}
+      {/* Background Cinematic Deep-Blue Ambient Bottom Glow */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
         {/* Deep navy base layer for smooth falloff into AMOLED black */}
         <div className="absolute -bottom-48 left-1/2 -translate-x-1/2 w-[900px] sm:w-[1200px] h-[450px] sm:h-[520px] bg-[#0E358A]/[0.28] rounded-full blur-[160px]" />
@@ -143,13 +167,13 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
       </div>
 
       {/* ============================================================ */}
-      {/* TOP BAR: Clean, Minimal, Spacious                            */}
+      {/* TOP BAR: Clean, Minimal, Spacious (NO DORA LIVE LABEL)        */}
       {/* ============================================================ */}
       <header
         id="dora-voice-topbar"
         className="relative z-20 w-full px-5 sm:px-8 pt-6 pb-4 flex items-center justify-between"
       >
-        {/* Left: Minimal Hamburger Icon */}
+        {/* Left: Minimal Hamburger Icon Button */}
         <div className="flex items-center gap-3">
           <button
             id="btn-voice-menu"
@@ -163,29 +187,36 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
               <span className="w-3.5 h-0.5 bg-white/90 rounded-full" />
             </div>
           </button>
-
-          {/* Model Title Indicator */}
-          <button
-            onClick={onSwitchToChat}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:bg-white/[0.06] text-white/90 hover:text-white text-base font-medium tracking-tight transition-colors"
-          >
-            <span>Dora Live</span>
-            <span className="text-white/40 text-xs">▾</span>
-          </button>
         </div>
 
-        {/* Right: Clean minimal space */}
-        <div className="flex items-center gap-2" />
+        {/* Right: Active Vision Status Pill if Camera or Screen Active */}
+        <div className="flex items-center gap-2">
+          {isCameraActive && (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1D72FE]/20 border border-[#1D72FE]/40 text-[#38BDF8] text-xs font-medium backdrop-blur-md animate-fade-in">
+              <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-pulse" />
+              <span>Camera Active</span>
+            </div>
+          )}
+          {isScreenVisionActive && (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-medium backdrop-blur-md animate-fade-in">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Screen Sharing</span>
+            </div>
+          )}
+        </div>
       </header>
 
-      {/* Screen Sharing Error Notice Toast */}
+      {/* Screen Sharing / Camera Error Notice Toast */}
       {screenSharingNotice && (
-        <div className="relative z-30 mx-auto px-4 py-2 rounded-full bg-[#1E1F22] border border-white/10 flex items-center gap-2.5 text-sm text-white/90 shadow-2xl backdrop-blur-md animate-fade-in">
-          <Sparkles className="w-4 h-4 text-[#38BDF8]" />
-          <span>{screenSharingNotice}</span>
+        <div
+          id="voice-screen-sharing-notice"
+          className="relative z-30 mx-auto px-4 py-2 rounded-full bg-[#1E1F22] border border-white/10 flex items-center gap-2.5 text-sm text-white/90 shadow-2xl backdrop-blur-md animate-fade-in max-w-md"
+        >
+          <Sparkles className="w-4 h-4 text-[#38BDF8] shrink-0" />
+          <span className="text-xs sm:text-sm">{screenSharingNotice}</span>
           <button
             onClick={onDismissScreenNotice}
-            className="ml-1 p-0.5 rounded-full text-white/50 hover:text-white"
+            className="ml-1 p-0.5 rounded-full text-white/50 hover:text-white shrink-0"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -193,17 +224,16 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
       )}
 
       {/* ============================================================ */}
-      {/* CENTER STAGE: Pure Clean Dialogue & Status (NO ORB, NO STAR) */}
-      {/* Focused on Large Live Text & Status Indicator                */}
+      {/* CENTER STAGE: Pure Clean Dialogue & Status                  */}
       {/* ============================================================ */}
       <main
         id="dora-voice-center-stage"
-        className="relative z-10 flex-1 flex flex-col justify-center px-6 sm:px-12 md:px-20 max-w-3xl mx-auto w-full overflow-y-auto custom-scrollbar my-auto py-8 text-center"
+        className="relative z-10 flex-1 flex flex-col justify-center px-4 sm:px-12 md:px-20 max-w-4xl mx-auto w-full overflow-y-auto custom-scrollbar my-auto py-4 sm:py-8 text-center"
         onClick={() => {
           if (isOptionsMenuOpen) setIsOptionsMenuOpen(false);
         }}
       >
-        {/* Prominent Voice State Label: Clearly visible and significantly larger */}
+        {/* Prominent Voice State Label: Clearly visible */}
         <div className="flex items-center justify-center gap-3 mb-6">
           <span
             className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
@@ -219,6 +249,8 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
                 ? "bg-[#1D72FE] shadow-[0_0_12px_#1D72FE] animate-pulse"
                 : isMuted
                 ? "bg-amber-400"
+                : isCallActive
+                ? "bg-[#1D72FE]"
                 : "bg-white/40"
             }`}
           />
@@ -235,7 +267,9 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
               ? "Listening..."
               : isMuted
               ? "Microphone Muted"
-              : "Dora Live"}
+              : isCallActive
+              ? "Listening..."
+              : "Tap microphone or voice button to talk"}
           </span>
         </div>
 
@@ -315,7 +349,7 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
       </main>
 
       {/* ============================================================ */}
-      {/* TEXT INPUT DRAWER (When user types in Voice Mode)            */}
+      {/* TEXT INPUT DRAWER (When Keyboard button is clicked)          */}
       {/* ============================================================ */}
       <AnimatePresence>
         {isTextInputOpen && (
@@ -357,21 +391,157 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
       </AnimatePresence>
 
       {/* ============================================================ */}
+      {/* FLOATING LIVE CAMERA PREVIEW (Compact WhatsApp-Style Widget) */}
+      {/* ============================================================ */}
+      <AnimatePresence>
+        {isCameraActive && !isCameraExpanded && (
+          <motion.div
+            key="camera-compact-preview"
+            initial={{ opacity: 0, scale: 0.8, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8, y: 15 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            onClick={() => setIsCameraExpanded(true)}
+            className="fixed bottom-24 sm:bottom-28 right-4 sm:right-6 md:right-8 z-30 w-[34vw] min-w-[125px] max-w-[155px] sm:w-44 md:w-52 aspect-[3/4] sm:aspect-[4/3] rounded-2xl overflow-hidden bg-[#121316] border border-white/20 hover:border-[#1D72FE]/70 shadow-[0_12px_36px_rgba(0,0,0,0.85),0_0_24px_rgba(29,114,254,0.18)] cursor-pointer group select-none backdrop-blur-md"
+            title="Tap to expand camera preview"
+          >
+            <video
+              ref={videoPreviewRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover rounded-2xl pointer-events-none"
+            />
+
+            {/* Subtle Gradient Shadow for Controls Legibility */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/40 pointer-events-none" />
+
+            {/* Top Bar on Compact View: Tiny LIVE badge & Flip camera button */}
+            <div className="absolute top-2 inset-x-2 flex items-center justify-between z-10">
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-black/65 backdrop-blur-md border border-white/10 text-[9px] font-medium text-white/90">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                <span>LIVE</span>
+              </div>
+
+              {onSwitchCameraFacing && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSwitchCameraFacing();
+                  }}
+                  title="Switch Front/Rear Camera"
+                  className="p-1 rounded-full bg-black/65 hover:bg-black/85 text-white/80 hover:text-white backdrop-blur-md border border-white/10 transition-colors"
+                >
+                  <SwitchCamera className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            {/* Bottom-right Expand Icon Badge on Hover/Touch */}
+            <div className="absolute bottom-2 right-2 p-1 rounded-full bg-black/65 backdrop-blur-md text-white/70 opacity-80 sm:opacity-0 group-hover:opacity-100 transition-opacity border border-white/10">
+              <Maximize2 className="w-3 h-3" />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ============================================================ */}
+      {/* EXPANDED CAMERA PREVIEW MODAL (When Tapped to Expand)         */}
+      {/* ============================================================ */}
+      <AnimatePresence>
+        {isCameraActive && isCameraExpanded && (
+          <>
+            {/* Dimmed Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => setIsCameraExpanded(false)}
+              className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm"
+            />
+
+            {/* Expanded Center Camera Modal */}
+            <motion.div
+              key="camera-expanded-modal"
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              transition={{ type: "spring", stiffness: 350, damping: 28 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[90vw] max-w-lg aspect-[4/3] sm:aspect-video rounded-3xl overflow-hidden bg-[#121316] border border-white/20 shadow-[0_24px_60px_rgba(0,0,0,0.95),0_0_30px_rgba(29,114,254,0.2)]"
+            >
+              <video
+                ref={videoPreviewRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+
+              {/* Gradient Overlay for Top Controls Legibility */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/40 pointer-events-none" />
+
+              {/* Top Bar on Expanded Camera View */}
+              <div className="absolute top-3 inset-x-3 flex items-center justify-between z-10">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/65 backdrop-blur-md border border-white/10 text-[11px] font-medium text-white/90">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  <span>LIVE CAMERA</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {onSwitchCameraFacing && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSwitchCameraFacing();
+                      }}
+                      title="Switch Front/Rear Camera"
+                      className="p-1.5 rounded-full bg-black/65 hover:bg-black/85 text-white/80 hover:text-white backdrop-blur-md border border-white/10 transition-colors"
+                    >
+                      <SwitchCamera className="w-4 h-4" />
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsCameraExpanded(false);
+                    }}
+                    title="Minimize to Floating View"
+                    className="p-1.5 rounded-full bg-black/65 hover:bg-black/85 text-white/80 hover:text-white backdrop-blur-md border border-white/10 transition-colors"
+                  >
+                    <Minimize2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ============================================================ */}
       {/* BOTTOM CONTROLS BAR (Compact on Mobile, Spacious on Desktop) */}
-      {/* 5 Elements: [Camera] [Share/Screen] [Voice Glow Pill] [Mic] [X] */}
+      {/* 5 Elements: [Camera] [Screen] [Voice Glow Pill] [Mic] [Keyboard] */}
       {/* ============================================================ */}
       <footer
         id="dora-voice-bottom-controls"
         className="relative z-20 w-full pb-6 sm:pb-12 pt-2 px-3 sm:px-5 flex items-center justify-center"
       >
         <div className="flex items-center justify-center gap-2.5 sm:gap-5 max-w-lg w-full">
-          {/* 1. Camera Control Button */}
+          {/* 1. Real Live Camera Button */}
           <button
             id="btn-voice-camera"
             type="button"
-            onClick={onSelectCamera}
-            title="Camera & Image Input"
-            className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center bg-[#18191E] hover:bg-[#23242B] active:bg-[#2C2D35] border border-white/[0.08] text-white/80 hover:text-white transition-all shadow-md shrink-0"
+            onClick={onToggleCamera}
+            title={isCameraActive ? "Turn Off Live Camera" : "Turn On Live Camera"}
+            className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center border transition-all shadow-md shrink-0 ${
+              isCameraActive
+                ? "bg-[#1D72FE]/25 border-[#1D72FE]/50 text-[#38BDF8] hover:bg-[#1D72FE]/35"
+                : "bg-[#18191E] hover:bg-[#23242B] active:bg-[#2C2D35] border-white/[0.08] text-white/80 hover:text-white"
+            }`}
           >
             <Camera className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
@@ -385,22 +555,24 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
             className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center border transition-all shadow-md shrink-0 ${
               isScreenVisionActive
                 ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/30"
-                : "bg-[#18191E] hover:bg-[#23242B] active:bg-[#2C2D35] border border-white/[0.08] text-white/80 hover:text-white"
+                : "bg-[#18191E] hover:bg-[#23242B] active:bg-[#2C2D35] border-white/[0.08] text-white/80 hover:text-white"
             }`}
           >
             <Tv className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
 
-          {/* 3. CENTER WIDE GLOWING PILL CONTROL */}
+          {/* 3. MAIN VOICE BUTTON: START/STOP DORA VOICE SESSION */}
           <div className="relative flex items-center justify-center shrink-0">
             <button
               id="btn-voice-center-pill"
               type="button"
-              onClick={isSpeaking ? onInterrupt : () => setIsTextInputOpen((prev) => !prev)}
+              onClick={isSpeaking ? onInterrupt : onToggleCall}
               title={
                 isSpeaking
                   ? "Tap to interrupt Dora"
-                  : "Tap to type a message or speak naturally"
+                  : isCallActive
+                  ? "Tap to stop voice session"
+                  : "Tap to start voice session"
               }
               className="w-28 sm:w-44 h-12 sm:h-16 rounded-full bg-[#141519] hover:bg-[#1A1B22] border border-white/[0.12] relative overflow-hidden flex items-center justify-center transition-all duration-300 shadow-xl group cursor-pointer"
             >
@@ -413,7 +585,9 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
                     ? "h-4/5 bg-gradient-to-t from-purple-500 via-[#1D72FE]/40 to-transparent opacity-80"
                     : isListening
                     ? "h-4/5 bg-gradient-to-t from-[#1D72FE] via-[#1D72FE]/30 to-transparent opacity-85"
-                    : "h-3/5 bg-gradient-to-t from-[#1D72FE]/60 via-[#1D72FE]/20 to-transparent opacity-60"
+                    : isCallActive
+                    ? "h-3/5 bg-gradient-to-t from-[#1D72FE]/80 via-[#1D72FE]/30 to-transparent opacity-75"
+                    : "h-2/5 bg-gradient-to-t from-[#1D72FE]/40 via-[#1D72FE]/10 to-transparent opacity-50"
                 }`}
               />
 
@@ -436,7 +610,7 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
                   </div>
                 ) : isThinking ? (
                   <div className="w-5 h-5 sm:w-6 sm:h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
+                ) : isCallActive ? (
                   <div className="flex items-center gap-1 sm:gap-1.5">
                     <span
                       className="w-1 sm:w-1.5 bg-white/90 rounded-full transition-all duration-75"
@@ -451,12 +625,18 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
                       style={{ height: Math.max(6, volumeLevel * 22) }}
                     />
                   </div>
+                ) : (
+                  <div className="flex items-center gap-1 sm:gap-1.5">
+                    <span className="w-1 sm:w-1.5 h-2 bg-white/50 rounded-full" />
+                    <span className="w-1 sm:w-1.5 h-3.5 bg-white/60 rounded-full" />
+                    <span className="w-1 sm:w-1.5 h-2 bg-white/50 rounded-full" />
+                  </div>
                 )}
               </div>
             </button>
           </div>
 
-          {/* 4. Microphone Mute / Unmute Control Button */}
+          {/* 4. Microphone Mute / Unmute Control Button (Mutes/Unmutes MIC ONLY) */}
           <button
             id="btn-voice-mic"
             type="button"
@@ -465,96 +645,28 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
             className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center border transition-all shadow-md shrink-0 ${
               isMuted
                 ? "bg-amber-500/20 border-amber-500/50 text-amber-300 hover:bg-amber-500/30"
-                : "bg-[#18191E] hover:bg-[#23242B] active:bg-[#2C2D35] border border-white/[0.08] text-white/80 hover:text-white"
+                : "bg-[#18191E] hover:bg-[#23242B] active:bg-[#2C2D35] border-white/[0.08] text-white/80 hover:text-white"
             }`}
           >
             {isMuted ? <MicOff className="w-5 h-5 sm:w-6 sm:h-6" /> : <Mic className="w-5 h-5 sm:w-6 sm:h-6" />}
           </button>
 
-          {/* 5. End / Close Voice Button (Returns cleanly to Chat View) */}
+          {/* 5. KEYBOARD BUTTON (Replaces old unused X button) */}
           <button
-            id="btn-voice-end"
+            id="btn-voice-keyboard"
             type="button"
-            onClick={onEndVoice}
-            title="Close Voice Mode & Return to Chat"
-            className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center bg-[#18191E] hover:bg-red-500/20 active:bg-red-500/30 border border-white/[0.08] text-white/80 hover:text-red-300 transition-all shadow-md shrink-0"
+            onClick={() => setIsTextInputOpen((prev) => !prev)}
+            title={isTextInputOpen ? "Close Keyboard" : "Open Keyboard to type with Dora"}
+            className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center border transition-all shadow-md shrink-0 ${
+              isTextInputOpen
+                ? "bg-white/20 border-white/40 text-white"
+                : "bg-[#18191E] hover:bg-[#23242B] active:bg-[#2C2D35] border-white/[0.08] text-white/80 hover:text-white"
+            }`}
           >
-            <X className="w-5 h-5 sm:w-6 sm:h-6" />
+            <Keyboard className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
         </div>
       </footer>
-
-      {/* ============================================================ */}
-      {/* SLIDE-OVER CONVERSATION HISTORY DRAWER (Inside Voice Mode)   */}
-      {/* ============================================================ */}
-      <AnimatePresence>
-        {isHistoryDrawerOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex justify-end"
-            onClick={() => setIsHistoryDrawerOpen(false)}
-          >
-            <motion.div
-              initial={{ x: "100%" }}
-              animate={{ x: 0 }}
-              exit={{ x: "100%" }}
-              transition={{ type: "spring", damping: 26, stiffness: 320 }}
-              className="w-full max-w-md h-full bg-[#18191E] border-l border-white/10 flex flex-col shadow-2xl p-5"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-4">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-[#38BDF8]" />
-                  <h3 className="text-base font-semibold text-white">Conversation History</h3>
-                </div>
-                <button
-                  onClick={() => setIsHistoryDrawerOpen(false)}
-                  className="p-2 rounded-full text-white/50 hover:text-white hover:bg-white/10"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar">
-                {messages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-48 text-center text-white/40 text-sm">
-                    <span>No messages yet in this conversation.</span>
-                  </div>
-                ) : (
-                  messages.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`flex flex-col ${
-                        m.sender === "user" ? "items-end" : "items-start"
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1 text-xs text-white/40">
-                        <span>{m.sender === "user" ? userName : "Dora"}</span>
-                        {m.inputMode === "voice" && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/20">
-                            Voice
-                          </span>
-                        )}
-                      </div>
-                      <div
-                        className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm sm:text-base leading-relaxed ${
-                          m.sender === "user"
-                            ? "bg-[#1D72FE]/25 border border-[#1D72FE]/40 text-white"
-                            : "bg-white/[0.05] border border-white/10 text-white/90"
-                        }`}
-                      >
-                        {m.text}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

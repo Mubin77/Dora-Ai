@@ -1,6 +1,6 @@
 {
   "name": "Dora - Real-Time Female Voice Assistant",
   "description": "An emotionally aware, natural, real-time human female conversational AI voice assistant with live speech, continuous voice interaction, and real-time screen vision.",
-  "requestFramePermissions": ["microphone"],
+  "requestFramePermissions": ["microphone", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

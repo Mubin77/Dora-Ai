@@ -39,6 +39,48 @@ export class DoraService {
   // Active turn latency tracking
   private activeMetrics: LatencyMetrics | null = null;
   private latestScreenFrame: string | null = null;
+  private latestCameraFrame: string | null = null;
+
+  /**
+   * Updates and transmits a real-time live camera frame for Dora's visual awareness
+   */
+  public sendCameraFrame(base64Jpeg: string) {
+    this.latestCameraFrame = base64Jpeg;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.isWsReady) {
+      try {
+        this.ws.send(
+          JSON.stringify({
+            type: "camera_frame",
+            frame: base64Jpeg,
+          })
+        );
+      } catch (err) {
+        console.warn("[Dora Live] Error sending camera frame:", err);
+      }
+    }
+  }
+
+  /**
+   * Clears the current camera frame when Live Camera is stopped
+   */
+  public clearCameraFrame() {
+    this.latestCameraFrame = null;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: "camera_stop" }));
+      } catch (err) {
+        console.warn("[Dora Live] Error sending camera stop:", err);
+      }
+    }
+  }
+
+  public getLatestCameraFrame(): string | null {
+    return this.latestCameraFrame;
+  }
+
+  public getLatestVisualFrame(): string | null {
+    return this.latestCameraFrame || this.latestScreenFrame;
+  }
 
   /**
    * Updates and transmits a real-time screen frame for Dora's visual awareness
@@ -388,6 +430,7 @@ export class DoraService {
         history,
         language: settings.language,
         memoryContext,
+        cameraFrame: this.latestCameraFrame || undefined,
         screenFrame: this.latestScreenFrame || undefined,
         imageAttachment: imageAttachment || undefined,
         deepThink,
