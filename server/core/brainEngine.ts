@@ -88,6 +88,8 @@ import { contextContinuityEngine } from "./contextContinuityEngine";
 import { ContextContinuityAnalysis } from "./contextContinuityTypes";
 import { executiveContextEngine } from "./executiveContextEngine";
 import { ExecutiveContextPackage } from "./executiveContextTypes";
+import { deepReasoningEngine } from "./deepReasoningEngine";
+import { DeepReasoningAnalysis } from "./deepReasoningTypes";
 import { memoryStore } from "./memoryStore";
 
 export * from "./contextTypes";
@@ -108,6 +110,7 @@ export * from "./contextContinuityTypes";
 export * from "./executiveContextTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
+export * from "./deepReasoningTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -123,6 +126,7 @@ export { temporalMemoryEngine } from "./temporalMemoryEngine";
 export { goalProjectEngine } from "./goalProjectEngine";
 export { contextContinuityEngine } from "./contextContinuityEngine";
 export { executiveContextEngine } from "./executiveContextEngine";
+export { deepReasoningEngine } from "./deepReasoningEngine";
 export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { memoryStore } from "./memoryStore";
@@ -160,6 +164,7 @@ export interface BrainAnalysis {
   predictiveContextAnalysis?: PredictiveContextAnalysis;
   responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
   executiveContext?: ExecutiveContextPackage;
+  deepReasoningAnalysis?: DeepReasoningAnalysis;
   activeTaskPlan?: TaskPlan;
   requiresPlanning: boolean;
   knowledgeType: KnowledgeType;
@@ -718,6 +723,39 @@ export class BrainEngine {
       }
     }
 
+    // Step 13 — Deep Reasoning & Hypothesis Management Engine
+    // Transforms authorized cognitive inputs into grounded hypotheses, explicit contradictions, calibrated uncertainty, and reasoned conclusions
+    const deepReasoningAnalysis = deepReasoningEngine.evaluate({
+      userId,
+      message: trimmed,
+      history: recentHistory,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      userModel: longTermUserModelAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      executiveContext,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context?.activeTopic,
+      },
+    });
+
+    // Add sanitized reasoned directives from Deep Reasoning Engine
+    for (const d of deepReasoningAnalysis.sanitizedDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
     // Calibrated unified confidence score from Verification Engine
     const confidence = verificationAnalysis.confidence.calibratedScore;
 
@@ -739,6 +777,7 @@ export class BrainEngine {
       predictiveContextAnalysis,
       responseAdaptationAnalysis,
       executiveContext,
+      deepReasoningAnalysis,
       activeTaskPlan: planningAnalysis.plan,
       requiresPlanning: planningAnalysis.requiresPlanning,
       knowledgeType,
