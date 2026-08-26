@@ -1,26 +1,34 @@
 import React, { useState, useEffect } from "react";
-import { VoiceSettings } from "../types";
 import {
   X,
   ChevronLeft,
   ChevronRight,
   Mic,
-  Volume2,
+  Radio,
   Globe,
   Brain,
   Sliders,
-  Sparkles,
   Info,
   Check,
-  Radio,
-  Cpu,
-  Zap,
-  ShieldCheck,
-  Activity,
   Play,
-  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  User,
+  Pencil,
+  SunMoon,
+  Palette,
+  Bell,
+  Shield,
+  Lock,
+  Tv,
+  Database,
+  FileText,
+  Bug,
+  LogOut,
+  AlertTriangle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { VoiceSettings, UserProfile } from "../types";
 import { DoraSparkle } from "./DoraSparkle";
 import { memoryManager } from "../memory/MemoryManager";
 
@@ -30,51 +38,59 @@ interface VoiceSettingsModalProps {
   settings: VoiceSettings;
   onUpdateSettings: (newSettings: Partial<VoiceSettings>) => void;
   onOpenMemory?: () => void;
+  onOpenSkills?: () => void;
+  user?: UserProfile | null;
+  userName?: string;
+  onUpdateUserName?: (name: string) => void;
 }
 
-type SettingsSection = "main" | "voice" | "speech" | "language" | "memory" | "general" | "about";
+export type SettingsSection =
+  | "main"
+  | "personalization"
+  | "voice"
+  | "speech"
+  | "language"
+  | "memory"
+  | "general"
+  | "notifications"
+  | "safety"
+  | "security"
+  | "storage"
+  | "datacontrols"
+  | "about";
 
-interface VoicePreset {
-  id: string;
-  name: string;
-  voice: string;
-  rate: number;
-  pitch: number;
-  desc: string;
-}
-
-const VOICE_PRESETS: VoicePreset[] = [
+const VOICE_PRESETS = [
   {
-    id: "reference",
-    name: "Young Companion (Reference-Aligned)",
+    id: "young-companion",
+    name: "Young Companion (Aoede)",
     voice: "Aoede",
     rate: 1.0,
     pitch: 1.05,
-    desc: "Light, bright, youthful Bangladeshi voice with natural storytelling cadence",
+    desc: "Light, bright, youthful 19-21 year-old Bangladeshi companion with natural Bangla cadence",
   },
   {
-    id: "playful",
-    name: "Playful Best Friend",
-    voice: "Aoede",
-    rate: 1.04,
-    pitch: 1.08,
-    desc: "Energetic, cheerful, lively young tone with bright inflections",
-  },
-  {
-    id: "calm",
-    name: "Calm & Grounded",
-    voice: "Aoede",
-    rate: 0.94,
-    pitch: 1.02,
-    desc: "Gentle, reassuring, soft young-adult evening companion",
-  },
-  {
-    id: "bilingual",
-    name: "Bilingual Storyteller",
-    voice: "Aoede",
+    id: "expressive-kore",
+    name: "Warm & Caring (Kore)",
+    voice: "Kore",
     rate: 1.0,
-    pitch: 1.05,
-    desc: "Fluid transitions across Bangla, Banglish & English speech",
+    pitch: 1.0,
+    desc: "Empathetic, clear, and reassuring tone for deep conversations",
+  },
+  {
+    id: "dynamic-fenrir",
+    name: "Energetic & Bold (Fenrir)",
+    voice: "Fenrir",
+    rate: 1.05,
+    pitch: 1.0,
+    desc: "Punchy, fast, and enthusiastic delivery for brainstorming",
+  },
+  {
+    id: "calm-zephyr",
+    name: "Gentle & Serene (Zephyr)",
+    voice: "Zephyr",
+    rate: 0.95,
+    pitch: 0.98,
+    desc: "Soft-spoken, relaxing voice with gentle pauses",
   },
 ];
 
@@ -84,10 +100,25 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   settings,
   onUpdateSettings,
   onOpenMemory,
+  onOpenSkills,
+  user = null,
+  userName,
+  onUpdateUserName,
 }) => {
   const [activeSection, setActiveSection] = useState<SettingsSection>("main");
   const [totalMemories, setTotalMemories] = useState<number>(0);
   const [isPlayingSample, setIsPlayingSample] = useState<boolean>(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [selectedAppearance, setSelectedAppearance] = useState("Dark (AMOLED)");
+  const [selectedAccent, setSelectedAccent] = useState("Blue");
+  const [customInstructions, setCustomInstructions] = useState(
+    "Always be friendly, spontaneous, and speak natural everyday Bangla with casual Banglish words."
+  );
+
+  const isAuthenticated = Boolean(user && user.isAuthenticated);
+  const displayName = user?.name || userName || "Anonymous";
+  const email = user?.email;
+  const avatarUrl = user?.avatarUrl;
 
   useEffect(() => {
     if (isOpen) {
@@ -102,12 +133,8 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   // Reset to main view on open
   useEffect(() => {
     if (isOpen) {
-      // Default to voice sub-view on desktop, main list on mobile
-      if (window.innerWidth >= 1024) {
-        setActiveSection("voice");
-      } else {
-        setActiveSection("main");
-      }
+      setActiveSection("main");
+      setShowLogoutConfirm(false);
     }
   }, [isOpen]);
 
@@ -116,7 +143,9 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
       if (e.key === "Escape") {
-        if (activeSection !== "main" && window.innerWidth < 1024) {
+        if (showLogoutConfirm) {
+          setShowLogoutConfirm(false);
+        } else if (activeSection !== "main") {
           setActiveSection("main");
         } else {
           onClose();
@@ -125,7 +154,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, activeSection, onClose]);
+  }, [isOpen, activeSection, showLogoutConfirm, onClose]);
 
   if (!isOpen) return null;
 
@@ -135,7 +164,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     try {
       const sampleText =
         settings.language === "bn-en"
-          ? "Hey there! Ami Dora. How are you feeling today?"
+          ? "Hey there! Ami Dora. Tomar sathe kotha bolte amar khub bhalo lage!"
           : "Hey there! I'm Dora, your AI companion. How can I help you today?";
       const utterance = new SpeechSynthesisUtterance(sampleText);
       utterance.rate = settings.speakingRate;
@@ -153,7 +182,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
       case "en":
         return "English Only";
       case "bn-en":
-        return "Banglish / Everyday Bangla";
+        return "Bangla / Banglish";
       default:
         return "Auto (Bangla/English)";
     }
@@ -167,27 +196,236 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
       : "Browser Native";
   };
 
+  // User initials for authenticated users
+  const initials = isAuthenticated && user?.name
+    ? user.name
+        .trim()
+        .split(/\s+/)
+        .map((p) => p[0])
+        .slice(0, 2)
+        .join("")
+        .toUpperCase()
+    : "";
+
   // =========================================================================
-  // MAIN SETTINGS MENU (Clean, minimalist standalone rows with section labels)
+  // MAIN SETTINGS MENU (Grouped Cards matching Reference Screenshots 2, 3, 4)
   // =========================================================================
   const renderMainSettingsList = () => (
-    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
-      {/* 1. AUDIO & SPEECH */}
-      <div className="space-y-1">
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none pb-8">
+      {/* ------------------------------------------------------------- */}
+      {/* PROFILE / ACCOUNT IDENTITY CARD                               */}
+      {/* ------------------------------------------------------------- */}
+      <div className="flex flex-col items-center justify-center py-4">
+        {isAuthenticated ? (
+          <>
+            <div className="relative group cursor-pointer">
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt={displayName}
+                  className="w-20 h-20 rounded-full object-cover border-2 border-white/20 shadow-xl"
+                />
+              ) : (
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 border-2 border-white/20 flex items-center justify-center text-white text-2xl font-bold shadow-xl">
+                  {initials}
+                </div>
+              )}
+            </div>
+            <h2 className="mt-3 text-lg font-semibold text-white tracking-tight">
+              {displayName}
+            </h2>
+            {email && <span className="text-xs text-white/45">{email}</span>}
+          </>
+        ) : (
+          <>
+            {/* Generic Minimal Anonymous / Guest Profile Icon */}
+            <div className="w-20 h-20 rounded-full bg-[#18181b] border border-white/[0.12] flex items-center justify-center text-white/70 shadow-lg">
+              <User className="w-9 h-9 text-white/60 stroke-[1.75]" />
+            </div>
+            <h2 className="mt-3 text-base font-semibold text-white tracking-tight">
+              Anonymous / Guest
+            </h2>
+            <span className="text-xs text-white/40 mt-0.5">
+              Local session on this device
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* GROUP 1: MY DORA (Screenshot 4)                               */}
+      {/* ------------------------------------------------------------- */}
+      <div className="space-y-1.5">
         <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
-          Audio & Speech
+          My Dora
         </div>
 
-        <div className="divide-y divide-white/[0.04]">
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
+          {/* Personalization */}
+          <button
+            type="button"
+            onClick={() => setActiveSection("personalization")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <User className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">Personalization</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+
+          {/* Memory */}
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenMemory) {
+                onClose();
+                onOpenMemory();
+              } else {
+                setActiveSection("memory");
+              }
+            }}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Brain className="w-5 h-5 text-white/70 group-hover:text-[#38BDF8] transition-colors" />
+              <span className="text-sm font-medium text-white">Memory</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-white/40 font-mono">
+                {totalMemories} {totalMemories === 1 ? "fact" : "facts"}
+              </span>
+              <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+            </div>
+          </button>
+
+          {/* Plugins & Skills */}
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenSkills) {
+                onClose();
+                onOpenSkills();
+              }
+            }}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Sparkles className="w-5 h-5 text-white/70 group-hover:text-[#38BDF8] transition-colors" />
+              <span className="text-sm font-medium text-white">Plugins & Skills</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1D72FE]/20 text-[#38BDF8] font-mono">
+                Active
+              </span>
+              <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* GROUP 2: APPEARANCE & THEME (Screenshot 2)                    */}
+      {/* ------------------------------------------------------------- */}
+      <div className="space-y-1.5">
+        <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
+          Appearance
+        </div>
+
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
+          {/* Appearance mode */}
+          <div className="w-full flex items-center justify-between px-4 py-3.5 text-left">
+            <div className="flex items-center gap-3.5">
+              <SunMoon className="w-5 h-5 text-white/70" />
+              <span className="text-sm font-medium text-white">Appearance</span>
+            </div>
+            <select
+              value={selectedAppearance}
+              onChange={(e) => setSelectedAppearance(e.target.value)}
+              className="bg-transparent text-xs text-white/60 focus:outline-none cursor-pointer border-none font-medium text-right pr-1"
+            >
+              <option value="Dark (AMOLED)" className="bg-[#1c1c1e] text-white">
+                Dark (AMOLED)
+              </option>
+              <option value="System (Default)" className="bg-[#1c1c1e] text-white">
+                System (Default)
+              </option>
+            </select>
+          </div>
+
+          {/* Accent color */}
+          <div className="w-full flex items-center justify-between px-4 py-3.5 text-left">
+            <div className="flex items-center gap-3.5">
+              <Palette className="w-5 h-5 text-white/70" />
+              <span className="text-sm font-medium text-white">Accent color</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#1D72FE] inline-block shadow-[0_0_8px_rgba(29,114,254,0.6)]" />
+              <select
+                value={selectedAccent}
+                onChange={(e) => setSelectedAccent(e.target.value)}
+                className="bg-transparent text-xs text-white/60 focus:outline-none cursor-pointer border-none font-medium text-right pr-1"
+              >
+                <option value="Blue" className="bg-[#1c1c1e] text-white">
+                  Electric Blue
+                </option>
+                <option value="Purple" className="bg-[#1c1c1e] text-white">
+                  Neon Purple
+                </option>
+                <option value="Cyan" className="bg-[#1c1c1e] text-white">
+                  Cyan Ice
+                </option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* GROUP 3: CORE PREFERENCES (Screenshots 2 & 3)                  */}
+      {/* ------------------------------------------------------------- */}
+      <div className="space-y-1.5">
+        <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
+          Preferences
+        </div>
+
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
+          {/* General */}
+          <button
+            type="button"
+            onClick={() => setActiveSection("general")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Sliders className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">General</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+
+          {/* Notifications */}
+          <button
+            type="button"
+            onClick={() => setActiveSection("notifications")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Bell className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">Notifications</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+
+          {/* Voice */}
           <button
             type="button"
             onClick={() => setActiveSection("voice")}
-            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
           >
             <div className="flex items-center gap-3.5">
-              <Mic className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
+              <Mic className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
               <div>
-                <span className="text-sm font-medium text-white block">Voice & personality</span>
+                <span className="text-sm font-medium text-white block">Voice</span>
                 <span className="text-xs text-white/45 block">
                   {settings.voiceName || "Aoede"} ({settings.speakingRate}× speed)
                 </span>
@@ -196,13 +434,30 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
             <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
           </button>
 
+          {/* Language */}
+          <button
+            type="button"
+            onClick={() => setActiveSection("language")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Globe className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <div>
+                <span className="text-sm font-medium text-white block">Language</span>
+                <span className="text-xs text-white/45 block">{getLanguageLabel()}</span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+
+          {/* Speech engine */}
           <button
             type="button"
             onClick={() => setActiveSection("speech")}
-            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
           >
             <div className="flex items-center gap-3.5">
-              <Radio className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
+              <Radio className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
               <div>
                 <span className="text-sm font-medium text-white block">Speech engine</span>
                 <span className="text-xs text-white/45 block">{getEngineLabel()}</span>
@@ -213,118 +468,180 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         </div>
       </div>
 
-      {/* 2. LANGUAGE */}
-      <div className="space-y-1">
+      {/* ------------------------------------------------------------- */}
+      {/* GROUP 4: SYSTEM & SECURITY (Screenshots 2 & 3)                 */}
+      {/* ------------------------------------------------------------- */}
+      <div className="space-y-1.5">
         <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
-          Language
+          System & Security
         </div>
 
-        <div className="divide-y divide-white/[0.04]">
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
+          {/* Safety */}
           <button
             type="button"
-            onClick={() => setActiveSection("language")}
-            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+            onClick={() => setActiveSection("safety")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
           >
             <div className="flex items-center gap-3.5">
-              <Globe className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
-              <div>
-                <span className="text-sm font-medium text-white block">Language & accent</span>
-                <span className="text-xs text-white/45 block">{getLanguageLabel()}</span>
-              </div>
+              <Shield className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">Safety</span>
             </div>
             <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
           </button>
-        </div>
-      </div>
 
-      {/* 3. INTELLIGENCE */}
-      <div className="space-y-1">
-        <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
-          Intelligence
-        </div>
-
-        <div className="divide-y divide-white/[0.04]">
+          {/* Security and login */}
           <button
             type="button"
-            onClick={() => setActiveSection("memory")}
-            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+            onClick={() => setActiveSection("security")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
           >
             <div className="flex items-center gap-3.5">
-              <Brain className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
-              <div>
-                <span className="text-sm font-medium text-white block">Memory & personalization</span>
-                <span className="text-xs text-white/45 block">
-                  {totalMemories} {totalMemories === 1 ? "fact" : "facts"} remembered
-                </span>
-              </div>
+              <Lock className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">Security and login</span>
             </div>
             <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
           </button>
-        </div>
-      </div>
 
-      {/* 4. SYSTEM & ABOUT */}
-      <div className="space-y-1">
-        <div className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-white/35 uppercase">
-          System
-        </div>
-
-        <div className="divide-y divide-white/[0.04]">
+          {/* Remote control */}
           <button
             type="button"
             onClick={() => setActiveSection("general")}
-            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
           >
             <div className="flex items-center gap-3.5">
-              <Sliders className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
-              <div>
-                <span className="text-sm font-medium text-white block">General</span>
-                <span className="text-xs text-white/45 block">
-                  Sensitivity, ambience & haptics
-                </span>
-              </div>
+              <Tv className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">Remote control</span>
             </div>
             <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
           </button>
 
+          {/* Storage */}
           <button
             type="button"
-            onClick={() => setActiveSection("about")}
-            className="w-full flex items-center justify-between px-3 py-3 rounded-xl hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+            onClick={() => setActiveSection("storage")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
           >
             <div className="flex items-center gap-3.5">
-              <Info className="w-5 h-5 text-white/60 group-hover:text-white transition-colors" />
-              <div>
-                <span className="text-sm font-medium text-white block">About Dora</span>
-                <span className="text-xs text-white/45 block">Gemini 2.0 Flash • Live API</span>
-              </div>
+              <Database className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">Storage</span>
             </div>
             <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
           </button>
+
+          {/* Data controls */}
+          <button
+            type="button"
+            onClick={() => setActiveSection("datacontrols")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <FileText className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">Data controls</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+
+          {/* About */}
+          <button
+            type="button"
+            onClick={() => setActiveSection("about")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Info className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
+              <span className="text-sm font-medium text-white">About Dora</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+          </button>
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* GROUP 5: AUTHENTICATED ACCOUNT ACTIONS                        */}
+      {/* ------------------------------------------------------------- */}
+      {isAuthenticated && (
+        <div className="pt-2">
+          <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowLogoutConfirm(true)}
+              className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-red-500/10 active:bg-red-500/20 transition-colors text-left text-red-400 group"
+            >
+              <div className="flex items-center gap-3.5">
+                <LogOut className="w-5 h-5 text-red-400" />
+                <span className="text-sm font-medium text-red-400">Log out</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-red-400/40 group-hover:text-red-400 transition-colors" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // =========================================================================
+  // SUB-VIEW: PERSONALIZATION
+  // =========================================================================
+  const renderPersonalizationContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3]">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Personalization</h3>
+        <p className="text-xs text-white/50 leading-relaxed">
+          Provide custom instructions so Dora tailors her personality, tone, and answers to you.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-white/80 block">
+          Custom Companion Instructions
+        </label>
+        <textarea
+          rows={5}
+          value={customInstructions}
+          onChange={(e) => setCustomInstructions(e.target.value)}
+          placeholder="e.g., Talk like a close friend, use casual Banglish, keep answers crisp..."
+          className="w-full p-3 rounded-xl bg-[#1c1c1e] border border-white/[0.08] text-xs sm:text-sm text-white placeholder-white/30 focus:outline-none focus:border-[#1D72FE]"
+        />
+      </div>
+
+      <div className="p-3.5 rounded-xl bg-[#1c1c1e] border border-white/[0.06] space-y-2">
+        <span className="text-xs font-semibold text-white block">Persona Traits</span>
+        <div className="flex flex-wrap gap-2">
+          {["Youthful (19-21)", "Bangladeshi Fluency", "Warm & Spontaneous", "Active Memory"].map(
+            (trait) => (
+              <span
+                key={trait}
+                className="text-xs px-2.5 py-1 rounded-full bg-[#1D72FE]/15 border border-[#1D72FE]/30 text-[#38BDF8]"
+              >
+                {trait}
+              </span>
+            )
+          )}
         </div>
       </div>
     </div>
   );
 
   // =========================================================================
-  // 1. VOICE & PERSONALITY INNER SECTION
+  // SUB-VIEW: VOICE & PERSONALITY
   // =========================================================================
   const renderVoiceContent = () => (
     <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
       <div>
         <h3 className="text-base font-semibold text-white mb-1">Voice & Personality</h3>
         <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
-          Select Dora's speaking personality and fine-tune natural voice characteristics.
+          Select Dora's vocal character and fine-tune natural voice characteristics.
         </p>
       </div>
 
       {/* Voice Presets List */}
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
           Preset Profiles
         </div>
 
-        <div className="divide-y divide-white/[0.04]">
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
           {VOICE_PRESETS.map((preset) => {
             const isSelected =
               settings.voiceName === preset.voice &&
@@ -342,10 +659,8 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                     pitch: preset.pitch,
                   })
                 }
-                className={`w-full flex items-start justify-between p-3 rounded-xl transition-colors text-left ${
-                  isSelected
-                    ? "bg-[#0C1938] text-[#38BDF8]"
-                    : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
+                className={`w-full flex items-start justify-between p-3.5 transition-colors text-left ${
+                  isSelected ? "bg-[#0C1938] text-[#38BDF8]" : "hover:bg-white/[0.04] text-white"
                 }`}
               >
                 <div className="space-y-0.5 pr-3">
@@ -367,43 +682,45 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
       </div>
 
       {/* Voice Tuning Sliders */}
-      <div className="space-y-4 pt-2 border-t border-white/[0.04]">
+      <div className="space-y-4 pt-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
           Fine Tuning
         </div>
 
-        {/* Speed Slider */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs sm:text-sm">
-            <span className="text-white/80 font-medium">Speaking Speed</span>
-            <span className="font-mono text-[#38BDF8] text-xs">{settings.speakingRate}×</span>
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] p-4 space-y-4">
+          {/* Speed Slider */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs sm:text-sm">
+              <span className="text-white/80 font-medium">Speaking Speed</span>
+              <span className="font-mono text-[#38BDF8] text-xs">{settings.speakingRate}×</span>
+            </div>
+            <input
+              type="range"
+              min="0.75"
+              max="1.3"
+              step="0.05"
+              value={settings.speakingRate}
+              onChange={(e) => onUpdateSettings({ speakingRate: parseFloat(e.target.value) })}
+              className="w-full h-1.5 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
+            />
           </div>
-          <input
-            type="range"
-            min="0.75"
-            max="1.3"
-            step="0.05"
-            value={settings.speakingRate}
-            onChange={(e) => onUpdateSettings({ speakingRate: parseFloat(e.target.value) })}
-            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
-          />
-        </div>
 
-        {/* Pitch Slider */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs sm:text-sm">
-            <span className="text-white/80 font-medium">Voice Pitch</span>
-            <span className="font-mono text-[#38BDF8] text-xs">{settings.pitch}×</span>
+          {/* Pitch Slider */}
+          <div className="space-y-2 pt-2 border-t border-white/[0.06]">
+            <div className="flex items-center justify-between text-xs sm:text-sm">
+              <span className="text-white/80 font-medium">Voice Pitch</span>
+              <span className="font-mono text-[#38BDF8] text-xs">{settings.pitch}×</span>
+            </div>
+            <input
+              type="range"
+              min="0.8"
+              max="1.2"
+              step="0.05"
+              value={settings.pitch}
+              onChange={(e) => onUpdateSettings({ pitch: parseFloat(e.target.value) })}
+              className="w-full h-1.5 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
+            />
           </div>
-          <input
-            type="range"
-            min="0.8"
-            max="1.2"
-            step="0.05"
-            value={settings.pitch}
-            onChange={(e) => onUpdateSettings({ pitch: parseFloat(e.target.value) })}
-            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
-          />
         </div>
       </div>
 
@@ -413,9 +730,9 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
           type="button"
           onClick={playVoiceSample}
           disabled={isPlayingSample}
-          className="w-full flex items-center justify-center gap-2.5 py-3 rounded-xl bg-white/[0.05] hover:bg-white/[0.09] active:bg-white/[0.12] border border-white/[0.06] text-white text-sm font-medium transition-all"
+          className="w-full flex items-center justify-center gap-2.5 py-3.5 rounded-2xl bg-[#1D72FE] hover:bg-[#155FD6] active:scale-[0.99] text-white text-sm font-medium transition-all shadow-[0_0_20px_rgba(29,114,254,0.3)]"
         >
-          <Play className={`w-4 h-4 ${isPlayingSample ? "animate-pulse text-[#38BDF8]" : ""}`} />
+          <Play className={`w-4 h-4 ${isPlayingSample ? "animate-pulse" : ""}`} />
           <span>{isPlayingSample ? "Playing voice sample…" : "Test Voice Output"}</span>
         </button>
       </div>
@@ -423,31 +740,30 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   );
 
   // =========================================================================
-  // 2. SPEECH ENGINE INNER SECTION
+  // SUB-VIEW: SPEECH ENGINE
   // =========================================================================
   const renderSpeechContent = () => (
     <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
       <div>
         <h3 className="text-base font-semibold text-white mb-1">Speech Engine</h3>
         <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
-          Configure real-time voice streaming latency and microphone processing.
+          Configure real-time bidirectional streaming and audio protocol.
         </p>
       </div>
 
-      {/* Engine Selection */}
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
           Audio Pipeline
         </div>
 
-        <div className="divide-y divide-white/[0.04]">
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
           <button
             type="button"
             onClick={() => onUpdateSettings({ engine: "gemini-live" })}
-            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
+            className={`w-full flex items-center justify-between p-3.5 transition-colors text-left ${
               settings.engine === "gemini-live"
                 ? "bg-[#0C1938] text-[#38BDF8]"
-                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
+                : "hover:bg-white/[0.04] text-white"
             }`}
           >
             <div>
@@ -465,10 +781,10 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
           <button
             type="button"
             onClick={() => onUpdateSettings({ engine: "gemini-tts" })}
-            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
+            className={`w-full flex items-center justify-between p-3.5 transition-colors text-left ${
               settings.engine === "gemini-tts"
                 ? "bg-[#0C1938] text-[#38BDF8]"
-                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
+                : "hover:bg-white/[0.04] text-white"
             }`}
           >
             <div>
@@ -479,49 +795,11 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
           </button>
         </div>
       </div>
-
-      {/* Voice Activity Detection */}
-      <div className="space-y-4 pt-2 border-t border-white/[0.04]">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
-          Interaction Dynamics
-        </div>
-
-        {/* Interruption Sensitivity */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs sm:text-sm">
-            <span className="text-white/80 font-medium">Interruption Sensitivity</span>
-            <span className="font-mono text-[#38BDF8] text-xs">High</span>
-          </div>
-          <input
-            type="range"
-            min="1"
-            max="5"
-            defaultValue="4"
-            className="w-full h-1 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
-          />
-          <p className="text-[11px] text-white/40 leading-relaxed">
-            Higher values allow interrupting Dora immediately when you start speaking.
-          </p>
-        </div>
-
-        {/* Ambient Noise Suppression */}
-        <div className="flex items-center justify-between py-2">
-          <div className="space-y-0.5 pr-4">
-            <span className="text-sm font-medium text-white block">Noise Cancellation</span>
-            <span className="text-xs text-white/45 block">
-              Filter background room chatter and ambient echo
-            </span>
-          </div>
-          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
-            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
-          </div>
-        </div>
-      </div>
     </div>
   );
 
   // =========================================================================
-  // 3. LANGUAGE & ACCENT INNER SECTION
+  // SUB-VIEW: LANGUAGE & ACCENT
   // =========================================================================
   const renderLanguageContent = () => (
     <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
@@ -532,20 +810,19 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         </p>
       </div>
 
-      {/* Language Options */}
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
           Primary Language
         </div>
 
-        <div className="divide-y divide-white/[0.04]">
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
           <button
             type="button"
             onClick={() => onUpdateSettings({ language: "auto" })}
-            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
+            className={`w-full flex items-center justify-between p-3.5 transition-colors text-left ${
               settings.language === "auto"
                 ? "bg-[#0C1938] text-[#38BDF8]"
-                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
+                : "hover:bg-white/[0.04] text-white"
             }`}
           >
             <div>
@@ -559,27 +836,11 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
 
           <button
             type="button"
-            onClick={() => onUpdateSettings({ language: "en" })}
-            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
-              settings.language === "en"
-                ? "bg-[#0C1938] text-[#38BDF8]"
-                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
-            }`}
-          >
-            <div>
-              <span className="text-sm font-medium block">English Only</span>
-              <p className="text-xs text-white/45">Standard English conversational mode</p>
-            </div>
-            {settings.language === "en" && <Check className="w-4 h-4 text-[#38BDF8]" />}
-          </button>
-
-          <button
-            type="button"
             onClick={() => onUpdateSettings({ language: "bn-en" })}
-            className={`w-full flex items-center justify-between p-3 rounded-xl transition-colors text-left ${
+            className={`w-full flex items-center justify-between p-3.5 transition-colors text-left ${
               settings.language === "bn-en"
                 ? "bg-[#0C1938] text-[#38BDF8]"
-                : "hover:bg-white/[0.04] active:bg-white/[0.08] text-white"
+                : "hover:bg-white/[0.04] text-white"
             }`}
           >
             <div>
@@ -588,126 +849,54 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
             </div>
             {settings.language === "bn-en" && <Check className="w-4 h-4 text-[#38BDF8]" />}
           </button>
-        </div>
-      </div>
-    </div>
-  );
 
-  // =========================================================================
-  // 4. MEMORY & PERSONALIZATION INNER SECTION
-  // =========================================================================
-  const renderMemoryContent = () => (
-    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
-      <div>
-        <h3 className="text-base font-semibold text-white mb-1">Memory & Intelligence</h3>
-        <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
-          Manage how Dora learns and recalls facts about you across conversations.
-        </p>
-      </div>
-
-      {/* Memory Master Toggle */}
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04]">
-        <div className="space-y-0.5 pr-4">
-          <span className="text-sm font-medium text-white block">Continuous Memory</span>
-          <span className="text-xs text-white/45 block">
-            Dora remembers your preferences and projects automatically
-          </span>
-        </div>
-        <div
-          onClick={() => {
-            const next = !memoryManager.isEnabled();
-            memoryManager.setEnabled(next);
-            setTotalMemories(memoryManager.getTotalCount());
-          }}
-          className={`w-8 h-4.5 rounded-full transition-colors relative shrink-0 p-0.5 cursor-pointer ${
-            memoryManager.isEnabled() ? "bg-[#1D72FE]" : "bg-white/20"
-          }`}
-        >
-          <div
-            className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
-              memoryManager.isEnabled() ? "translate-x-3.5" : "translate-x-0"
+          <button
+            type="button"
+            onClick={() => onUpdateSettings({ language: "en" })}
+            className={`w-full flex items-center justify-between p-3.5 transition-colors text-left ${
+              settings.language === "en"
+                ? "bg-[#0C1938] text-[#38BDF8]"
+                : "hover:bg-white/[0.04] text-white"
             }`}
-          />
+          >
+            <div>
+              <span className="text-sm font-medium block">English Only</span>
+              <p className="text-xs text-white/45">Standard English conversational mode</p>
+            </div>
+            {settings.language === "en" && <Check className="w-4 h-4 text-[#38BDF8]" />}
+          </button>
         </div>
-      </div>
-
-      {/* Memory Overview Stats */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between text-xs sm:text-sm">
-          <span className="text-white/70">Stored Facts</span>
-          <span className="font-mono text-[#38BDF8] font-medium">{totalMemories} items</span>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => {
-            onClose();
-            onOpenMemory?.();
-          }}
-          className="w-full flex items-center justify-between px-3.5 py-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.12] border border-white/[0.06] text-white text-sm font-medium transition-all"
-        >
-          <div className="flex items-center gap-2.5">
-            <Brain className="w-4 h-4 text-[#38BDF8]" />
-            <span>Open Memory Store</span>
-          </div>
-          <ChevronRight className="w-4 h-4 text-white/40" />
-        </button>
-      </div>
-
-      {/* Privacy Notice */}
-      <div className="pt-2 flex items-center gap-2 text-xs text-white/40">
-        <ShieldCheck className="w-4 h-4 text-[#38BDF8] shrink-0" />
-        <span>Stored securely in local browser memory with complete user ownership.</span>
       </div>
     </div>
   );
 
   // =========================================================================
-  // 5. GENERAL & SYSTEM INNER SECTION
+  // SUB-VIEW: GENERAL PREFERENCES
   // =========================================================================
   const renderGeneralContent = () => (
-    <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3]">
       <div>
         <h3 className="text-base font-semibold text-white mb-1">General Preferences</h3>
-        <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
-          Configure ambient effects, sound indicators, and system interactions.
+        <p className="text-xs text-white/50 leading-relaxed">
+          Configure ambient effects, auto-sleep, and interaction feedback.
         </p>
       </div>
 
-      <div className="divide-y divide-white/[0.04]">
-        {/* Ambient Glow */}
-        <div className="flex items-center justify-between py-3">
-          <div className="space-y-0.5 pr-4">
+      <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden p-1">
+        <div className="flex items-center justify-between p-3.5">
+          <div>
+            <span className="text-sm font-medium text-white block">Auto-scroll Chat</span>
+            <span className="text-xs text-white/45 block">Scroll down as new messages arrive</span>
+          </div>
+          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
+            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between p-3.5">
+          <div>
             <span className="text-sm font-medium text-white block">Cinematic Ambient Glow</span>
-            <span className="text-xs text-white/45 block">
-              Subtle atmospheric blue gradient during voice calls
-            </span>
-          </div>
-          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
-            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
-          </div>
-        </div>
-
-        {/* Haptic / Tactile Feedback */}
-        <div className="flex items-center justify-between py-3">
-          <div className="space-y-0.5 pr-4">
-            <span className="text-sm font-medium text-white block">Haptic Feedback</span>
-            <span className="text-xs text-white/45 block">
-              Vibrate slightly when speech starts or turn finishes
-            </span>
-          </div>
-          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
-            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
-          </div>
-        </div>
-
-        {/* Auto-sleep on silence */}
-        <div className="flex items-center justify-between py-3">
-          <div className="space-y-0.5 pr-4">
-            <span className="text-sm font-medium text-white block">Auto-pause on Silence</span>
-            <span className="text-xs text-white/45 block">
-              Pause microphone stream after 3 minutes of inactivity
-            </span>
+            <span className="text-xs text-white/45 block">Atmospheric aura during voice sessions</span>
           </div>
           <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
             <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
@@ -718,14 +907,107 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   );
 
   // =========================================================================
-  // 6. ABOUT DORA INNER SECTION
+  // SUB-VIEW: NOTIFICATIONS
+  // =========================================================================
+  const renderNotificationsContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3]">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Notifications</h3>
+        <p className="text-xs text-white/50 leading-relaxed">
+          Manage companion notifications, proactive check-ins, and audio cues.
+        </p>
+      </div>
+
+      <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden p-1">
+        <div className="flex items-center justify-between p-3.5">
+          <div>
+            <span className="text-sm font-medium text-white block">Proactive Companion Alerts</span>
+            <span className="text-xs text-white/45 block">Dora offers timely suggestions</span>
+          </div>
+          <div className="w-8 h-4.5 rounded-full bg-[#1D72FE] relative shrink-0 p-0.5 cursor-pointer">
+            <div className="w-3.5 h-3.5 rounded-full bg-white translate-x-3.5 transition-transform" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // SUB-VIEW: SAFETY & SECURITY
+  // =========================================================================
+  const renderSafetyContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3]">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Safety & Privacy</h3>
+        <p className="text-xs text-white/50 leading-relaxed">
+          Local client sandbox security, camera and microphone authorization policies.
+        </p>
+      </div>
+
+      <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] p-4 space-y-3">
+        <div className="flex items-center gap-3 text-emerald-400">
+          <ShieldCheck className="w-5 h-5" />
+          <span className="text-sm font-medium">Safe Mode & Sandbox Active</span>
+        </div>
+        <p className="text-xs text-white/50 leading-relaxed">
+          All sensory visual and audio frames stay within your secure session and are processed with
+          Gemini Live API.
+        </p>
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // SUB-VIEW: STORAGE & DATA CONTROLS
+  // =========================================================================
+  const renderStorageContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3]">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Storage & Data Controls</h3>
+        <p className="text-xs text-white/50 leading-relaxed">
+          Manage stored conversations, local indexed caches, and data exports.
+        </p>
+      </div>
+
+      <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
+        <div className="flex items-center justify-between p-4">
+          <span className="text-sm text-white">Local Memory Cache</span>
+          <span className="font-mono text-xs text-[#38BDF8]">~1.2 MB</span>
+        </div>
+        <div className="p-4">
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                const data = localStorage.getItem("dora_conversation_sessions_v1") || "[]";
+                const blob = new Blob([data], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `dora-conversations-${Date.now()}.json`;
+                a.click();
+              } catch (e) {
+                console.error(e);
+              }
+            }}
+            className="w-full py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-xs font-medium text-white transition-colors"
+          >
+            Export All Conversations (JSON)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // SUB-VIEW: ABOUT DORA
   // =========================================================================
   const renderAboutContent = () => (
     <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
       <div className="flex items-center gap-3">
         <DoraSparkle size={28} />
         <div>
-          <h3 className="text-base font-semibold text-white tracking-tight">Dora AI</h3>
+          <h3 className="text-base font-semibold text-white tracking-tight">Dora</h3>
           <span className="text-xs text-white/45">Version 2.4.0 • Gemini 2.0</span>
         </div>
       </div>
@@ -735,40 +1017,45 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         continuous autonomous memory, and emotional attunement.
       </p>
 
-      <div className="divide-y divide-white/[0.04] pt-2">
-        <div className="flex items-center justify-between py-2.5 text-xs sm:text-sm">
+      <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
+        <div className="flex items-center justify-between p-3.5 text-xs sm:text-sm">
           <span className="text-white/60">Core Intelligence</span>
           <span className="font-mono text-white/90">Gemini 2.0 Flash</span>
         </div>
-        <div className="flex items-center justify-between py-2.5 text-xs sm:text-sm">
+        <div className="flex items-center justify-between p-3.5 text-xs sm:text-sm">
           <span className="text-white/60">Live Voice Protocol</span>
           <span className="font-mono text-white/90">WebSocket 16kHz PCM</span>
         </div>
-        <div className="flex items-center justify-between py-2.5 text-xs sm:text-sm">
+        <div className="flex items-center justify-between p-3.5 text-xs sm:text-sm">
           <span className="text-white/60">Audio Latency</span>
           <span className="font-mono text-[#38BDF8]">~180ms</span>
-        </div>
-        <div className="flex items-center justify-between py-2.5 text-xs sm:text-sm">
-          <span className="text-white/60">Memory Encryption</span>
-          <span className="font-mono text-white/90">AES Browser Sandbox</span>
         </div>
       </div>
     </div>
   );
 
-  // Helper to render current section content
-  const renderActiveSectionContent = () => {
+  // Dispatch current subview
+  const renderSubView = () => {
     switch (activeSection) {
+      case "personalization":
+        return renderPersonalizationContent();
       case "voice":
         return renderVoiceContent();
       case "speech":
         return renderSpeechContent();
       case "language":
         return renderLanguageContent();
-      case "memory":
-        return renderMemoryContent();
       case "general":
         return renderGeneralContent();
+      case "notifications":
+        return renderNotificationsContent();
+      case "safety":
+        return renderSafetyContent();
+      case "security":
+        return renderSafetyContent();
+      case "storage":
+      case "datacontrols":
+        return renderStorageContent();
       case "about":
         return renderAboutContent();
       default:
@@ -780,185 +1067,101 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     <AnimatePresence>
       <div
         id="dora-settings-overlay"
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md"
       >
         {/* ================================================================ */}
-        {/* MOBILE FULL-SCREEN / ADAPTIVE CONTAINER (< lg)                   */}
+        {/* SETTINGS CARD MODAL (Unified Clean AMOLED Surface)               */}
         {/* ================================================================ */}
         <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 15 }}
+          initial={{ opacity: 0, scale: 0.96 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.96 }}
           transition={{ duration: 0.18 }}
-          className="lg:hidden w-full h-full bg-[#000000] flex flex-col text-[#E3E3E3] font-sans select-none overflow-hidden"
+          className="w-full h-full sm:h-[88vh] sm:max-w-xl bg-black sm:rounded-3xl sm:border sm:border-white/[0.08] flex flex-col text-[#E3E3E3] font-sans select-none overflow-hidden shadow-[0_24px_64px_rgba(0,0,0,0.95)]"
         >
-          {/* Mobile Top Header Bar */}
-          <div className="px-4 py-3.5 border-b border-white/[0.04] flex items-center justify-between shrink-0 bg-[#000000]">
+          {/* Top Header Bar with Back Arrow and Title */}
+          <div className="px-5 py-4 border-b border-white/[0.06] flex items-center justify-between shrink-0 bg-black">
             {activeSection !== "main" ? (
               <button
                 type="button"
                 onClick={() => setActiveSection("main")}
-                className="flex items-center gap-1.5 text-sm font-medium text-white/80 hover:text-white -ml-1 p-1 rounded-lg"
+                className="w-9 h-9 rounded-full bg-white/[0.08] hover:bg-white/[0.14] active:scale-95 flex items-center justify-center text-white transition-all -ml-1"
+                aria-label="Back to main settings"
               >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Settings</span>
+                <ChevronLeft className="w-5 h-5" />
               </button>
             ) : (
-              <div className="flex items-center gap-2">
-                <DoraSparkle size={18} />
-                <span className="text-sm font-semibold text-white">Settings</span>
-              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-9 h-9 rounded-full bg-white/[0.08] hover:bg-white/[0.14] active:scale-95 flex items-center justify-center text-white transition-all -ml-1"
+                aria-label="Close settings"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
             )}
 
+            <span className="text-base font-semibold text-white tracking-tight">
+              {activeSection === "main" ? "Settings" : activeSection.charAt(0).toUpperCase() + activeSection.slice(1)}
+            </span>
+
             <button
-              id="btn-close-settings-mobile"
+              id="btn-close-settings"
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-full text-white/60 hover:text-white hover:bg-white/[0.08] transition-colors"
+              className="w-8 h-8 rounded-full text-white/50 hover:text-white hover:bg-white/[0.08] flex items-center justify-center transition-colors"
+              aria-label="Close"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Mobile Body Content */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-5">
-            {renderActiveSectionContent()}
+          {/* Scrollable Body */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 bg-black">
+            {activeSection === "main" ? renderMainSettingsList() : renderSubView()}
           </div>
         </motion.div>
 
-        {/* ================================================================ */}
-        {/* DESKTOP RESPONSIVE TWO-PANE SETTINGS DIALOG (>= lg)               */}
-        {/* ================================================================ */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.98 }}
-          transition={{ duration: 0.16, ease: "easeOut" }}
-          className="hidden lg:flex w-full max-w-3xl h-[75vh] max-h-[640px] bg-[#05070B] rounded-3xl border border-white/[0.06] shadow-[0_24px_64px_rgba(0,0,0,0.95)] overflow-hidden text-[#E3E3E3] font-sans select-none"
-        >
-          {/* Left Navigation Menu */}
-          <aside className="w-64 shrink-0 bg-[#000000] border-r border-white/[0.04] p-4 flex flex-col justify-between">
-            <div className="space-y-4">
-              {/* Header */}
-              <div className="flex items-center gap-2.5 px-2 pt-1">
-                <DoraSparkle size={20} />
-                <h2 className="text-base font-semibold text-white tracking-tight">Settings</h2>
+        {/* Logout Confirmation Modal */}
+        {showLogoutConfirm && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-sm p-5 rounded-2xl bg-[#1c1c1e] border border-white/10 shadow-2xl space-y-4 text-center"
+            >
+              <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 mx-auto flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6" />
               </div>
-
-              {/* Navigation Items */}
-              <nav className="space-y-0.5 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setActiveSection("voice")}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
-                    activeSection === "voice"
-                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
-                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <Mic className="w-4 h-4 shrink-0" />
-                  <span>Voice & personality</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveSection("speech")}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
-                    activeSection === "speech"
-                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
-                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <Radio className="w-4 h-4 shrink-0" />
-                  <span>Speech engine</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveSection("language")}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
-                    activeSection === "language"
-                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
-                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <Globe className="w-4 h-4 shrink-0" />
-                  <span>Language & accent</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveSection("memory")}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
-                    activeSection === "memory"
-                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
-                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <Brain className="w-4 h-4 shrink-0" />
-                  <span>Memory & intelligence</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveSection("general")}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
-                    activeSection === "general"
-                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
-                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <Sliders className="w-4 h-4 shrink-0" />
-                  <span>General preferences</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveSection("about")}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors text-left ${
-                    activeSection === "about"
-                      ? "bg-[#0C1938] text-[#38BDF8] font-medium"
-                      : "text-white/70 hover:text-white hover:bg-white/[0.04]"
-                  }`}
-                >
-                  <Info className="w-4 h-4 shrink-0" />
-                  <span>About Dora</span>
-                </button>
-              </nav>
-            </div>
-
-            {/* Bottom Status */}
-            <div className="px-2 py-2 text-[11px] text-white/35 font-mono border-t border-white/[0.04]">
-              Gemini Live Connected
-            </div>
-          </aside>
-
-          {/* Right Detail Pane */}
-          <main className="flex-1 bg-[#05070B] flex flex-col overflow-hidden">
-            {/* Top Close Bar */}
-            <div className="px-7 py-4 border-b border-white/[0.04] flex items-center justify-between shrink-0">
-              <div className="text-xs text-white/40 uppercase tracking-wider font-mono">
-                Settings / {activeSection}
+              <div>
+                <h4 className="text-base font-semibold text-white">Log out of Dora?</h4>
+                <p className="text-xs text-white/50 mt-1 leading-relaxed">
+                  Your conversations and memories are safely stored on this device.
+                </p>
               </div>
-              <button
-                id="btn-close-settings-desktop"
-                type="button"
-                onClick={onClose}
-                className="p-1.5 rounded-full text-white/40 hover:text-white hover:bg-white/[0.08] transition-colors"
-                title="Close (Esc)"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Content Pane */}
-            <div className="flex-1 p-7 overflow-y-auto custom-scrollbar">
-              <div className="max-w-xl">
-                {activeSection === "main" ? renderVoiceContent() : renderActiveSectionContent()}
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-white text-xs font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowLogoutConfirm(false);
+                    onClose();
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-medium transition-colors shadow-md"
+                >
+                  Log Out
+                </button>
               </div>
-            </div>
-          </main>
-        </motion.div>
+            </motion.div>
+          </div>
+        )}
       </div>
     </AnimatePresence>
   );

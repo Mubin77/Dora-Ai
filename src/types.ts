@@ -88,3 +88,11 @@ export interface PendingAttachment {
   base64Data?: string;
   textContent?: string;
 }
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email?: string;
+  avatarUrl?: string;
+  isAuthenticated: boolean;
+}

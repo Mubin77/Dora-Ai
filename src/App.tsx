@@ -24,6 +24,7 @@ import {
   PendingAttachment,
   VoiceSettings,
   ConversationSession,
+  UserProfile,
 } from "./types";
 import { doraService } from "./services/geminiService";
 import { AudioEngine, playNaturalBrowserSpeech } from "./utils/audioUtils";
@@ -156,8 +157,9 @@ export default function App() {
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const docInputRef = useRef<HTMLInputElement | null>(null);
 
-  // User identity name (from memory or fallback to Mubin)
-  const [userName, setUserName] = useState<string>("Abdul Mubin");
+  // User profile identity (null by default for anonymous/guest session until authentication is added)
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [userName, setUserName] = useState<string>("");
 
   // Settings (Default aligned with authorized youthful reference voice)
   const [settings, setSettings] = useState<VoiceSettings>({
@@ -211,11 +213,13 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Save conversation turns to Session and localStorage whenever messages change
+  // Save conversation turns to Session and localStorage whenever messages change (only for explicit Chat conversations)
   useEffect(() => {
     try {
       localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId);
-      if (messages.length > 0) {
+      // Only save to session history if there is direct chat interaction (preserving clean history list)
+      const hasChatTurn = messages.some((m) => m.inputMode === "text" || !m.inputMode);
+      if (hasChatTurn && messages.length > 0) {
         const firstUserText = messages.find((m) => m.sender === "user")?.text || "New Conversation";
         const title = firstUserText.length > 30 ? `${firstUserText.slice(0, 30)}...` : firstUserText;
         const hasVoice = messages.some((m) => m.inputMode === "voice");
@@ -876,6 +880,7 @@ export default function App() {
       setCurrentSpokenText("");
       currentUserVoiceMessageIdRef.current = null;
       currentDoraMessageIdRef.current = null;
+      navigateToChat();
     } else {
       try {
         setState("requesting_permission");
@@ -1285,6 +1290,7 @@ export default function App() {
         onMobileClose={() => setIsMobileDrawerOpen(false)}
         isDesktopCollapsed={isDesktopSidebarCollapsed}
         onToggleDesktopCollapse={() => setIsDesktopSidebarCollapsed((prev) => !prev)}
+        user={currentUser}
         userName={userName}
         activeMode={activeMode}
         onOpenChat={navigateToChat}
@@ -1625,6 +1631,10 @@ export default function App() {
         onOpenMemory={() => {
           setIsSettingsOpen(false);
           setIsMemoryOpen(true);
+        }}
+        onOpenSkills={() => {
+          setIsSettingsOpen(false);
+          setIsSkillsOpen(true);
         }}
       />
 

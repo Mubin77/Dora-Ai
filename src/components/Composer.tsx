@@ -1,7 +1,8 @@
 import React, { useRef } from "react";
-import { Plus, Mic, MicOff, Send, AudioLines } from "lucide-react";
+import { Plus, ArrowUp } from "lucide-react";
 import { ActionMenu } from "./ActionMenu";
 import { AttachmentPreview } from "./AttachmentPreview";
+import { DoraSparkle } from "./DoraSparkle";
 import { ConversationState, PendingAttachment } from "../types";
 
 interface ComposerProps {
@@ -56,7 +57,6 @@ export const Composer: React.FC<ComposerProps> = ({
   handleDocFileSelected,
 }) => {
   const textInputRef = useRef<HTMLInputElement>(null);
-
   const hasTextOrAttachment = Boolean(inputText.trim() || pendingAttachment);
 
   return (
@@ -100,10 +100,10 @@ export const Composer: React.FC<ComposerProps> = ({
           onToggleScreenVision={onToggleScreenVision}
         />
 
-        {/* Floating Rounded Pill Bar */}
+        {/* Floating Rounded Pill Bar (Clean AMOLED dark surface) */}
         <div
           id="dora-input-container"
-          className="relative w-full dora-composer-pill rounded-full p-2 sm:p-2.5 flex flex-col shadow-[0_12px_40px_rgba(0,0,0,0.7)] transition-all min-h-[58px] sm:min-h-[64px]"
+          className="relative w-full bg-[#18181b] border border-white/[0.1] rounded-full p-2 sm:p-2.5 flex flex-col shadow-[0_12px_40px_rgba(0,0,0,0.7)] transition-all min-h-[58px] sm:min-h-[64px]"
         >
           {/* Staged Attachment Preview inside / above pill input */}
           {pendingAttachment && (
@@ -153,52 +153,30 @@ export const Composer: React.FC<ComposerProps> = ({
               />
             </form>
 
-            {/* Right Controls: Microphone & Live Voice Button / Send */}
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Optional Microphone Dictation Button */}
-              <button
-                type="button"
-                onClick={onToggleCall}
-                title={isCallActive ? "Mute / Disconnect voice" : "Voice input"}
-                className={`p-2.5 rounded-full transition-colors ${
-                  isCallActive
-                    ? "text-[#38BDF8] bg-[#1D72FE]/15"
-                    : "text-white/60 hover:text-white hover:bg-white/[0.08]"
-                }`}
-              >
-                {isMuted && isCallActive ? (
-                  <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-red-400" />
-                ) : (
-                  <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
-                )}
-              </button>
-
-              {/* Send Button or Prominent Live Voice Waveform Button */}
+            {/* Right: Circular Send or Voice Mode Button */}
+            <div className="flex items-center shrink-0">
               {hasTextOrAttachment ? (
                 <button
                   id="btn-send-message"
-                  type="button"
-                  onClick={(e) => onSubmit(e)}
+                  type="submit"
+                  onClick={onSubmit}
+                  disabled={state === "thinking"}
                   title="Send message"
                   aria-label="Send message"
-                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-[#1D72FE] hover:bg-[#155FD6] text-white flex items-center justify-center shadow-[0_0_14px_rgba(29,114,254,0.45)] transition-all shrink-0"
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 bg-[#1D72FE] hover:bg-[#155FD6] text-white shadow-[0_0_14px_rgba(29,114,254,0.45)]"
                 >
-                  <Send className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                  <ArrowUp className="w-5 h-5 sm:w-5.5 sm:h-5.5 stroke-[2.5]" />
                 </button>
               ) : (
                 <button
-                  id="btn-main-voice-live"
+                  id="btn-voice-mode"
                   type="button"
                   onClick={onToggleCall}
-                  title={isCallActive ? "End live conversation" : "Start live voice conversation"}
-                  aria-label="Live Voice Conversation"
-                  className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shrink-0 transition-all shadow-[0_0_18px_rgba(29,114,254,0.45)] ${
-                    isCallActive
-                      ? "bg-[#1D72FE] text-white animate-pulse"
-                      : "bg-[#1D72FE] hover:bg-[#155FD6] text-white transform hover:scale-105 active:scale-95"
-                  }`}
+                  title="Start Dora Voice"
+                  aria-label="Start Dora Voice"
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 bg-white/[0.08] hover:bg-[#1D72FE]/20 hover:border-[#1D72FE]/40 border border-transparent text-white shadow-sm"
                 >
-                  <AudioLines className="w-5 h-5 sm:w-6 sm:h-6" />
+                  <DoraSparkle size={24} state={state} isCallActive={isCallActive} />
                 </button>
               )}
             </div>
