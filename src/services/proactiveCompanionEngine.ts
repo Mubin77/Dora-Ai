@@ -291,28 +291,28 @@ export class ProactiveCompanionEngine {
       contextHint = `Camera view active: ${this.lastCameraVisualCue}`;
       promptInstruction =
         `[PROACTIVE COMPANION INITIATION: User is on camera and has been quietly with you. ` +
-        `As Dora, make a very brief, warm, authentic Bangladeshi companion remark about being with them or noticing what they are doing (1 short sentence in natural Banglish/Bangla, e.g. 'Ki bhabcho eto mon diye? 👀' or 'Tumi ki ekhon chill korteso?'). ` +
+        `As Dora, make a very brief, warm, authentic Bangladeshi companion remark about being with them or noticing what they are doing (1 short sentence, e.g. 'কী ভাবছ এত মন দিয়ে? 👀' or 'তুই কি এখন চিল করতেছিস?'). ` +
         `Do NOT sound like an assistant. Do NOT say 'How can I assist'. Keep it completely natural.]`;
     } else if (hasScreen) {
       triggerType = "SCREEN_ACTIVITY";
       contextHint = `Screen share active: ${this.lastScreenVisualCue}`;
       promptInstruction =
         `[PROACTIVE COMPANION INITIATION: User is sharing their screen and there has been a comfortable silence. ` +
-        `As Dora, give a very brief, natural 1-sentence companion comment about what is on screen or ask casually how it's going in authentic Banglish. ` +
+        `As Dora, give a very brief, natural 1-sentence companion comment about what is on screen (e.g. 'তুই এখনও ওই কাজটাই করতেছিস নাকি? 😂' or 'Wait, এইটা কী দেখতেছিস?'). ` +
         `Avoid formal assistant phrasing.]`;
     } else if (this.activeTopic && Math.random() > 0.5) {
       triggerType = "TOPIC_RESUMPTION";
       contextHint = `Previous topic: ${this.activeTopic}`;
       promptInstruction =
         `[PROACTIVE COMPANION INITIATION: User has been quiet for a moment. ` +
-        `As Dora, casually follow up on the previous thought ("${this.activeTopic}") in 1 short, warm Banglish sentence (e.g. 'Bhalo kotha, oi matter ta niye ki bhabla?' or 'Eto chup keno? 😭'). ` +
+        `As Dora, casually follow up on the previous thought ("${this.activeTopic}") in 1 short, warm Banglish/Bangla sentence (e.g. 'এই, একটা কথা মনে পড়ল...', 'ওই যে তোর কথাটা বলছিলি না, সেটা নিয়ে একটা idea আসছে'). ` +
         `Do NOT pester or use formal assistant speak.]`;
     } else {
       triggerType = "GENTLE_SILENCE_CHECKIN";
       contextHint = "Comfortable silence check-in";
       promptInstruction =
         `[PROACTIVE COMPANION INITIATION: User has been quiet for a moment in this voice call. ` +
-        `As Dora, break the silence with a very short, warm, natural Gen-Z Bangladeshi companion check-in (1 short sentence in natural Banglish, e.g. 'Eto chupchap keno? 😭 Everything okay?' or 'Acho to shathe?'). ` +
+        `As Dora, break the silence with a very short, warm, natural Gen-Z Bangladeshi companion check-in (1 short sentence, e.g. 'এই, এত চুপচাপ কেন? 😭' or 'আচ্ছা, একটা জিনিস জিজ্ঞেস করি?'). ` +
         `Be warm and casual. NEVER say 'How may I help you' or 'How can I assist'.]`;
     }
 

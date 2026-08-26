@@ -53,6 +53,32 @@ export class MemoryManager {
   }
 
   /**
+   * Retrieves active persistent pronoun preference ('tumi' or 'tui')
+   */
+  public getActivePronounPreference(): "tumi" | "tui" {
+    const item = this.store.findByKey("pronoun_style", "preferences");
+    if (item && (item.value === "tui" || item.value === "tumi")) {
+      return item.value as "tumi" | "tui";
+    }
+    return "tumi";
+  }
+
+  /**
+   * Stores persistent pronoun preference ('tumi' or 'tui')
+   */
+  public setPronounPreference(pref: "tumi" | "tui"): MemoryItem {
+    return this.remember(
+      "preferences",
+      "pronoun_style",
+      pref,
+      100,
+      1.0,
+      "explicit",
+      ["preference", "language_style", "pronoun_style"]
+    );
+  }
+
+  /**
    * Adds or updates a memory in long-term storage.
    * Both manual settings and conversation memory write trigger this identical method.
    */

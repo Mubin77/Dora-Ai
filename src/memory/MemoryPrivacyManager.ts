@@ -30,6 +30,24 @@ export class MemoryPrivacyManager {
     // Strip optional leading address ("Dora, ", "Hey Dora: ", etc.)
     clean = clean.replace(/^(?:hey|yo|hi|hello|listen|ok|okay)?\s*dora[,\s:!-]+/, "").trim();
 
+    // 0. Explicit Pronoun Style Preference Command (TUI / TUMI / RESET)
+    const pronounCheck = this.parsePronounCommand(raw);
+    if (pronounCheck.isCommand && pronounCheck.preference) {
+      return {
+        isCommand: true,
+        action: "explicit_remember",
+        explicitCandidate: {
+          category: "preferences",
+          key: "pronoun_style",
+          value: pronounCheck.preference,
+          importance: 100,
+          confidence: 1.0,
+          tags: ["preference", "language_style", "pronoun_style"],
+          naturalConfirmation: pronounCheck.acknowledgment || "Got it, I'll use that from now on!",
+        },
+      };
+    }
+
     // 1. Forget All / Delete All
     if (
       clean === "forget everything about me" ||
@@ -182,6 +200,95 @@ export class MemoryPrivacyManager {
     });
 
     return `Here's what I have stored in my long-term memory: ${items.join(", ")}. You can tell me to forget anything anytime! 🖤`;
+  }
+
+  /**
+   * Helper to evaluate explicit pronoun style preference commands
+   */
+  public parsePronounCommand(text: string): {
+    isCommand: boolean;
+    preference?: "tui" | "tumi";
+    isReset?: boolean;
+    acknowledgment?: string;
+  } {
+    const raw = (text || "").trim();
+    if (!raw || raw.length < 3) return { isCommand: false };
+
+    const clean = raw.toLowerCase().replace(/[।!?.,;:'"()\-–—]/g, " ").replace(/\s+/g, " ").trim();
+    const isBangla = /[\u0980-\u09FF]/.test(raw);
+
+    // 1. Explicit TUI Request Patterns (Bangla, Banglish, English)
+    const tuiPatterns = [
+      /(?:এখন\s*থেকে|আজ\s*থেকে|আজকে\s*থেকে|পরের\s*থেকে|এরপর\s*থেকে)?\s*(?:আমার\s*সাথে|আমার\s*লগে|আমাকে|আমারে)?\s*(?:tui|তুই)\s*করে\s*(?:কথা\s*)?(?:বলবি|বলিস|বল|বলো|বলবেন)/i,
+      /\b(?:আমাকে|আমারে)\s*(?:এখন\s*থেকে|আজ\s*থেকে)?\s*(?:tui|তুই)\s*(?:করে\s*)?(?:বলিস|বলবি|বল|বলো)\b/i,
+      /\b(?:tui|তুই)\s*করে\s*(?:কথা\s*)?(?:বলবি|বলিস|বল|বলো)\b/i,
+      /\b(?:tui|তুই)\s*করে\s*(?:বলিস|বলবি|বল)\b/i,
+      /(?:ekhon\s*theke|aj\s*theke|ajke\s*theke|porer\s*theke)?\s*(?:amar\s*sathe|amr\s*sathe|amar\s*shathe|amr\s*shathe|amake|amk|amare)?\s*tui\s*kore\s*(?:kotha\s*)?(?:bolbi|bolish|bolis|bol|bolo|bolben)/i,
+      /\b(?:amake|amk|amare)\s*(?:ekhon\s*theke|aj\s*theke)?\s*tui\s*(?:kore\s*)?(?:bolish|bolbi|bol|bolo)\b/i,
+      /\btui\s*kore\s*(?:kotha\s*)?(?:bolbi|bolish|bolis|bol|bolo)\b/i,
+      /\btui\s*kore\s*(?:bolish|bolbi|bol)\b/i,
+      /\b(?:call\s*me\s*tui|use\s*tui\s*(?:with\s*me|mode)?|speak\s*(?:with|to)\s*me\s*(?:in|using)\s*tui|talk\s*(?:to|with)\s*me\s*(?:in|using)\s*tui|switch\s*(?:to|into)\s*tui(?:\s*mode)?)\b/i,
+    ];
+
+    for (const pattern of tuiPatterns) {
+      if (pattern.test(clean) || pattern.test(raw)) {
+        return {
+          isCommand: true,
+          preference: "tui",
+          isReset: false,
+          acknowledgment: isBangla
+            ? "আচ্ছা, ঠিক আছে 😭 এখন থেকে তুই করেই বলব।"
+            : "Accha, thik ache 😭 ekhon theke tui korei bolbo.",
+        };
+      }
+    }
+
+    // 2. Explicit TUMI Request Patterns (Bangla, Banglish, English)
+    const tumiPatterns = [
+      /(?:এখন\s*থেকে|আজ\s*থেকে|আজকে\s*থেকে|পরের\s*থেকে|এরপর\s*থেকে)?\s*(?:আমার\s*সাথে|আমার\s*লগে|আমাকে|আমারে)?\s*(?:tumi|তুমি)\s*করে\s*(?:কথা\s*)?(?:বলবে|বলবা|বলো|বলিস|বল|বলবেন)/i,
+      /\b(?:আমাকে|আমারে)\s*(?:এখন\s*থেকে|আজ\s*থেকে)?\s*(?:tumi|তুমি)\s*(?:করে\s*)?(?:বলবে|বলবা|বলো|বল)\b/i,
+      /\b(?:tumi|তুমি)\s*করে\s*(?:কথা\s*)?(?:বলবে|বলবা|বলো|বল)\b/i,
+      /\b(?:tumi|তুমি)\s*করে\s*(?:বলো|বলবে|বলবা|বল)\b/i,
+      /(?:ekhon\s*theke|aj\s*theke|ajke\s*theke|porer\s*theke)?\s*(?:amar\s*sathe|amr\s*sathe|amar\s*shathe|amr\s*shathe|amake|amk|amare)?\s*tumi\s*kore\s*(?:kotha\s*)?(?:bolba|bolbe|bolo|bol|bolish|bolben)/i,
+      /\b(?:amake|amk|amare)\s*(?:ekhon\s*theke|aj\s*theke)?\s*tumi\s*(?:kore\s*)?(?:bolba|bolbe|bolo|bol)\b/i,
+      /\btumi\s*kore\s*(?:kotha\s*)?(?:bolba|bolbe|bolo|bol)\b/i,
+      /\btumi\s*kore\s*(?:bolo|bolba|bolbe|bol)\b/i,
+      /\b(?:call\s*me\s*tumi|use\s*tumi\s*(?:with\s*me|mode)?|speak\s*(?:with|to)\s*me\s*(?:in|using)\s*tumi|talk\s*(?:to|with)\s*me\s*(?:in|using)\s*tumi|switch\s*(?:to|into)\s*tumi(?:\s*mode)?)\b/i,
+    ];
+
+    for (const pattern of tumiPatterns) {
+      if (pattern.test(clean) || pattern.test(raw)) {
+        return {
+          isCommand: true,
+          preference: "tumi",
+          isReset: false,
+          acknowledgment: isBangla
+            ? "আচ্ছা, ঠিক আছে। এখন থেকে তুমি করেই বলব।"
+            : "Accha, thik ache. Ekhon theke tumi korei bolbo.",
+        };
+      }
+    }
+
+    // 3. Reset to Default Patterns
+    const resetPatterns = [
+      /\b(?:আগের\s*মতো\s*কথা\s*বলো|আগের\s*মতো\s*বলো|নরমাল\s*করে\s*কথা\s*বলো|normal\s*করে\s*কথা\s*বলো|ডিফল্ট\s*রাখো|default\s*রাখো)\b/i,
+      /\b(?:ager\s*moto\s*kotha\s*bolo|ager\s*moto\s*bolo|normal\s*kore\s*kotha\s*bolo|normal\s*kore\s*bolo|default\s*rakho|reset\s*pronoun|reset\s*to\s*default|default\s*mode)\b/i,
+    ];
+
+    for (const pattern of resetPatterns) {
+      if (pattern.test(clean) || pattern.test(raw)) {
+        return {
+          isCommand: true,
+          preference: "tumi",
+          isReset: true,
+          acknowledgment: isBangla
+            ? "আচ্ছা, আগের মতো নরমাল করেই বলছি।"
+            : "Accha, ager moto normal korei bolchi.",
+        };
+      }
+    }
+
+    return { isCommand: false };
   }
 }
 

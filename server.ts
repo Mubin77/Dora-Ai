@@ -436,10 +436,11 @@ Then organize key headlines with:
       }
 
 
-      // Apply LanguageStyleAdapter to eliminate formal assistant-speak and harmonize Banglish flow
+      // Apply LanguageStyleAdapter to eliminate formal assistant-speak and harmonize Banglish/Bangla flow
       const conversationalMood = (brainAnalysis.languageStyle?.mood as any) || languageStyleAdapter.detectMood(message);
       const languageMode = (brainAnalysis.languageStyle?.languageMode as any) || languageStyleAdapter.detectLanguageMode(message);
-      reply = languageStyleAdapter.adaptResponseText(reply, conversationalMood, languageMode);
+      const activePronoun = brainAnalysis.languageStyle?.pronounPreference || languageStyleAdapter.getPronounPreference();
+      reply = languageStyleAdapter.adaptResponseText(reply, conversationalMood, languageMode, activePronoun);
 
       // Determine emotional tone and quick reaction for visual resonance
       let emotion = "warm";
@@ -765,8 +766,14 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
         "gemini-3.1-flash-live-preview",
       ];
 
+      // Inject persistent pronoun preference directive into live voice session
+      const pronounPref = languageStyleAdapter.getPronounPreference();
+      const pronounDirectives = languageStyleAdapter.getPronounPromptDirectives(pronounPref);
+      const pronounDirectiveContext = `\n\n[PERSISTENT PRONOUN PREFERENCE DIRECTIVE]\n${pronounDirectives.join("\n")}`;
+
       const effectiveSystemInstruction = [
         DORA_SYSTEM_INSTRUCTION,
+        pronounDirectiveContext,
         memoryContext ? `\n\n${memoryContext}` : "",
         historyContext ? `\n\n[RECENT ACTIVE CONVERSATION CONTEXT]\n${historyContext}\n(Continue seamlessly from the above context in this voice session)` : "",
       ]

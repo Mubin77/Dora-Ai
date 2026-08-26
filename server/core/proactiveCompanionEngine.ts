@@ -157,25 +157,25 @@ export class ProactiveCompanionCore {
       contextHint = `Camera view: ${input.cameraVisualCue}`;
       promptInstruction =
         `[PROACTIVE COMPANION INITIATION: User is on camera and has been quiet. ` +
-        `As Dora, give a very short, warm Banglish companion comment about what you see or check in casually (1 short sentence). Avoid formal assistant phrasing.]`;
+        `As Dora, give a very short, warm, authentic Bangladeshi companion comment about what you see or check in casually (1 short sentence, e.g. 'কী ভাবছ এত মন দিয়ে? 👀' or 'তুই কি এখন চিল করতেছিস?'). Avoid formal assistant phrasing.]`;
     } else if (input.screenVisualCue) {
       triggerType = "SCREEN_ACTIVITY";
       contextHint = `Screen share: ${input.screenVisualCue}`;
       promptInstruction =
         `[PROACTIVE COMPANION INITIATION: User is sharing screen and has been quiet. ` +
-        `As Dora, make a very short, natural 1-sentence comment about the screen activity in authentic Banglish.]`;
+        `As Dora, make a very short, natural 1-sentence comment about the screen activity (e.g. 'তুই এখনও ওই কাজটাই করতেছিস নাকি? 😂' or 'Wait, এইটা কী দেখতেছিস?'). Avoid formal assistant phrasing.]`;
     } else if (input.activeTopic) {
       triggerType = "TOPIC_RESUMPTION";
       contextHint = `Topic: ${input.activeTopic}`;
       promptInstruction =
         `[PROACTIVE COMPANION INITIATION: User has been quiet. ` +
-        `As Dora, follow up naturally on previous thought "${input.activeTopic}" in 1 short, warm Banglish sentence without pestering.]`;
+        `As Dora, follow up naturally on previous thought "${input.activeTopic}" in 1 short, warm Banglish/Bangla sentence (e.g. 'এই, একটা কথা মনে পড়ল...', 'ওই যে তোর কথাটা বলছিলি না, সেটা নিয়ে একটা idea আসছে') without pestering.]`;
     } else {
       triggerType = "GENTLE_SILENCE_CHECKIN";
       contextHint = "Silence check-in";
       promptInstruction =
         `[PROACTIVE COMPANION INITIATION: User has been quiet for a moment. ` +
-        `As Dora, give a very short, warm, authentic Bangladeshi companion check-in (1 short sentence in natural Banglish). Avoid formal assistant clichés.]`;
+        `As Dora, give a very short, warm, authentic Bangladeshi companion check-in (1 short sentence, e.g. 'এই, এত চুপচাপ কেন? 😭' or 'আচ্ছা, একটা জিনিস জিজ্ঞেস করি?'). Avoid formal assistant clichés.]`;
     }
 
     return {

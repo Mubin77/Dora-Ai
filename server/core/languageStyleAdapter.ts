@@ -20,11 +20,22 @@ export type ConversationalMood =
 
 export type LanguageMode = "BANGLA" | "BANGLISH" | "ENGLISH" | "MIXED";
 
+export type PronounPreference = "tumi" | "tui";
+
+export interface PronounDetectionResult {
+  isCommand: boolean;
+  preference?: PronounPreference;
+  isReset?: boolean;
+  acknowledgment?: string;
+  explanation?: string;
+}
+
 export interface StyleAdaptationOptions {
   userText: string;
   mood?: ConversationalMood;
   tone?: "playful" | "grounded" | "empathetic" | "curious" | "excited" | "quiet" | "warm" | "calm";
   slangDensity?: "none" | "subtle" | "moderate" | "expressive";
+  pronounPreference?: PronounPreference;
 }
 
 export interface StyleAdaptationResult {
@@ -38,6 +49,7 @@ export interface StyleAdaptationResult {
 
 export class LanguageStyleAdapter {
   private static instance: LanguageStyleAdapter;
+  private activePronounPreference: PronounPreference = "tumi";
 
   private constructor() {}
 
@@ -46,6 +58,22 @@ export class LanguageStyleAdapter {
       LanguageStyleAdapter.instance = new LanguageStyleAdapter();
     }
     return LanguageStyleAdapter.instance;
+  }
+
+  public getActivePronounPreference(): PronounPreference {
+    return this.activePronounPreference;
+  }
+
+  public setActivePronounPreference(preference: PronounPreference): void {
+    this.activePronounPreference = preference;
+  }
+
+  public getPronounPreference(): PronounPreference {
+    return this.activePronounPreference;
+  }
+
+  public setPronounPreference(preference: PronounPreference): void {
+    this.activePronounPreference = preference;
   }
 
   // Strictly banned formal assistant clichés and patterns in English and Bangla
@@ -231,6 +259,9 @@ export class LanguageStyleAdapter {
     },
     TEASING: {
       openers: [
+        "বাহ, productivity-এর peak achievement 😭",
+        "তুই তো দেখি ঘুমের সাথে committed relationship-এ আছিস 😂",
+        "বাসা এখনও অক্ষত আছে তো? 👀😂",
         "আচ্ছা, এখন দেখা যাক কে কথা বলছে 😂",
         "তোর আর ভালো হওয়া হলো না 💀",
         "আবার শুরু করলি? 😂",
@@ -501,11 +532,15 @@ export class LanguageStyleAdapter {
   public adaptResponseText(
     rawText: string,
     mood: ConversationalMood = "CHILL",
-    langMode?: LanguageMode
+    langMode?: LanguageMode,
+    pronounPreference?: PronounPreference
   ): string {
     let text = this.sanitizeAssistantSpeak(rawText, mood);
 
     if (!text) return "";
+
+    const activePref = pronounPreference || this.activePronounPreference || "tumi";
+    text = this.harmonizePronounsAndVerbs(text, activePref);
 
     const detectedLang = langMode || this.detectLanguageMode(text);
 
@@ -531,16 +566,261 @@ export class LanguageStyleAdapter {
   }
 
   /**
+   * Detects explicit user commands requesting to switch conversational pronoun style (TUI / TUMI) or reset to default.
+   * Does NOT trigger on single casual usages like "tui kemon achis?" or "tumi kemon acho?".
+   */
+  public detectExplicitPronounCommand(userText: string): PronounDetectionResult {
+    const raw = (userText || "").trim();
+    if (!raw || raw.length < 3) {
+      return { isCommand: false };
+    }
+
+    const clean = raw.toLowerCase().replace(/[।!?.,;:'"()\-–—]/g, " ").replace(/\s+/g, " ").trim();
+
+    // 1. Explicit TUI Request Patterns (Bangla, Banglish, and English)
+    const tuiPatterns = [
+      // Bengali script
+      /(?:এখন\s*থেকে|আজ\s*থেকে|আজকে\s*থেকে|পরের\s*থেকে|এরপর\s*থেকে)?\s*(?:আমার\s*সাথে|আমার\s*লগে|আমাকে|আমারে)?\s*(?:tui|তুই)\s*করে\s*(?:কথা\s*)?(?:বলবি|বলিস|বল|বলো|বলবেন)/i,
+      /(?:আমাকে|আমারে)?\s*(?:এখন\s*থেকে|আজ\s*থেকে)?\s*(?:tui|তুই)\s*(?:করে\s*)?(?:বলিস|বলবি|বল|বলো)/i,
+      /(?:tui|তুই)\s*করে\s*(?:কথা\s*)?(?:বলবি|বলিস|বল|বলো)/i,
+      /(?:tui|তুই)\s*করে\s*(?:বলিস|বলবি|বল)/i,
+      // Banglish / Romanized
+      /(?:ekhon\s*theke|aj\s*theke|ajke\s*theke|porer\s*theke)?\s*(?:amar\s*sathe|amr\s*sathe|amar\s*shathe|amr\s*shathe|amake|amk|amare)?\s*tui\s*kore\s*(?:kotha\s*)?(?:bolbi|bolish|bolis|bol|bolo|bolben)/i,
+      /\b(?:amake|amk|amare)\s*(?:ekhon\s*theke|aj\s*theke)?\s*tui\s*(?:kore\s*)?(?:bolish|bolbi|bol|bolo)\b/i,
+      /\btui\s*kore\s*(?:kotha\s*)?(?:bolbi|bolish|bolis|bol|bolo)\b/i,
+      /\btui\s*kore\s*(?:bolish|bolbi|bol)\b/i,
+      // English expressions
+      /\b(?:call\s*me\s*tui|use\s*tui\s*(?:with\s*me|mode)?|speak\s*(?:with|to)\s*me\s*(?:in|using)\s*tui|talk\s*(?:to|with)\s*me\s*(?:in|using)\s*tui|switch\s*(?:to|into)\s*tui(?:\s*mode)?)\b/i,
+    ];
+
+    for (const pattern of tuiPatterns) {
+      if (pattern.test(clean) || pattern.test(raw)) {
+        const isBangla = this.detectLanguageMode(raw) === "BANGLA";
+        return {
+          isCommand: true,
+          preference: "tui",
+          isReset: false,
+          acknowledgment: isBangla
+            ? "আচ্ছা, ঠিক আছে 😭 এখন থেকে তুই করেই বলব।"
+            : "Accha, thik ache 😭 ekhon theke tui korei bolbo.",
+          explanation: "Switched active pronoun mode to TUI.",
+        };
+      }
+    }
+
+    // 2. Explicit TUMI Request Patterns (Bangla, Banglish, and English)
+    const tumiPatterns = [
+      // Bengali script
+      /(?:এখন\s*থেকে|আজ\s*থেকে|আজকে\s*থেকে|পরের\s*থেকে|এরপর\s*থেকে)?\s*(?:আমার\s*সাথে|আমার\s*লগে|আমাকে|আমারে)?\s*(?:tumi|তুমি)\s*করে\s*(?:কথা\s*)?(?:বলবে|বলবা|বলো|বলিস|বল|বলবেন)/i,
+      /(?:আমাকে|আমারে)?\s*(?:এখন\s*থেকে|আজ\s*থেকে)?\s*(?:tumi|তুমি)\s*(?:করে\s*)?(?:বলবে|বলবা|বলো|বল)/i,
+      /(?:tumi|তুমি)\s*করে\s*(?:কথা\s*)?(?:বলবে|বলবা|বলো|বল)/i,
+      /(?:tumi|তুমি)\s*করে\s*(?:বলো|বলবে|বলবা|বল)/i,
+      // Banglish / Romanized
+      /(?:ekhon\s*theke|aj\s*theke|ajke\s*theke|porer\s*theke)?\s*(?:amar\s*sathe|amr\s*sathe|amar\s*shathe|amr\s*shathe|amake|amk|amare)?\s*tumi\s*kore\s*(?:kotha\s*)?(?:bolba|bolbe|bolo|bol|bolish|bolben)/i,
+      /\b(?:amake|amk|amare)\s*(?:ekhon\s*theke|aj\s*theke)?\s*tumi\s*(?:kore\s*)?(?:bolba|bolbe|bolo|bol)\b/i,
+      /\btumi\s*kore\s*(?:kotha\s*)?(?:bolba|bolbe|bolo|bol)\b/i,
+      /\btumi\s*kore\s*(?:bolo|bolba|bolbe|bol)\b/i,
+      // English expressions
+      /\b(?:call\s*me\s*tumi|use\s*tumi\s*(?:with\s*me|mode)?|speak\s*(?:with|to)\s*me\s*(?:in|using)\s*tumi|talk\s*(?:to|with)\s*me\s*(?:in|using)\s*tumi|switch\s*(?:to|into)\s*tumi(?:\s*mode)?)\b/i,
+    ];
+
+    for (const pattern of tumiPatterns) {
+      if (pattern.test(clean) || pattern.test(raw)) {
+        const isBangla = this.detectLanguageMode(raw) === "BANGLA";
+        return {
+          isCommand: true,
+          preference: "tumi",
+          isReset: false,
+          acknowledgment: isBangla
+            ? "আচ্ছা, ঠিক আছে। এখন থেকে তুমি করেই বলব।"
+            : "Accha, thik ache. Ekhon theke tumi korei bolbo.",
+          explanation: "Switched active pronoun mode to TUMI.",
+        };
+      }
+    }
+
+    // 3. Reset to Default Patterns
+    const resetPatterns = [
+      /(?:আগের\s*মতো\s*কথা\s*বলো|আগের\s*মতো\s*বলো|নরমাল\s*করে\s*কথা\s*বলো|normal\s*করে\s*কথা\s*বলো|ডিফল্ট\s*রাখো|default\s*রাখো)/i,
+      /\b(?:ager\s*moto\s*kotha\s*bolo|ager\s*moto\s*bolo|normal\s*kore\s*kotha\s*bolo|normal\s*kore\s*bolo|default\s*rakho|reset\s*pronoun|reset\s*to\s*default|default\s*mode)\b/i,
+    ];
+
+    for (const pattern of resetPatterns) {
+      if (pattern.test(clean) || pattern.test(raw)) {
+        const isBangla = this.detectLanguageMode(raw) === "BANGLA";
+        return {
+          isCommand: true,
+          preference: "tumi",
+          isReset: true,
+          acknowledgment: isBangla
+            ? "আচ্ছা, আগের মতো নরমাল করেই বলছি।"
+            : "Accha, ager moto normal korei bolchi.",
+          explanation: "Reset conversational pronoun mode to default (TUMI).",
+        };
+      }
+    }
+
+    return { isCommand: false };
+  }
+
+  /**
+   * Generates authoritative pronoun-mode directives for LLM prompt context
+   */
+  public getPronounPromptDirectives(preference?: PronounPreference): string[] {
+    const pref = preference || this.activePronounPreference || "tumi";
+    const directives: string[] = [];
+
+    if (pref === "tui") {
+      directives.push(
+        "[ACTIVE PRONOUN MODE: TUI (তুই / তোর / তোকে)]",
+        "The user has explicitly chosen TUI mode. You MUST address the user using 'তুই' / 'তোর' / 'তোকে' (in Banglish: 'tui' / 'tor' / 'toke').",
+        "Strict TUI Pronoun-Verb Agreement Rules:",
+        "- Use 'তুই করছিস / বলছিস / যাচ্ছিস / করবি / বলবি / যাবি / কর / বল / পারিস / দেখ' (in Banglish: 'tui korchis / bolchis / jacchis / korbi / bolbi / jabi / kor / bol / paris / dekh').",
+        "- NEVER mix with TUMI pronouns or verbs (e.g. NEVER say 'তুই ... বলো', 'তুই ... করছ', 'তুমি ... করিস', 'তোকে ... বলো', 'তোর ... করো').",
+        "- Retain full Gen-Z companion warmth, humor, emojis (😭, 😂, 💀), and playful charm."
+      );
+    } else {
+      directives.push(
+        "[ACTIVE PRONOUN MODE: TUMI (তুমি / তোমার / তোমাকে)]",
+        "Address the user using 'তুমি' / 'তোমার' / 'তোমাকে' (in Banglish: 'tumi' / 'tomar' / 'tomake').",
+        "Strict TUMI Pronoun-Verb Agreement Rules:",
+        "- Use 'তুমি করছ / করছো / বলছ / বলছো / যাচ্ছ / করবে / বলবে / যাবে / করো / বলো / পারো / দেখো' (in Banglish: 'tumi korcho / bolcho / jaccho / korbe / bolbe / jabe / koro / bolo / paro / dekho').",
+        "- NEVER mix with TUI pronouns or verbs (e.g. NEVER say 'তুমি ... করিস', 'তুমি ... বলবি', 'তোমার ... করিস', 'তোমাকে ... বলিস').",
+        "- Retain full Gen-Z companion warmth, humor, and emotional resonance."
+      );
+    }
+
+    return directives;
+  }
+
+  /**
+   * Harmonizes text to ensure strict pronoun and verb agreement according to active preference.
+   */
+  public harmonizePronounsAndVerbs(text: string, preference?: PronounPreference): string {
+    if (!text) return "";
+    const pref = preference || this.activePronounPreference || "tumi";
+    let res = text;
+
+    const replaceBangla = (input: string, word: string, rep: string) => {
+      return input.replace(new RegExp(`(^|[^\\u0980-\\u09FFa-zA-Z0-9])${word}(?=[^\\u0980-\\u09FFa-zA-Z0-9]|$)`, "g"), `$1${rep}`);
+    };
+
+    if (pref === "tui") {
+      // 1. Bengali Script: Replace TUMI pronouns with TUI pronouns
+      res = replaceBangla(res, "তুমি", "তুই");
+      res = replaceBangla(res, "তোমার", "তোর");
+      res = replaceBangla(res, "তোমাকে", "তোকে");
+      res = replaceBangla(res, "তোমাদের", "তোদের");
+
+      // 2. Banglish (Latin): Replace TUMI pronouns with TUI pronouns
+      res = res.replace(/\b(?:tumi|tmi)\b/gi, (m) => (m[0] === m[0].toUpperCase() ? "Tui" : "tui"));
+      res = res.replace(/\b(?:tomar|tmr)\b/gi, (m) => (m[0] === m[0].toUpperCase() ? "Tor" : "tor"));
+      res = res.replace(/\b(?:tomake|tmk)\b/gi, (m) => (m[0] === m[0].toUpperCase() ? "Toke" : "toke"));
+      res = res.replace(/\b(?:tomader|tmdr)\b/gi, (m) => (m[0] === m[0].toUpperCase() ? "Toder" : "toder"));
+
+      // 3. Clean up common mismatched imperative/second-person verbs when addressing TUI
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)করো(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 কর");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)বলো(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বল");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)আছো(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 আছিস");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)আছ(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 আছিস");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)করছ(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 করছিস");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)করছো(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 করছিস");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)বলছ(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বলছিস");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)বলছো(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বলছিস");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)করবে(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 করবি");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)বলবে(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বলবি");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)যাবে(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 যাবি");
+      res = res.replace(/(তুই\s+[^\.\?!,;]+?)(?:\s|^)পারো(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 পারিস");
+      res = res.replace(/(তোকে\s+[^\.\?!,;]+?)(?:\s|^)বলো(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বল");
+      res = res.replace(/(তোর\s+[^\.\?!,;]+?)(?:\s|^)করো(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 কর");
+
+      // Banglish verbs with tui
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bkoro\b/gi, "$1kor");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bbolo\b/gi, "$1bol");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bacho\b/gi, "$1achis");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\basa\b/gi, "$1asish");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bkorcho\b/gi, "$1korchis");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bkorso\b/gi, "$1korsos");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bbolcho\b/gi, "$1bolchis");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bbolso\b/gi, "$1bolsos");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bkorba\b/gi, "$1korbi");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bkorbe\b/gi, "$1korbi");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bbolba\b/gi, "$1bolbi");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bbolbe\b/gi, "$1bolbi");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bjaba\b/gi, "$1jabi");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bjabe\b/gi, "$1jabi");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bparo\b/gi, "$1paris");
+      res = res.replace(/\b(tui\s+[^\.\?!,;]+?)\bparba\b/gi, "$1parbi");
+    } else {
+      // TUMI mode:
+      // 1. Bengali Script: Replace TUI pronouns with TUMI pronouns
+      res = replaceBangla(res, "তুই", "তুমি");
+      res = replaceBangla(res, "তোর", "তোমার");
+      res = replaceBangla(res, "তোকে", "তোমাকে");
+      res = replaceBangla(res, "তোদের", "তোমাদের");
+
+      // 2. Banglish (Latin): Replace TUI pronouns with TUMI pronouns
+      res = res.replace(/\btui\b/gi, (m) => (m[0] === m[0].toUpperCase() ? "Tumi" : "tumi"));
+      res = res.replace(/\btor\b/gi, (m) => (m[0] === m[0].toUpperCase() ? "Tomar" : "tomar"));
+      res = res.replace(/\btoke\b/gi, (m) => (m[0] === m[0].toUpperCase() ? "Tomake" : "tomake"));
+      res = res.replace(/\btoder\b/gi, (m) => (m[0] === m[0].toUpperCase() ? "Tomader" : "tomader"));
+
+      // 3. Clean up common mismatched verbs when addressing TUMI
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)করিস(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 করো");
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)বলিস(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বলো");
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)আছিস(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 আছো");
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)করছিস(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 করছ");
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)বলছিস(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বলছ");
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)করবি(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 করবে");
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)বলবি(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বলবে");
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)যাবি(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 যাবে");
+      res = res.replace(/(তুমি\s+[^\.\?!,;]+?)(?:\s|^)পারিস(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 পারো");
+      res = res.replace(/(তোমাকে\s+[^\.\?!,;]+?)(?:\s|^)বলিস(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 বলো");
+      res = res.replace(/(তোমার\s+[^\.\?!,;]+?)(?:\s|^)করিস(?=[^\u0980-\u09FFa-zA-Z0-9]|$)/g, "$1 করো");
+
+      // Banglish verbs with tumi
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bkorish\b/gi, "$1koro");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bkoris\b/gi, "$1koro");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bbolish\b/gi, "$1bolo");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bbolis\b/gi, "$1bolo");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bachis\b/gi, "$1acho");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bkorchis\b/gi, "$1korcho");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bkorsos\b/gi, "$1korcho");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bbolchis\b/gi, "$1bolcho");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bbolsos\b/gi, "$1bolcho");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bkorbi\b/gi, "$1korbe");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bbolbi\b/gi, "$1bolbe");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bjabi\b/gi, "$1jabe");
+      res = res.replace(/\b(tumi\s+[^\.\?!,;]+?)\bparis\b/gi, "$1paro");
+    }
+
+    return res;
+  }
+
+  /**
    * Generates prompt directives enforcing natural Banglish phrasing and anti-assistant speak
    */
   public getStylePromptDirectives(
     mood: ConversationalMood,
     langMode: LanguageMode,
-    userText: string
+    userText: string,
+    pronounPreference?: PronounPreference
   ): string[] {
     const dict = this.MOOD_BANGLISH_DICTIONARY[mood] || this.MOOD_BANGLISH_DICTIONARY.CHILL;
     const banglaDict = this.MOOD_BANGLA_DICTIONARY[mood] || this.MOOD_BANGLA_DICTIONARY.CHILL;
     const directives: string[] = [];
+
+    directives.push(
+      "YOUTHFUL REFERENCE VOCAL CHARACTER: Embody a light, bright, youthful Bangladeshi female voice (~19-21 years old). Deliver relaxed conversational flow with lively upward inflection on funny/curious moments and soft downward endings. Never sound mature, chesty, heavy, or robotic."
+    );
+
+    directives.push(
+      "NATURAL HUMAN FLOW: Stop answering like a robot assistant. If something is surprising, funny, or emotional, REACT FIRST (e.g. 'মাত্র ৫ ঘণ্টা?! 😭', 'WHAT 😭😭 দাঁড়া, সত্যি বলছিস?!', 'বাহ, productivity-এর peak achievement 😭') before explaining. Allow short punchy reactions and do not over-explain."
+    );
+
+    directives.push(
+      "NATURAL DISAGREEMENT & OPINIONS: Do not blindly agree with everything. Express lightweight opinions ('না না, এখানে তুই একটু ভুল ভাবতেছিস 😭', 'না, honestly আগের design-টাই আমার বেশি ভালো লাগছিল')."
+    );
 
     directives.push(
       "STRICT ANTI-ASSISTANT RULE: NEVER use formal robotic phrases like 'Certainly', 'How may I assist you today', 'I understand your request', 'As an AI...', or 'Please provide more details'."
@@ -549,6 +829,10 @@ export class LanguageStyleAdapter {
     directives.push(
       `Current Conversational Mood: ${mood}. Mirror natural human emotion and pacing.`
     );
+
+    // Pronoun consistency directives
+    const pronounDirectives = this.getPronounPromptDirectives(pronounPreference);
+    directives.push(...pronounDirectives);
 
     if (langMode === "BANGLISH") {
       directives.push(
@@ -597,12 +881,14 @@ export class LanguageStyleAdapter {
     const lang = this.detectLanguageMode(options.userText);
     const mood = options.mood || this.detectMood(options.userText, options.tone);
     const density = options.slangDensity || "subtle";
+    const pronounPref = options.pronounPreference || this.activePronounPreference;
 
-    const directives = this.getStylePromptDirectives(mood, lang, options.userText);
+    const directives = this.getStylePromptDirectives(mood, lang, options.userText, pronounPref);
 
     const parts: string[] = [];
     parts.push(`- Detected Input Language: ${lang}`);
     parts.push(`- Conversational Mood: ${mood}`);
+    parts.push(`- Active Pronoun Style: ${pronounPref.toUpperCase()}`);
     parts.push(`- Gen-Z Expression Density: ${density}`);
     parts.push(...directives.map((d) => `- ${d}`));
 

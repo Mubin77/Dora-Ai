@@ -159,10 +159,10 @@ export default function App() {
   // User identity name (from memory or fallback to Mubin)
   const [userName, setUserName] = useState<string>("Abdul Mubin");
 
-  // Settings
+  // Settings (Default aligned with authorized youthful reference voice)
   const [settings, setSettings] = useState<VoiceSettings>({
     voiceName: "Aoede",
-    speakingRate: 0.96,
+    speakingRate: 1.0,
     pitch: 1.05,
     continuousListening: true,
     pauseThresholdMs: 1300,

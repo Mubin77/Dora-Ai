@@ -204,6 +204,7 @@ export interface BrainAnalysis {
   languageStyle?: {
     mood: string;
     languageMode: string;
+    pronounPreference?: "tumi" | "tui";
     styleDirectives: string[];
   };
   activeTaskPlan?: TaskPlan;
@@ -800,9 +801,24 @@ export class BrainEngine {
     }
 
     // Step 16: Language Style & Anti-Assistant-Speak Adapter
+    // Check if user has an explicit pronoun preference stored or requested
+    const explicitPronounCmd = languageStyleAdapter.detectExplicitPronounCommand(trimmed);
+    let activePronounPref = languageStyleAdapter.getPronounPreference();
+    if (explicitPronounCmd.isCommand && explicitPronounCmd.preference) {
+      activePronounPref = explicitPronounCmd.preference;
+      languageStyleAdapter.setPronounPreference(activePronounPref);
+    } else {
+      // Check stored memory preference in memoryStore
+      const storedPrefMem = memoryStore.get(userId).find((r) => r.key === "pronoun_style");
+      if (storedPrefMem && (storedPrefMem.value === "tui" || storedPrefMem.value === "tumi")) {
+        activePronounPref = storedPrefMem.value as any;
+        languageStyleAdapter.setPronounPreference(activePronounPref);
+      }
+    }
+
     const detectedMood = languageStyleAdapter.detectMood(trimmed, conversationalBehavior.companionTone);
     const detectedLang = languageStyleAdapter.detectLanguageMode(trimmed);
-    const styleDirectives = languageStyleAdapter.getStylePromptDirectives(detectedMood, detectedLang, trimmed);
+    const styleDirectives = languageStyleAdapter.getStylePromptDirectives(detectedMood, detectedLang, trimmed, activePronounPref);
     for (const d of styleDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
@@ -837,6 +853,7 @@ export class BrainEngine {
       languageStyle: {
         mood: detectedMood,
         languageMode: detectedLang,
+        pronounPreference: activePronounPref,
         styleDirectives,
       },
       activeTaskPlan: planningAnalysis.plan,

@@ -159,6 +159,132 @@ export function runAllLanguageStyleAdapterTests() {
     assert(cleanedFiller.includes("আসলে আমার মনে হয়"), "English filler replaced with natural Bangla");
   }
 
+  // TEST 8 — Persistent Pronoun Preference Command Detection
+  console.log("\nTEST 8 — Persistent Pronoun Command Detection (TUI / TUMI / Reset):");
+  {
+    // TUI commands
+    const cmd1 = languageStyleAdapter.detectExplicitPronounCommand("এখন থেকে আমার সাথে tui করে কথা বলবি");
+    assert(cmd1.isCommand === true && cmd1.preference === "tui", "Bangla/Banglish 'tui kore kotha bolbi' detected as TUI command");
+
+    const cmd2 = languageStyleAdapter.detectExplicitPronounCommand("আমার সাথে তুই করে কথা বল");
+    assert(cmd2.isCommand === true && cmd2.preference === "tui", "Bangla 'তুই করে কথা বল' detected as TUI command");
+
+    const cmd3 = languageStyleAdapter.detectExplicitPronounCommand("aj theke amake tui kore bolish");
+    assert(cmd3.isCommand === true && cmd3.preference === "tui", "Banglish 'aj theke amake tui kore bolish' detected as TUI command");
+
+    const cmd4 = languageStyleAdapter.detectExplicitPronounCommand("speak to me using tui mode");
+    assert(cmd4.isCommand === true && cmd4.preference === "tui", "English 'speak to me using tui mode' detected as TUI command");
+
+    // TUMI commands
+    const cmd5 = languageStyleAdapter.detectExplicitPronounCommand("এখন থেকে তুমি করে কথা বলবে");
+    assert(cmd5.isCommand === true && cmd5.preference === "tumi", "Bangla 'এখন থেকে তুমি করে কথা বলবে' detected as TUMI command");
+
+    const cmd6 = languageStyleAdapter.detectExplicitPronounCommand("amr sathe tumi kore kotha bolo");
+    assert(cmd6.isCommand === true && cmd6.preference === "tumi", "Banglish 'amr sathe tumi kore kotha bolo' detected as TUMI command");
+
+    const cmd7 = languageStyleAdapter.detectExplicitPronounCommand("call me tumi");
+    assert(cmd7.isCommand === true && cmd7.preference === "tumi", "English 'call me tumi' detected as TUMI command");
+
+    // Reset command
+    const cmd8 = languageStyleAdapter.detectExplicitPronounCommand("আগের মতো কথা বলো");
+    assert(cmd8.isCommand === true && cmd8.isReset === true && cmd8.preference === "tumi", "'আগের মতো কথা বলো' detected as Reset to default TUMI");
+
+    const cmd9 = languageStyleAdapter.detectExplicitPronounCommand("reset to default");
+    assert(cmd9.isCommand === true && cmd9.isReset === true && cmd9.preference === "tumi", "'reset to default' detected as Reset");
+  }
+
+  // TEST 9 — Casual Usage Negative Guard (Does NOT change preference)
+  console.log("\nTEST 9 — Casual Pronoun Usage Negative Guard:");
+  {
+    const casual1 = languageStyleAdapter.detectExplicitPronounCommand("তুই কেমন আছিস?");
+    assert(casual1.isCommand === false, "Casual 'তুই কেমন আছিস?' is NOT a preference command");
+
+    const casual2 = languageStyleAdapter.detectExplicitPronounCommand("tui kemon achis?");
+    assert(casual2.isCommand === false, "Casual 'tui kemon achis?' is NOT a preference command");
+
+    const casual3 = languageStyleAdapter.detectExplicitPronounCommand("তুমি কি আজকে ফ্রি আছো?");
+    assert(casual3.isCommand === false, "Casual 'তুমি কি আজকে ফ্রি আছো?' is NOT a preference command");
+
+    const casual4 = languageStyleAdapter.detectExplicitPronounCommand("tumi ki amake help korte parbe?");
+    assert(casual4.isCommand === false, "Casual question is NOT a preference command");
+  }
+
+  // TEST 10 — Pronoun-Verb Harmonization (Grammar & Agreement Enforcement)
+  console.log("\nTEST 10 — Pronoun & Verb Agreement Harmonization:");
+  {
+    // TUI Mode: Mismatched TUMI verbs/pronouns harmonized to TUI
+    const rawTuiBangla = "তুই কেমন আছো? তোমার কি মনে হয়?";
+    const harmonizedTuiBangla = languageStyleAdapter.harmonizePronounsAndVerbs(rawTuiBangla, "tui");
+    assert(harmonizedTuiBangla.includes("তুই কেমন আছিস"), `TUI Bangla verb harmonized (got: "${harmonizedTuiBangla}")`);
+    assert(harmonizedTuiBangla.includes("তোর কি মনে হয়"), `TUI Bangla pronoun harmonized (got: "${harmonizedTuiBangla}")`);
+
+    const rawTuiBanglish = "tui ki korcho? tomar shathe kotha bolbo.";
+    const harmonizedTuiBanglish = languageStyleAdapter.harmonizePronounsAndVerbs(rawTuiBanglish, "tui");
+    assert(harmonizedTuiBanglish.includes("tui ki korchis"), `TUI Banglish verb harmonized (got: "${harmonizedTuiBanglish}")`);
+    assert(harmonizedTuiBanglish.includes("tor shathe"), `TUI Banglish pronoun harmonized (got: "${harmonizedTuiBanglish}")`);
+
+    // TUMI Mode: Mismatched TUI verbs/pronouns harmonized to TUMI
+    const rawTumiBangla = "তুমি কেমন আছিস? তোর কি মনে হয়?";
+    const harmonizedTumiBangla = languageStyleAdapter.harmonizePronounsAndVerbs(rawTumiBangla, "tumi");
+    assert(harmonizedTumiBangla.includes("তুমি কেমন আছো") || harmonizedTumiBangla.includes("তুমি কেমন আছ"), `TUMI Bangla verb harmonized (got: "${harmonizedTumiBangla}")`);
+    assert(harmonizedTumiBangla.includes("তোমার কি মনে হয়"), `TUMI Bangla pronoun harmonized (got: "${harmonizedTumiBangla}")`);
+
+    const rawTumiBanglish = "tumi ki korchis? tor shathe kotha bolbo.";
+    const harmonizedTumiBanglish = languageStyleAdapter.harmonizePronounsAndVerbs(rawTumiBanglish, "tumi");
+    assert(harmonizedTumiBanglish.includes("tumi ki korcho") || harmonizedTumiBanglish.includes("tumi ki korbe"), `TUMI Banglish verb harmonized (got: "${harmonizedTumiBanglish}")`);
+    assert(harmonizedTumiBanglish.includes("tomar shathe"), `TUMI Banglish pronoun harmonized (got: "${harmonizedTumiBanglish}")`);
+  }
+
+  // TEST 11 — Persistent Pronoun Prompt Directives
+  console.log("\nTEST 11 — Persistent Pronoun Prompt Directives Generation:");
+  {
+    const tuiDirectives = languageStyleAdapter.getPronounPromptDirectives("tui");
+    assert(tuiDirectives.some((d) => d.includes("ACTIVE PRONOUN MODE: TUI (তুই / তোর / তোকে)")), "TUI active mode header in directives");
+    assert(tuiDirectives.some((d) => d.toLowerCase().includes("pronoun-verb agreement")), "TUI verb agreement rules in directives");
+
+    const tumiDirectives = languageStyleAdapter.getPronounPromptDirectives("tumi");
+    assert(tumiDirectives.some((d) => d.includes("ACTIVE PRONOUN MODE: TUMI (তুমি / তোমার / তোমাকে)")), "TUMI active mode header in directives");
+    assert(tumiDirectives.some((d) => d.toLowerCase().includes("pronoun-verb agreement")), "TUMI verb agreement rules in directives");
+  }
+
+  // TEST 12 — Natural Gen-Z Personality Directives
+  console.log("\nTEST 12 — Natural Gen-Z Personality Directives:");
+  {
+    const directives = languageStyleAdapter.getStylePromptDirectives("PLAYFUL", "BANGLA", "Ajke ami 5 ghonta ghumaisi");
+    assert(
+      directives.some((d) => d.includes("NATURAL HUMAN FLOW") && d.includes("REACT FIRST")),
+      "Directives mandate Natural Human Flow and React First"
+    );
+    assert(
+      directives.some((d) => d.includes("NATURAL DISAGREEMENT")),
+      "Directives mandate Natural Disagreement & Opinions"
+    );
+  }
+
+  // TEST 13 — Teasing & Playful Phrases
+  console.log("\nTEST 13 — Teasing & Playful Gen-Z Openers:");
+  {
+    const teasingPhrases = languageStyleAdapter.getMoodPhrases("TEASING");
+    assert(
+      teasingPhrases.openers.some((o) => o.includes("productivity") || o.includes("relationship") || o.includes("talking")),
+      "Teasing openers contain authentic playful humor"
+    );
+  }
+
+  // TEST 14 — Youthful Reference Vocal Character Directives
+  console.log("\nTEST 14 — Youthful Reference Vocal Character Directives:");
+  {
+    const directives = languageStyleAdapter.getStylePromptDirectives("PLAYFUL", "BANGLA", "আজকে অনেক বৃষ্টি");
+    assert(
+      directives.some((d) => d.includes("YOUTHFUL REFERENCE VOCAL CHARACTER")),
+      "Youthful Reference Vocal Character directive is present"
+    );
+    assert(
+      directives.some((d) => d.includes("19-21 years old") && d.includes("light, bright")),
+      "Youthful age & vocal weight characteristics are present"
+    );
+  }
+
   console.log("\n========================================================");
   console.log("ALL LANGUAGE STYLE ADAPTER TESTS PASSED SUCCESSFULLY! ✓");
   console.log("========================================================\n");
