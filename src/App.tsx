@@ -15,6 +15,11 @@ import {
   Tv,
   Settings,
   History,
+  SquarePen,
+  MoreVertical,
+  Image as ImageIcon,
+  Bookmark,
+  Trash2,
 } from "lucide-react";
 import {
   ChatMessage,
@@ -41,6 +46,9 @@ import { VoiceSettingsModal } from "./components/VoiceSettingsModal";
 import { ConversationMemoryModal } from "./components/ConversationMemoryModal";
 import { SkillsModal } from "./components/SkillsModal";
 import { ConversationHistoryPanel } from "./components/ConversationHistoryPanel";
+import { ChatMessageItem } from "./components/ChatMessageItem";
+import { ImagesGalleryModal } from "./components/ImagesGalleryModal";
+import { LibraryModal } from "./components/LibraryModal";
 
 const SESSIONS_STORAGE_KEY = "dora_conversations_v1";
 const ACTIVE_SESSION_KEY = "dora_active_session_id";
@@ -93,6 +101,10 @@ export default function App() {
   const [isMemoryOpen, setIsMemoryOpen] = useState<boolean>(false);
   const [isSkillsOpen, setIsSkillsOpen] = useState<boolean>(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
+  const [isImagesOpen, setIsImagesOpen] = useState<boolean>(false);
+  const [isLibraryOpen, setIsLibraryOpen] = useState<boolean>(false);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [isTopMoreMenuOpen, setIsTopMoreMenuOpen] = useState<boolean>(false);
   const [showTranscriptOverlay, setShowTranscriptOverlay] = useState<boolean>(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState<boolean>(false);
@@ -658,9 +670,15 @@ export default function App() {
 
   // Send message to Dora (unified: works identically in Chat and Voice modes)
   const handleSendMessage = useCallback(
-    async (userText: string, imageAttachment?: string, isVoiceTurn: boolean = false) => {
+    async (
+      userText: string,
+      imageAttachment?: string,
+      isVoiceTurn: boolean = false,
+      fileAttachment?: { name: string; size?: number; type?: string; textContent?: string }
+    ) => {
       const cleanText = userText.trim();
-      if (!cleanText || isProcessingTurnRef.current) return;
+      if (!cleanText && !imageAttachment && !fileAttachment) return;
+      if (isProcessingTurnRef.current) return;
 
       console.log(`[VOICE DEBUG] submitting transcript: "${cleanText}" (isVoiceTurn: ${isVoiceTurn}, isCallActive: ${isCallActiveRef.current}, liveReady: ${doraService.isLiveReady()})`);
 
@@ -681,6 +699,8 @@ export default function App() {
         text: cleanText,
         timestamp: Date.now(),
         inputMode,
+        imageAttachment,
+        fileAttachment,
       };
 
       // Explicit memory privacy/query command handler
@@ -880,7 +900,6 @@ export default function App() {
       setCurrentSpokenText("");
       currentUserVoiceMessageIdRef.current = null;
       currentDoraMessageIdRef.current = null;
-      navigateToChat();
     } else {
       try {
         setState("requesting_permission");
@@ -1237,6 +1256,28 @@ export default function App() {
     navigateToChat();
   };
 
+  // Feedback handler (like / dislike)
+  const handleFeedback = (messageId: string, type: "like" | "dislike") => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId
+          ? { ...m, feedback: m.feedback === type ? null : type }
+          : m
+      )
+    );
+  };
+
+  // Save conversation / message to Library (pins session)
+  const handleSaveToLibrary = (_message: ChatMessage) => {
+    setSessions((prev) => {
+      const updated = prev.map((s) =>
+        s.id === activeSessionId ? { ...s, isPinned: true } : s
+      );
+      localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   // Delete a session
   const handleDeleteSession = (sessionId: string) => {
     const filtered = sessions.filter((s) => s.id !== sessionId);
@@ -1284,20 +1325,21 @@ export default function App() {
         <div className="absolute -bottom-36 left-1/2 -translate-x-1/2 w-[720px] sm:w-[900px] h-[360px] sm:h-[420px] bg-[#1A56DB]/[0.22] rounded-full blur-[120px]" />
       </div>
 
-      {/* Left Modern AI Sidebar (Clean Navigation Only) */}
+      {/* Left Modern AI Sidebar (Clean Navigation Only: Images, Library, Recents) */}
       <Sidebar
         isMobileOpen={isMobileDrawerOpen}
         onMobileClose={() => setIsMobileDrawerOpen(false)}
         isDesktopCollapsed={isDesktopSidebarCollapsed}
         onToggleDesktopCollapse={() => setIsDesktopSidebarCollapsed((prev) => !prev)}
-        user={currentUser}
-        userName={userName}
-        activeMode={activeMode}
-        onOpenChat={navigateToChat}
-        onOpenVoice={navigateToVoice}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSelectSession={handleSelectSession}
+        onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
+        onTogglePinSession={handleTogglePinSession}
         onNewChat={handleNewChat}
-        onOpenMemory={() => setIsMemoryOpen(true)}
-        onOpenSkills={() => setIsSkillsOpen(true)}
+        onOpenImages={() => setIsImagesOpen(true)}
+        onOpenLibrary={() => setIsLibraryOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
@@ -1357,16 +1399,16 @@ export default function App() {
         ) : (
           <>
             {/* ============================================================ */}
-            {/* TOP BAR (Header with navigation & Model dropdown)           */}
+            {/* TOP BAR: Minimal ChatGPT-style AMOLED Header                */}
             {/* ============================================================ */}
             <header
               id="dora-top-bar"
-              className="w-full px-4 sm:px-8 pt-5 pb-3 flex items-center justify-between z-30 shrink-0 border-b border-white/[0.04]"
+              className="w-full px-3 sm:px-6 pt-3.5 pb-2.5 flex items-center justify-between z-30 shrink-0 select-none"
             >
-              {/* Left: Navigation Actions & Model Dropdown */}
-              <div className="flex items-center gap-2 sm:gap-3">
+              {/* Left: Rounded dark circular hamburger/sidebar button */}
+              <div className="flex items-center gap-2">
                 <button
-                  id="btn-mobile-menu"
+                  id="btn-hamburger-sidebar"
                   type="button"
                   onClick={() => {
                     if (window.innerWidth >= 1024) {
@@ -1375,106 +1417,171 @@ export default function App() {
                       setIsMobileDrawerOpen(true);
                     }
                   }}
-                  aria-label="Open Navigation Menu"
-                  className="p-2.5 rounded-full text-white/80 hover:text-white hover:bg-white/[0.08] transition-colors flex items-center justify-center shrink-0"
+                  aria-label="Open sidebar"
+                  title="Open sidebar"
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#18181b] hover:bg-[#242429] border border-white/[0.08] active:scale-95 text-white/80 hover:text-white transition-all flex items-center justify-center shrink-0 shadow-sm"
                 >
-                  <div className="flex flex-col gap-1 w-5">
-                    <span className="w-5 h-0.5 bg-white/90 rounded-full" />
-                    <span className="w-3.5 h-0.5 bg-white/90 rounded-full" />
-                  </div>
+                  <Menu className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                 </button>
-
-                {/* Back to Immersive Voice Home Button */}
-                <button
-                  id="btn-back-to-voice"
-                  type="button"
-                  onClick={navigateToVoice}
-                  title="Back to Immersive Voice"
-                  aria-label="Back to Immersive Voice"
-                  className="p-2 rounded-full text-white/70 hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all flex items-center justify-center shrink-0"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-
-                {/* Model Dropdown Trigger */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setIsModelDropdownOpen((prev) => !prev)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:bg-white/[0.06] text-white/90 hover:text-white font-medium text-base tracking-tight transition-colors"
-                  >
-                    <span>{selectedModel}</span>
-                    <span className="text-white/40 text-xs">▾</span>
-                  </button>
-
-                  {/* Model Selector Dropdown Popover */}
-                  {isModelDropdownOpen && (
-                    <div
-                      className="absolute left-0 top-full mt-2 w-48 rounded-2xl bg-[#18191E] border border-white/10 shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-sm"
-                      onBlur={() => setIsModelDropdownOpen(false)}
-                    >
-                      <button
-                        onClick={() => {
-                          navigateToChat();
-                          setIsModelDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left transition-colors ${
-                          selectedModel === "Dora Flash"
-                            ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
-                            : "text-white/80 hover:bg-white/[0.08] hover:text-white"
-                        }`}
-                      >
-                        <span>Dora Flash</span>
-                        {selectedModel === "Dora Flash" && <Check className="w-4 h-4 text-[#38BDF8]" />}
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          navigateToVoice();
-                          if (!isCallActive) handleToggleCall();
-                          setIsModelDropdownOpen(false);
-                        }}
-                        className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left transition-colors ${
-                          selectedModel === "Dora Live"
-                            ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
-                            : "text-white/80 hover:bg-white/[0.08] hover:text-white"
-                        }`}
-                      >
-                        <span>Dora Live</span>
-                        {selectedModel === "Dora Live" && <Check className="w-4 h-4 text-[#38BDF8]" />}
-                      </button>
-                    </div>
-                  )}
-                </div>
               </div>
 
-              {/* Right: Quick Action Controls */}
+              {/* Center: Clean Model Selector / Dora Title */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsModelDropdownOpen((prev) => !prev)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-full hover:bg-white/[0.06] text-white/90 hover:text-white font-medium text-sm sm:text-base tracking-tight transition-colors"
+                >
+                  <span>{selectedModel}</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-white/40" />
+                </button>
+
+                {/* Model Selector Dropdown Popover */}
+                {isModelDropdownOpen && (
+                  <div
+                    className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-48 rounded-2xl bg-[#18191E] border border-white/10 shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-sm"
+                    onMouseLeave={() => setIsModelDropdownOpen(false)}
+                  >
+                    <button
+                      onClick={() => {
+                        navigateToChat();
+                        setIsModelDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left transition-colors ${
+                        selectedModel === "Dora Flash"
+                          ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
+                          : "text-white/80 hover:bg-white/[0.08] hover:text-white"
+                      }`}
+                    >
+                      <span>Dora Flash</span>
+                      {selectedModel === "Dora Flash" && <Check className="w-4 h-4 text-[#38BDF8]" />}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        navigateToVoice();
+                        if (!isCallActive) handleToggleCall();
+                        setIsModelDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left transition-colors ${
+                        selectedModel === "Dora Live"
+                          ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
+                          : "text-white/80 hover:bg-white/[0.08] hover:text-white"
+                      }`}
+                    >
+                      <span>Dora Live</span>
+                      {selectedModel === "Dora Live" && <Check className="w-4 h-4 text-[#38BDF8]" />}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Rounded dark pill containing [New Chat] and [More (three-dot)] */}
               <div className="flex items-center gap-2 shrink-0">
                 {isScreenVisionActive && (
                   <button
                     onClick={handleToggleScreenVision}
                     title="Screen Vision Active"
-                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-medium"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-medium"
                   >
                     <Tv className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">Vision Active</span>
                   </button>
                 )}
 
-                {/* Conversation History Icon Button */}
-                <button
-                  id="btn-chat-history"
-                  type="button"
-                  onClick={() => setIsHistoryOpen(true)}
-                  title="Conversation history"
-                  aria-label="Conversation history"
-                  className="p-2 sm:p-2.5 rounded-full text-white/70 hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all flex items-center justify-center relative"
-                >
-                  <History className="w-5 h-5" />
-                  {sessions.length > 0 && (
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#38BDF8]" />
-                  )}
-                </button>
+                {/* Top-right pill container */}
+                <div className="relative flex items-center bg-[#18181b] border border-white/[0.08] rounded-full p-0.5 sm:p-1 shadow-sm">
+                  {/* New Chat Button */}
+                  <button
+                    id="btn-topbar-new-chat"
+                    type="button"
+                    onClick={handleNewChat}
+                    title="New Chat"
+                    aria-label="New Chat"
+                    className="w-8 h-8 sm:w-8.5 sm:h-8.5 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all shrink-0"
+                  >
+                    <SquarePen className="w-4 h-4" />
+                  </button>
+
+                  {/* More Options Button */}
+                  <div className="relative">
+                    <button
+                      id="btn-topbar-more-menu"
+                      type="button"
+                      onClick={() => setIsTopMoreMenuOpen((prev) => !prev)}
+                      title="More actions"
+                      aria-label="More actions"
+                      className="w-8 h-8 sm:w-8.5 sm:h-8.5 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all shrink-0"
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </button>
+
+                    {/* More Menu Dropdown */}
+                    {isTopMoreMenuOpen && (
+                      <div
+                        className="absolute right-0 top-full mt-2 w-48 rounded-2xl bg-[#18191E] border border-white/10 shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-xs sm:text-sm"
+                        onMouseLeave={() => setIsTopMoreMenuOpen(false)}
+                      >
+                        <button
+                          onClick={() => {
+                            handleNewChat();
+                            setIsTopMoreMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/80 hover:bg-white/[0.08] hover:text-white text-left"
+                        >
+                          <SquarePen className="w-4 h-4" />
+                          <span>New conversation</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setIsImagesOpen(true);
+                            setIsTopMoreMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/80 hover:bg-white/[0.08] hover:text-white text-left"
+                        >
+                          <ImageIcon className="w-4 h-4" />
+                          <span>Images gallery</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setIsLibraryOpen(true);
+                            setIsTopMoreMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/80 hover:bg-white/[0.08] hover:text-white text-left"
+                        >
+                          <Bookmark className="w-4 h-4" />
+                          <span>Library</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setIsSettingsOpen(true);
+                            setIsTopMoreMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/80 hover:bg-white/[0.08] hover:text-white text-left"
+                        >
+                          <Settings className="w-4 h-4" />
+                          <span>Voice settings</span>
+                        </button>
+
+                        {messages.length > 0 && (
+                          <button
+                            onClick={() => {
+                              setMessages([]);
+                              setIsTopMoreMenuOpen(false);
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/20 text-left"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            <span>Clear chat messages</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </header>
 
@@ -1503,90 +1610,35 @@ export default function App() {
               className="flex-1 flex flex-col justify-between overflow-y-auto custom-scrollbar relative z-10 w-full"
             >
               {messages.length === 0 ? (
-                /* Clean Empty State - No center star, no greeting text, pure AMOLED canvas */
-                <div className="flex-1" />
+                /* Clean Minimal Empty State - AMOLED Canvas */
+                <div className="flex-1 flex flex-col items-center justify-center px-4 text-center select-none">
+                  <div className="w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-white/40 mb-3 shadow-sm">
+                    <Sparkles className="w-6 h-6 text-[#38BDF8]" />
+                  </div>
+                  <p className="text-sm font-medium text-white/70">What would you like to explore today?</p>
+                  <p className="text-xs text-white/40 mt-1 max-w-xs">
+                    Type a message, tap the microphone to dictate, or switch to Immersive Voice.
+                  </p>
+                </div>
               ) : (
                 /* Active Message Stream */
-                <div className="flex-1 w-full max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-7 overflow-y-auto custom-scrollbar">
-                  {/* Subtle Voice Status Banner if Voice Call is active during Chat view */}
-                  {isCallActive && (
-                    <div className="w-full flex justify-center py-1.5 sticky top-0 z-20">
-                      <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-[#18191E]/95 border border-[#1D72FE]/40 shadow-lg text-sm text-white/90 backdrop-blur-md">
-                        <span
-                          className={`w-2.5 h-2.5 rounded-full ${
-                            state === "speaking"
-                              ? "bg-[#38BDF8] animate-ping"
-                              : state === "thinking"
-                              ? "bg-purple-400 animate-pulse"
-                              : "bg-[#1D72FE] animate-pulse"
-                          }`}
-                        />
-                        <span className="text-xs sm:text-sm font-medium text-white/90">
-                          {state === "speaking"
-                            ? "Dora speaking…"
-                            : state === "thinking"
-                            ? "Thinking…"
-                            : "Live Voice Active (Listening…)"}
-                        </span>
-                        <button
-                          onClick={handleToggleCall}
-                          className="ml-1 text-xs text-red-400 hover:text-red-300 font-medium px-1.5 py-0.5 rounded-md hover:bg-white/5"
-                        >
-                          End
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
+                <div className="flex-1 w-full max-w-2xl lg:max-w-3xl mx-auto px-3 sm:px-6 py-6 space-y-6 overflow-y-auto custom-scrollbar">
                   {/* Message List */}
                   {messages.map((m) => (
-                    <div
+                    <ChatMessageItem
                       key={m.id}
-                      className={`flex items-start gap-3.5 ${
-                        m.sender === "user" ? "justify-end" : "justify-start"
-                      }`}
-                    >
-                      {/* Message Content Bubble */}
-                      <div
-                        className={`group relative rounded-2xl px-5 py-3.5 text-base sm:text-[17px] leading-relaxed max-w-[88%] sm:max-w-[85%] ${
-                          m.sender === "user"
-                            ? "bg-[#18191E] text-white/95 border border-white/[0.08] shadow-sm"
-                            : "bg-transparent text-[#EDEDED]"
-                        }`}
-                      >
-                        {/* Subtle Badge for Voice turns */}
-                        {m.inputMode === "voice" && (
-                          <div className="flex items-center gap-1.5 mb-1.5 text-xs text-sky-400/90 font-mono">
-                            <Radio className="w-3 h-3" />
-                            <span>Voice turn</span>
-                          </div>
-                        )}
-
-                        {m.text ? (
-                          <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
-                        ) : (
-                          <div className="flex items-center gap-2 py-1.5 text-white/50">
-                            <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce" />
-                            <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce [animation-delay:0.2s]" />
-                            <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce [animation-delay:0.4s]" />
-                          </div>
-                        )}
-
-                        {/* Interrupted notice */}
-                        {m.isInterrupted && (
-                          <span className="mt-1.5 text-xs text-amber-300/80 block font-mono">
-                            (Interrupted)
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                      message={m}
+                      onFeedback={handleFeedback}
+                      onSaveToLibrary={handleSaveToLibrary}
+                      onPreviewImage={(url) => setLightboxImage(url)}
+                    />
                   ))}
                   <div ref={messagesEndRef} />
                 </div>
               )}
 
               {/* Floating Pill Composer (in Chat Mode) */}
-              <div className="pt-2 pb-6 sm:pb-8 shrink-0 w-full">
+              <div className="pt-2 pb-5 sm:pb-7 shrink-0 w-full">
                 <Composer
                   inputText={inputText}
                   setInputText={setInputText}
@@ -1661,6 +1713,44 @@ export default function App() {
         onRenameSession={handleRenameSession}
         onTogglePinSession={handleTogglePinSession}
       />
+
+      {/* Images Gallery Modal */}
+      <ImagesGalleryModal
+        isOpen={isImagesOpen}
+        onClose={() => setIsImagesOpen(false)}
+        sessions={sessions}
+      />
+
+      {/* Library Modal */}
+      <LibraryModal
+        isOpen={isLibraryOpen}
+        onClose={() => setIsLibraryOpen(false)}
+        sessions={sessions}
+        onSelectSession={handleSelectSession}
+      />
+
+      {/* Fullscreen Lightbox Preview */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-60 bg-black/95 flex items-center justify-center p-4"
+          onClick={() => setLightboxImage(null)}
+        >
+          <button
+            onClick={() => setLightboxImage(null)}
+            className="absolute top-4 right-4 p-2.5 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+            aria-label="Close Preview"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={lightboxImage}
+            alt="Preview"
+            className="max-w-full max-h-[90vh] object-contain rounded-2xl shadow-2xl border border-white/[0.08]"
+            referrerPolicy="no-referrer"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

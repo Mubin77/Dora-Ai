@@ -373,7 +373,7 @@ export const ConversationMemoryModal: React.FC<ConversationMemoryModalProps> = (
                       <div className="flex items-center gap-2 text-[10px] text-white/40">
                         <span className="capitalize">{getCategoryLabel(item.category)}</span>
                         <span>•</span>
-                        <span>{formatTimestamp(item.updatedAt || item.timestamp)}</span>
+                        <span>{formatTimestamp(item.updatedAt || item.createdAt)}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0 pt-0.5">
@@ -543,7 +543,7 @@ export const ConversationMemoryModal: React.FC<ConversationMemoryModalProps> = (
                             <span>•</span>
                             <span>{item.key}</span>
                             <span>•</span>
-                            <span>{formatTimestamp(item.updatedAt || item.timestamp)}</span>
+                            <span>{formatTimestamp(item.updatedAt || item.createdAt)}</span>
                           </div>
                         </div>
 

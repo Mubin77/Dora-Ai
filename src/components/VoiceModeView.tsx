@@ -8,11 +8,11 @@ import {
   SwitchCamera,
   Maximize2,
   Minimize2,
+  AudioLines,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChatMessage, ConversationState, DoraEmotion } from "../types";
 import { VoiceOrb } from "./VoiceOrb";
-import { DoraSparkle } from "./DoraSparkle";
 
 export interface VoiceModeViewProps {
   state: ConversationState;
@@ -355,8 +355,8 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
             aria-label={isCameraActive ? "Turn Off Camera" : "Turn On Camera"}
             className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-200 shrink-0 backdrop-blur-md active:scale-95 shadow-md ${
               isCameraActive
-                ? "bg-[#1D72FE]/25 border-[#1D72FE]/60 text-[#38BDF8] hover:bg-[#1D72FE]/35"
-                : "bg-[#18181b]/90 hover:bg-[#232328] active:bg-[#2c2c32] border-white/[0.1] text-white/80 hover:text-white"
+                ? "bg-[#1D72FE]/20 border-[#1D72FE]/60 text-[#38BDF8] hover:bg-[#1D72FE]/30"
+                : "bg-[#141519]/90 hover:bg-[#1C1D23] active:bg-[#25262E] border-white/[0.09] text-white/80 hover:text-white"
             }`}
           >
             <Camera className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -372,35 +372,52 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
             className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-200 shrink-0 backdrop-blur-md active:scale-95 shadow-md ${
               isScreenVisionActive
                 ? "bg-emerald-500/20 border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/30"
-                : "bg-[#18181b]/90 hover:bg-[#232328] active:bg-[#2c2c32] border-white/[0.1] text-white/80 hover:text-white"
+                : "bg-[#141519]/90 hover:bg-[#1C1D23] active:bg-[#25262E] border-white/[0.09] text-white/80 hover:text-white"
             }`}
           >
             <Tv className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
 
-          {/* 3. Dora Voice Button (Primary Session Toggle Control) */}
+          {/* 3. Dora Immersive Voice Button (Session Toggle Control) */}
           <button
             id="btn-voice-dora"
             type="button"
             onClick={handleDoraVoiceToggle}
             title={isCallActive ? "End Voice Session" : "Start Voice Session"}
             aria-label={isCallActive ? "End Voice Session" : "Start Voice Session"}
-            className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center border transition-all duration-200 shrink-0 backdrop-blur-md active:scale-95 relative group shadow-[0_0_24px_rgba(29,114,254,0.35)] ${
+            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-300 shrink-0 backdrop-blur-md active:scale-95 shadow-md ${
               isCallActive
-                ? "bg-[#1D72FE] hover:bg-[#155FD6] border-[#38BDF8]/60 text-white shadow-[0_0_30px_rgba(29,114,254,0.5)]"
-                : "bg-[#18181b]/90 hover:bg-[#232328] active:bg-[#2c2c32] border-white/[0.15] text-white"
+                ? "bg-[#1D72FE]/20 border-[#1D72FE]/60 text-[#38BDF8] hover:bg-[#1D72FE]/30 shadow-[0_0_16px_rgba(29,114,254,0.3)]"
+                : "bg-[#141519]/90 hover:bg-[#1C1D23] active:bg-[#25262E] border-white/[0.09] text-white/80 hover:text-white"
             }`}
           >
-            {/* Glowing animated halo when active */}
-            {isCallActive && (
-              <span className="absolute inset-0 rounded-full border-2 border-[#38BDF8]/40 animate-ping pointer-events-none opacity-40" />
-            )}
-            <DoraSparkle
-              size={32}
-              state={state}
-              isCallActive={isCallActive}
-              volumeLevel={volumeLevel}
-            />
+            <motion.div
+              className="flex items-center justify-center"
+              animate={
+                isCallActive
+                  ? {
+                      scale: state === "speaking" ? [1, 1.1, 1] : state === "listening" ? [1, 1.05, 1] : 1,
+                    }
+                  : { scale: 1 }
+              }
+              transition={
+                isCallActive
+                  ? {
+                      duration: state === "speaking" ? 0.8 : 1.6,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    }
+                  : { duration: 0.2 }
+              }
+            >
+              <AudioLines
+                className={`w-5 h-5 sm:w-6 sm:h-6 transition-all duration-300 ${
+                  isCallActive
+                    ? "text-[#38BDF8] drop-shadow-[0_0_8px_rgba(56,189,248,0.6)]"
+                    : "text-white/80 hover:text-white"
+                }`}
+              />
+            </motion.div>
           </button>
 
           {/* 4. Microphone Mute / Unmute Control Button */}
@@ -413,7 +430,7 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
             className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-200 shrink-0 backdrop-blur-md active:scale-95 shadow-md ${
               isMuted
                 ? "bg-amber-500/20 border-amber-500/60 text-amber-300 hover:bg-amber-500/30"
-                : "bg-[#18181b]/90 hover:bg-[#232328] active:bg-[#2c2c32] border-white/[0.1] text-white/80 hover:text-white"
+                : "bg-[#141519]/90 hover:bg-[#1C1D23] active:bg-[#25262E] border-white/[0.09] text-white/80 hover:text-white"
             }`}
           >
             {isMuted ? (

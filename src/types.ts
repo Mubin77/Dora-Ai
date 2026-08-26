@@ -44,9 +44,17 @@ export interface ChatMessage {
   audioUrl?: string;
   isInterrupted?: boolean;
   reaction?: string;
+  feedback?: 'like' | 'dislike' | null;
   inputMode?: 'text' | 'voice';
   isStreaming?: boolean;
   isFinal?: boolean;
+  imageAttachment?: string;
+  fileAttachment?: {
+    name: string;
+    size?: number;
+    type?: string;
+    textContent?: string;
+  };
 }
 
 export interface ConversationSession {

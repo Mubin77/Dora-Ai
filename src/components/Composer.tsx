@@ -1,13 +1,13 @@
-import React, { useRef } from "react";
-import { Plus, ArrowUp } from "lucide-react";
+import React, { useRef, useState, useEffect } from "react";
+import { Plus, ArrowUp, AudioLines, Mic, MicOff, Square } from "lucide-react";
 import { ActionMenu } from "./ActionMenu";
 import { AttachmentPreview } from "./AttachmentPreview";
-import { DoraSparkle } from "./DoraSparkle";
 import { ConversationState, PendingAttachment } from "../types";
+import { SpeechRecognizer } from "../utils/speechRecognizer";
 
 interface ComposerProps {
   inputText: string;
-  setInputText: (text: string) => void;
+  setInputText: (text: string | ((prev: string) => string)) => void;
   isDeepThinkActive: boolean;
   onToggleDeepThink: () => void;
   pendingAttachment: PendingAttachment | null;
@@ -41,7 +41,6 @@ export const Composer: React.FC<ComposerProps> = ({
   onSubmit,
   isCallActive,
   onToggleCall,
-  isMuted,
   state,
   isActionMenuOpen,
   setIsActionMenuOpen,
@@ -57,7 +56,70 @@ export const Composer: React.FC<ComposerProps> = ({
   handleDocFileSelected,
 }) => {
   const textInputRef = useRef<HTMLInputElement>(null);
+  const [isDictating, setIsDictating] = useState(false);
+  const dictationRecognizerRef = useRef<SpeechRecognizer | null>(null);
+
   const hasTextOrAttachment = Boolean(inputText.trim() || pendingAttachment);
+
+  // Setup Dictation SpeechRecognizer
+  useEffect(() => {
+    const recognizer = new SpeechRecognizer({
+      continuous: true,
+      onSpeechStart: () => {
+        setIsDictating(true);
+      },
+      onInterimResult: (interim) => {
+        if (!interim.trim()) return;
+        setInputText((prev) => {
+          const base = typeof prev === "string" ? prev : "";
+          // If input has text, add a space if needed
+          return base.endsWith(" ") || !base ? `${base}${interim}` : `${base} ${interim}`;
+        });
+      },
+      onFinalResult: (final) => {
+        if (!final.trim()) return;
+        setInputText((prev) => {
+          const base = typeof prev === "string" ? prev : "";
+          return base.endsWith(" ") || !base ? `${base}${final}` : `${base} ${final}`;
+        });
+      },
+      onError: () => {
+        setIsDictating(false);
+      },
+      onStateChange: (listening) => {
+        setIsDictating(listening);
+      },
+    });
+
+    dictationRecognizerRef.current = recognizer;
+
+    return () => {
+      recognizer.stop();
+    };
+  }, [setInputText]);
+
+  const handleToggleDictation = () => {
+    if (isDictating) {
+      dictationRecognizerRef.current?.stop();
+      setIsDictating(false);
+    } else {
+      dictationRecognizerRef.current?.start();
+      setIsDictating(true);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (hasTextOrAttachment && state !== "thinking") {
+        if (isDictating) {
+          dictationRecognizerRef.current?.stop();
+          setIsDictating(false);
+        }
+        onSubmit(e);
+      }
+    }
+  };
 
   return (
     <div className="w-full max-w-2xl lg:max-w-3xl mx-auto px-3 sm:px-4 z-30">
@@ -100,20 +162,22 @@ export const Composer: React.FC<ComposerProps> = ({
           onToggleScreenVision={onToggleScreenVision}
         />
 
-        {/* Floating Rounded Pill Bar (Clean AMOLED dark surface) */}
+        {/* Floating Rounded Pill Bar (ChatGPT-style AMOLED dark surface) */}
         <div
           id="dora-input-container"
-          className="relative w-full bg-[#18181b] border border-white/[0.1] rounded-full p-2 sm:p-2.5 flex flex-col shadow-[0_12px_40px_rgba(0,0,0,0.7)] transition-all min-h-[58px] sm:min-h-[64px]"
+          className="relative w-full bg-[#1A1A1E] border border-white/[0.08] rounded-full px-2 py-1.5 sm:px-3 sm:py-2 flex flex-col shadow-[0_16px_40px_rgba(0,0,0,0.85)] transition-all"
         >
-          {/* Staged Attachment Preview inside / above pill input */}
+          {/* Staged Attachment Preview Chip inside / above pill input */}
           {pendingAttachment && (
-            <AttachmentPreview
-              attachment={pendingAttachment}
-              onRemove={onRemoveAttachment}
-            />
+            <div className="px-2 pt-1 pb-1">
+              <AttachmentPreview
+                attachment={pendingAttachment}
+                onRemove={onRemoveAttachment}
+              />
+            </div>
           )}
 
-          <div className="flex items-center justify-between w-full">
+          <div className="flex items-center justify-between w-full gap-1 sm:gap-2">
             {/* Left: [+] Action Button */}
             <button
               id="btn-action-menu"
@@ -121,62 +185,105 @@ export const Composer: React.FC<ComposerProps> = ({
               onClick={() => setIsActionMenuOpen((prev) => !prev)}
               aria-label="Add attachment or action"
               title="Add attachment"
-              className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shrink-0 transition-colors focus:outline-none ${
+              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-95 focus:outline-none ${
                 isActionMenuOpen || isDeepThinkActive
                   ? "bg-[#1D72FE]/20 text-[#38BDF8]"
-                  : "text-white/70 hover:text-white hover:bg-white/[0.08]"
+                  : "text-white/80 hover:text-white hover:bg-white/[0.08]"
               }`}
             >
               <Plus
-                className={`w-5 h-5 sm:w-6 sm:h-6 transition-transform duration-150 ${
+                className={`w-5 h-5 transition-transform duration-150 ${
                   isActionMenuOpen ? "rotate-45" : ""
                 }`}
               />
             </button>
 
             {/* Middle: Text Input Field */}
-            <form onSubmit={onSubmit} className="flex-1 px-3 sm:px-4 min-w-0">
+            <div className="flex-1 px-1 sm:px-2 min-w-0">
               <input
                 ref={textInputRef}
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={handleKeyDown}
                 placeholder={
-                  pendingAttachment
-                    ? "Add a message about this attachment..."
+                  isDictating
+                    ? "Listening... speak now"
+                    : pendingAttachment
+                    ? "Ask about this file..."
                     : isDeepThinkActive
-                    ? "Deep Think mode: ask a detailed question..."
-                    : "Ask Dora..."
+                    ? "Deep Think mode: ask a question..."
+                    : "Message Dora..."
                 }
                 disabled={state === "thinking"}
-                className="w-full bg-transparent text-base sm:text-lg text-white placeholder-white/40 focus:outline-none font-normal"
+                className={`w-full bg-transparent text-[15px] sm:text-base text-white placeholder-white/40 focus:outline-none font-normal ${
+                  isDictating ? "placeholder-sky-400 animate-pulse" : ""
+                }`}
               />
-            </form>
+            </div>
 
-            {/* Right: Circular Send or Voice Mode Button */}
-            <div className="flex items-center shrink-0">
+            {/* Right Action Cluster: [Mic] [Immersive Voice] or [Send] */}
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+              {/* Dictation Microphone Button */}
+              <button
+                id="btn-dictation-mic"
+                type="button"
+                onClick={handleToggleDictation}
+                title={isDictating ? "Stop listening" : "Speech-to-text dictation"}
+                aria-label={isDictating ? "Stop listening" : "Speech-to-text dictation"}
+                className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 ${
+                  isDictating
+                    ? "bg-rose-500/20 border border-rose-500/40 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.4)] animate-pulse"
+                    : "text-white/80 hover:text-white hover:bg-white/[0.08]"
+                }`}
+              >
+                {isDictating ? (
+                  <MicOff className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                ) : (
+                  <Mic className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                )}
+              </button>
+
+              {/* If user has entered text or attachment -> show Send button */}
               {hasTextOrAttachment ? (
                 <button
                   id="btn-send-message"
                   type="submit"
-                  onClick={onSubmit}
+                  onClick={(e) => {
+                    if (isDictating) {
+                      dictationRecognizerRef.current?.stop();
+                      setIsDictating(false);
+                    }
+                    onSubmit(e);
+                  }}
                   disabled={state === "thinking"}
                   title="Send message"
                   aria-label="Send message"
-                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 bg-[#1D72FE] hover:bg-[#155FD6] text-white shadow-[0_0_14px_rgba(29,114,254,0.45)]"
+                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 bg-[#1D72FE] hover:bg-[#155FD6] text-white shadow-[0_0_12px_rgba(29,114,254,0.4)] disabled:opacity-50"
                 >
-                  <ArrowUp className="w-5 h-5 sm:w-5.5 sm:h-5.5 stroke-[2.5]" />
+                  <ArrowUp className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
                 </button>
               ) : (
+                /* Immersive Voice Button (Waveform icon - neutral white when inactive, electric-blue when active) */
                 <button
                   id="btn-voice-mode"
                   type="button"
                   onClick={onToggleCall}
-                  title="Start Dora Voice"
-                  aria-label="Start Dora Voice"
-                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 bg-white/[0.08] hover:bg-[#1D72FE]/20 hover:border-[#1D72FE]/40 border border-transparent text-white shadow-sm"
+                  title={isCallActive ? "End Immersive Voice" : "Start Immersive Voice"}
+                  aria-label={isCallActive ? "End Immersive Voice" : "Start Immersive Voice"}
+                  className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 ${
+                    isCallActive
+                      ? "bg-[#1D72FE]/25 border border-[#1D72FE]/60 text-[#38BDF8] shadow-[0_0_12px_rgba(29,114,254,0.4)]"
+                      : "text-white/80 hover:text-white hover:bg-white/[0.08]"
+                  }`}
                 >
-                  <DoraSparkle size={24} state={state} isCallActive={isCallActive} />
+                  <AudioLines
+                    className={`w-4 h-4 sm:w-4.5 sm:h-4.5 transition-colors ${
+                      isCallActive
+                        ? "text-[#38BDF8] animate-pulse"
+                        : "text-white/80 hover:text-white"
+                    }`}
+                  />
                 </button>
               )}
             </div>
