@@ -25,6 +25,19 @@ import {
 import { ContradictionResolutionAnalysis } from "./contradictionResolutionTypes";
 
 /**
+ * Deterministic Turn Intent for Causal Reasoning.
+ */
+export type TurnCausalIntent =
+  | "ASSERTION"
+  | "QUESTION"
+  | "HYPOTHETICAL"
+  | "SPECULATION"
+  | "CONDITIONAL"
+  | "ASSISTANT_ATTRIBUTION"
+  | "OBSERVATION"
+  | "UNKNOWN";
+
+/**
  * Deterministic Causal Classification Categories.
  */
 export type CausalRelationType =
@@ -74,7 +87,7 @@ export interface CausalEvidenceNode {
   timestamp?: number;
   isObserved: boolean;
   confidence: number;
-  sourceType: "USER_ASSERTION" | "SYSTEM_FACT" | "PREDICTIVE_INFERENCE" | "TEMPORAL_EVENT" | "COUNTERFACTUAL_PREMISE";
+  sourceType: "USER_ASSERTION" | "SYSTEM_FACT" | "PREDICTIVE_INFERENCE" | "TEMPORAL_EVENT" | "COUNTERFACTUAL_PREMISE" | "SPECULATIVE_CLAIM";
 }
 
 /**
@@ -176,6 +189,10 @@ export interface CausalReasoningDiagnostics {
   topicIsolatedSuppressedCount: number;
   sensitiveTokensSuppressedCount: number;
   budgetTruncatedCount: number;
+  questionsSuppressedCount: number;
+  hypotheticalsSuppressedCount: number;
+  speculationsSuppressedCount: number;
+  assistantAttributionsSuppressedCount: number;
   executionTimeMs: number;
 }
 

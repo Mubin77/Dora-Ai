@@ -673,8 +673,47 @@ runTest("CA-39: Integration with DeepReasoningEngine evidence", () => {
 
 // CA-40: Integration with ContradictionResolutionEngine revisions
 runTest("CA-40: Integration with ContradictionResolutionEngine revisions", () => {
+  const ev1 = {
+    id: "ev_1",
+    statement: "User previously used JavaScript",
+    source: "memory_store",
+    authority: "CONFIRMED_USER_MODEL" as const,
+    authorityWeight: 0.75,
+    relevance: 0.85,
+    reliability: 0.9,
+    timestamp: 1000,
+    scope: "GLOBAL" as const,
+    provenance: "turn_1",
+    normalizedKey: "language",
+    normalizedValue: "JavaScript",
+  };
+  const ev2 = {
+    id: "ev_2",
+    statement: "User switched to TypeScript",
+    source: "current_turn",
+    authority: "CURRENT_TURN_EXPLICIT" as const,
+    authorityWeight: 1.0,
+    relevance: 1.0,
+    reliability: 1.0,
+    timestamp: 2000,
+    scope: "GLOBAL" as const,
+    provenance: "turn_2",
+    normalizedKey: "language",
+    normalizedValue: "TypeScript",
+  };
+
   const contradictionRes = contradictionResolutionEngine.evaluate({
     message: "I switched from JavaScript to TypeScript",
+    deepReasoning: {
+      evidence: [ev1, ev2],
+      hypotheses: [],
+      evaluations: [],
+      contradictions: [],
+      uncertainty: { overallLevel: "LOW", evidenceGaps: [], ambiguityDetected: false, conflictingSignalsCount: 0, unresolvedContradictionsCount: 0, isSufficientForConclusion: true },
+      conclusion: { type: "SUPPORTED_CONCLUSION", statement: "Switched language", confidence: 1.0, uncertainty: "LOW", justification: [], sanitizedDirectives: [], requiresClarification: false },
+      sanitizedDirectives: [],
+      diagnostics: {} as any,
+    },
     options: { currentTime: 1700000000000 },
   });
 
@@ -876,6 +915,286 @@ runTest("CA-47: Phase 3 Step 2 (ContradictionResolution) regression remains gree
   );
 
   assert(brainOutput.contradictionResolutionAnalysis !== undefined, "Contradiction resolution must function");
+});
+
+// ======================================================
+// TARGETED ARCHITECTURAL HARDENING TESTS (CR-H1 to CR-H20)
+// ======================================================
+
+// CR-H1: Pure user question MUST NOT be promoted to authoritative causal evidence
+runTest("CR-H1: Pure user question MUST NOT be promoted to authoritative causal evidence", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "Did updating React break the build?",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.questionsSuppressedCount >= 1, "Question must be tracked in diagnostics");
+  assert(result.nodes.every(n => n.authority !== "CURRENT_TURN_EXPLICIT"), "Questions must not become CURRENT_TURN_EXPLICIT evidence");
+});
+
+// CR-H2: User question with causal terms MUST NOT form a verified causal relation
+runTest("CR-H2: User question with causal terms MUST NOT form a verified causal relation", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "Why did the server crash?",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.questionsSuppressedCount >= 1, "Question must be suppressed from causal assertion gate");
+  assert(result.relations.length === 0, "Question cannot create causal relations on its own");
+});
+
+// CR-H3: Hypothetical query MUST NOT become observed evidence
+runTest("CR-H3: Hypothetical query MUST NOT become observed evidence", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "What if we had used Vite instead of Webpack?",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.hypotheticalsSuppressedCount >= 1, "Hypothetical must be tracked in diagnostics");
+  assert(result.nodes.every(n => n.sourceType !== "USER_ASSERTION"), "Hypothetical cannot produce USER_ASSERTION");
+});
+
+// CR-H4: Counterfactual antecedent treated as hypothetical inquiry, not historical ground truth
+runTest("CR-H4: Counterfactual antecedent treated as hypothetical inquiry", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "If I hadn't deleted the file, would the build pass?",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.hypotheticalsSuppressedCount >= 1 || result.diagnostics.questionsSuppressedCount >= 1, "Counterfactual inquiry must be gated");
+  assert(result.nodes.every(n => n.authority !== "CURRENT_TURN_EXPLICIT"), "Counterfactual premise cannot become current turn explicit fact");
+});
+
+// CR-H5: Speculative claim classified as speculation, not verified evidence
+runTest("CR-H5: Speculative claim classified as speculation, not verified evidence", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "I guess maybe the network timeout caused the error",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.speculationsSuppressedCount >= 1, "Speculation tracked in diagnostics");
+  assert(result.nodes.every(n => n.authority !== "CURRENT_TURN_EXPLICIT" && n.authority !== "VERIFIED_EVIDENCE"), "Speculation cannot have authoritative evidence rank");
+  assert(result.nodes.every(n => n.confidence <= 0.5), "Speculation confidence must be capped <= 0.5");
+});
+
+// CR-H6: Assistant attribution cannot inflate evidence authority as user evidence
+runTest("CR-H6: Assistant attribution cannot inflate evidence authority as user evidence", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "You said earlier that port 3000 was blocked",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.assistantAttributionsSuppressedCount >= 1, "Assistant attribution tracked in diagnostics");
+  assert(result.nodes.every(n => n.authority !== "CURRENT_TURN_EXPLICIT"), "Assistant attribution cannot be elevated to CURRENT_TURN_EXPLICIT");
+});
+
+// CR-H7: Assistant-quoted causal statement cannot count as independent user evidence
+runTest("CR-H7: Assistant-quoted causal statement cannot count as independent user evidence", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "According to you, the database crashed because of high memory usage",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.assistantAttributionsSuppressedCount >= 1, "Assistant attribution suppressed");
+  assert(result.nodes.every(n => n.sourceType !== "USER_ASSERTION"), "Assistant attribution cannot be USER_ASSERTION");
+});
+
+// CR-H8: Declarative causal assertion correctly classified as USER_ASSERTION / CURRENT_TURN_EXPLICIT
+runTest("CR-H8: Declarative causal assertion correctly classified as USER_ASSERTION / CURRENT_TURN_EXPLICIT", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "Deleting node_modules broke the dev server",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.nodes.some(n => n.authority === "CURRENT_TURN_EXPLICIT" && n.isObserved === true), "Direct assertion creates observed CURRENT_TURN_EXPLICIT node");
+  assert(result.relations.some(r => r.relationType === "DIRECT_CAUSE"), "Direct assertion creates DIRECT_CAUSE relation");
+});
+
+// CR-H9: Verified evidence from upstream engines retains VERIFIED_EVIDENCE authority
+runTest("CR-H9: Verified evidence from upstream engines retains VERIFIED_EVIDENCE authority", () => {
+  const execContext = createDummyExecutiveContext({
+    authoritativeFacts: [
+      {
+        id: "fact_db_1",
+        key: "database_status",
+        value: "PostgreSQL is running on port 5432",
+        source: "system_probe",
+        confidence: 0.98,
+        authority: "VERIFIED_EVIDENCE",
+        authorityWeight: 0.95,
+        grounding: "VERIFIED_FACT",
+        isGlobal: true,
+        topic: "database",
+        sanitizedDirective: "Database is online",
+      },
+    ],
+  });
+
+  const result = causalReasoningEngine.evaluate({
+    message: "Is the database active?",
+    executiveContext: execContext,
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.nodes.some(n => n.authority === "VERIFIED_EVIDENCE" && n.statement.includes("running on port 5432")), "Upstream fact retains VERIFIED_EVIDENCE");
+  assert(result.diagnostics.questionsSuppressedCount >= 1, "Query message itself is suppressed as question");
+});
+
+// CR-H10: Question inquiring about verified fact does NOT duplicate fact with question text
+runTest("CR-H10: Question inquiring about verified fact does NOT duplicate fact with question text", () => {
+  const execContext = createDummyExecutiveContext({
+    authoritativeFacts: [
+      {
+        id: "fact_err_1",
+        key: "build_error",
+        value: "Syntax error on line 42",
+        source: "compiler",
+        confidence: 0.99,
+        authority: "VERIFIED_EVIDENCE",
+        authorityWeight: 0.95,
+        grounding: "VERIFIED_FACT",
+        isGlobal: true,
+        topic: "build",
+        sanitizedDirective: "Syntax error on line 42",
+      },
+    ],
+  });
+
+  const result = causalReasoningEngine.evaluate({
+    message: "Did the build fail because of syntax error?",
+    executiveContext: execContext,
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.questionsSuppressedCount >= 1, "Question must be gated");
+  assert(result.nodes.every(n => !n.statement.startsWith("Did the build fail")), "Question text must not be inserted as a node");
+});
+
+// CR-H11: Mixed turn with conditional clause does not promote conditional to observed ground truth
+runTest("CR-H11: Mixed turn with conditional clause does not promote conditional to observed ground truth", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "If the config is missing, the app crashes",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.hypotheticalsSuppressedCount >= 1, "Conditional clause flagged as hypothetical");
+  assert(result.nodes.every(n => n.authority !== "CURRENT_TURN_EXPLICIT"), "Conditional statement not elevated to observed fact");
+});
+
+// CR-H12: Conditional hypothetical does not add unverified technology as active fact
+runTest("CR-H12: Conditional hypothetical does not add unverified technology as active fact", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "What if we migrate to Redis next week?",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.hypotheticalsSuppressedCount >= 1, "Hypothetical question gated");
+  assert(result.nodes.length === 0, "No evidence nodes generated from pure hypothetical");
+});
+
+// CR-H13: Ambiguous speculation suppressed or marked speculative, not direct causal link
+runTest("CR-H13: Ambiguous speculation suppressed or marked speculative, not direct causal link", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "Maybe it's the cache?",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.speculationsSuppressedCount >= 1 || result.diagnostics.questionsSuppressedCount >= 1, "Speculation/question suppressed");
+  assert(result.relations.length === 0, "No causal relations formed from ambiguous speculation");
+});
+
+// CR-H14: Question with 'because' treated as QUESTION intent, not DIRECT_CAUSE assertion
+runTest("CR-H14: Question with 'because' treated as QUESTION intent, not DIRECT_CAUSE assertion", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "Is the app slow because of the database query?",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.questionsSuppressedCount >= 1, "Question with 'because' must be classified as QUESTION");
+  assert(result.relations.length === 0, "Question with 'because' must not create causal relation");
+});
+
+// CR-H15: Assistant attribution with claim does not elevate assistant claim to user assertion
+runTest("CR-H15: Assistant attribution with claim does not elevate assistant claim to user assertion", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "Dora said that the port conflict caused the failure",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.diagnostics.assistantAttributionsSuppressedCount >= 1, "Assistant attribution suppressed");
+  assert(result.nodes.every(n => n.sourceType !== "USER_ASSERTION"), "Assistant claim is not user assertion");
+});
+
+// CR-H16: Directives generated under speculative intent do NOT state 'directly caused' as verified fact
+runTest("CR-H16: Directives generated under speculative intent do NOT state 'directly caused' as verified fact", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "Perhaps the memory leak caused the slowdown",
+    options: { currentTime: 1700000000000 },
+  });
+
+  assert(result.activeDirectives.every(d => !d.includes("directly caused") || d.includes("unverified") || d.includes("caution")), "Speculative input cannot produce unconditional direct cause directive");
+});
+
+// CR-H17: Diagnostics accurately track all suppression counters
+runTest("CR-H17: Diagnostics accurately track all suppression counters", () => {
+  const qRes = causalReasoningEngine.evaluate({ message: "Is the build passing?" });
+  assert(qRes.diagnostics.questionsSuppressedCount === 1, "questionsSuppressedCount must equal 1");
+
+  const hRes = causalReasoningEngine.evaluate({ message: "What if we restart the pod?" });
+  assert(hRes.diagnostics.hypotheticalsSuppressedCount === 1, "hypotheticalsSuppressedCount must equal 1");
+
+  const sRes = causalReasoningEngine.evaluate({ message: "I suspect maybe the token expired" });
+  assert(sRes.diagnostics.speculationsSuppressedCount === 1, "speculationsSuppressedCount must equal 1");
+
+  const aRes = causalReasoningEngine.evaluate({ message: "You previously told me to delete dist" });
+  assert(aRes.diagnostics.assistantAttributionsSuppressedCount === 1, "assistantAttributionsSuppressedCount must equal 1");
+});
+
+// CR-H18: Sanitization removes all raw internal tokens, IDs, and bracketed tags from directives
+runTest("CR-H18: Sanitization removes all raw internal tokens, IDs, and bracketed tags from directives", () => {
+  const result = causalReasoningEngine.evaluate({
+    message: "Corrupted lockfile caused the npm install failure",
+    options: { currentTime: 1700000000000 },
+  });
+
+  for (const d of result.activeDirectives) {
+    assert(!/\[(?:DIRECT_CAUSE|INDIRECT_CAUSE|CORRELATION_ONLY|CONFOUNDED)\]/i.test(d), "No bracketed relation tags in directives");
+    assert(!/\bnode_[0-9a-f_]+\b/i.test(d), "No raw node IDs in directives");
+    assert(!/\bcausal_[0-9a-f_]+\b/i.test(d), "No raw causal IDs in directives");
+    assert(!/\bcf_[0-9a-f_]+\b/i.test(d), "No raw counterfactual IDs in directives");
+    assert(!/\bchain_[0-9a-f_]+\b/i.test(d), "No raw chain IDs in directives");
+  }
+});
+
+// CR-H19: Strict determinism preserved across 10 repeated hardening evaluations
+runTest("CR-H19: Strict determinism preserved across 10 repeated hardening evaluations", () => {
+  const runs = Array.from({ length: 10 }, () =>
+    causalReasoningEngine.evaluate({
+      message: "What if deleting cache caused the error? You told me it would work.",
+      options: { currentTime: 1700000000000 },
+    })
+  );
+
+  const baseline = JSON.stringify(runs[0]);
+  for (let i = 1; i < 10; i++) {
+    assert(JSON.stringify(runs[i]) === baseline, `Run ${i + 1} must match baseline byte-for-byte`);
+  }
+});
+
+// CR-H20: Full BrainEngine pipeline integration with hardened gating on conversational inputs
+runTest("CR-H20: Full BrainEngine pipeline integration with hardened gating on conversational inputs", () => {
+  const brainOutput = brainEngine.analyze(
+    "Why is port 3000 busy?",
+    [],
+    undefined,
+    "test_sess_hardened",
+    [],
+    { currentTime: 1700000000000, persistDecisions: false }
+  );
+
+  const cr = (brainOutput as any).causalReasoning;
+  assert(cr !== undefined, "BrainEngine output contains causalReasoning");
+  assert(cr.diagnostics.questionsSuppressedCount >= 1, "Question intent must be gated in BrainEngine pipeline");
 });
 
 console.log("======================================================");

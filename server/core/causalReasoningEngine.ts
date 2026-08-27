@@ -21,6 +21,7 @@ import {
   CausalReasoningBudgetConfig,
   DEFAULT_CAUSAL_REASONING_BUDGET,
   CausalReasoningDiagnostics,
+  TurnCausalIntent,
 } from "./causalReasoningTypes";
 import {
   ReasoningEvidenceAuthority,
@@ -80,6 +81,10 @@ export class CausalReasoningEngine {
       topicIsolatedSuppressedCount: 0,
       sensitiveTokensSuppressedCount: 0,
       budgetTruncatedCount: 0,
+      questionsSuppressedCount: 0,
+      hypotheticalsSuppressedCount: 0,
+      speculationsSuppressedCount: 0,
+      assistantAttributionsSuppressedCount: 0,
       executionTimeMs: 0,
     };
 
@@ -163,11 +168,11 @@ export class CausalReasoningEngine {
       diagnostics
     );
 
-    // Primary Causal Claim determination
+    // Primary Causal Claim determination (Clean natural language format, no internal metadata tags)
     let primaryCausalClaim: string | undefined;
     if (relations.length > 0) {
       const topRel = relations[0];
-      primaryCausalClaim = `[${topRel.relationType}] ${topRel.causeStatement} -> ${topRel.effectStatement}`;
+      primaryCausalClaim = this.formatPrimaryCausalClaim(topRel);
     }
 
     const status = diagnostics.budgetTruncatedCount > 0
@@ -189,6 +194,107 @@ export class CausalReasoningEngine {
   }
 
   /**
+   * Deterministically classify turn intent without LLMs or external calls.
+   */
+  public classifyTurnIntent(text: string): TurnCausalIntent {
+    if (!text || typeof text !== "string") {
+      return "UNKNOWN";
+    }
+
+    const trimmed = text.trim();
+    const lower = trimmed.toLowerCase();
+
+    // 1. Check Assistant Attribution (highest precedence to prevent self-fulfilling inflation)
+    if (
+      /^(?:the\s+assistant|dora|you)\s+(?:said|told\s+me|stated|claimed|mentioned|thinks|thought|believes|previously\s+told\s+me)\b/i.test(lower) ||
+      /\baccording\s+to\s+(?:the\s+assistant|dora|you)\b/i.test(lower) ||
+      /\bas\s+you\s+(?:said|stated|told\s+me|claimed)\b/i.test(lower) ||
+      /\byou\s+previously\s+(?:told\s+me|said|stated)\b/i.test(lower) ||
+      /\bthe\s+assistant\s+(?:said|stated|believes|thinks)\b/i.test(lower)
+    ) {
+      return "ASSISTANT_ATTRIBUTION";
+    }
+
+    // 2. Check Hypothetical / Counterfactual Queries
+    if (
+      /^(?:what\s+if|suppose|supposing|imagine|imagining|hypothetically|let's\s+say|lets\s+say)\b/i.test(lower) ||
+      /^(?:had\s+(?:we|i|you|they|it)\s+(?:not\s+)?)/i.test(lower) ||
+      /\b(?:what\s+would\s+happen\s+if|what\s+if|how\s+would\s+.*?\s+if)\b/i.test(lower)
+    ) {
+      return "HYPOTHETICAL";
+    }
+
+    // 3. Check Questions
+    if (
+      trimmed.endsWith("?") ||
+      /^(?:did|does|do|is|are|was|were|could|would|should|can|will|why|what|how|who|when|where)\b/i.test(lower) ||
+      /\b(?:did|could|would|does|is|was)\s+.*?\s+(?:cause|result\s+in|lead\s+to|fix|trigger|break|occur)\b/i.test(lower) ||
+      /\b(?:what|why)\s+(?:caused|broke|triggered|led\s+to|is\s+the\s+reason|is\s+blocking)\b/i.test(lower) ||
+      /\bis\s+.*?\s+the\s+reason\s+/i.test(lower) ||
+      /\bi\s+wonder\s+(?:whether|if)\b/i.test(lower)
+    ) {
+      return "QUESTION";
+    }
+
+    // 4. Check Speculation / Uncertainty
+    if (
+      /\b(?:maybe|perhaps|possibly|probably|might\s+have|could\s+have|it\s+seems\s+that|i\s+think\s+.*?\s+might|i\s+suspect|it\s+could\s+be\s+because|is\s+it\s+possible\s+that)\b/i.test(lower)
+    ) {
+      return "SPECULATION";
+    }
+
+    // 5. Check Conditionals (non-biconditional "if ...")
+    if (
+      !lower.includes("if and only if") &&
+      !lower.includes("iff") &&
+      /^(?:if|unless|provided\s+that|assuming\s+that)\b/i.test(lower)
+    ) {
+      return "CONDITIONAL";
+    }
+
+    // 6. Check Observations
+    if (
+      /^(?:i\s+observed\s+that|we\s+observed\s+that|we\s+noticed\s+that|i\s+noticed\s+that|the\s+logs\s+show\s+that|we\s+saw\s+that|i\s+saw\s+that|in\s+our\s+test|in\s+testing|measurements\s+indicate\s+that)\b/i.test(lower)
+    ) {
+      return "OBSERVATION";
+    }
+
+    // 7. Check Assertions (Causal, Definitional, or Factual declarative)
+    if (
+      lower.includes("caused") ||
+      lower.includes("cause") ||
+      lower.includes("broke") ||
+      lower.includes("broken") ||
+      lower.includes("break") ||
+      lower.includes("crashed") ||
+      lower.includes("crash") ||
+      lower.includes("triggered") ||
+      lower.includes("trigger") ||
+      lower.includes("blocked") ||
+      lower.includes("blocker") ||
+      lower.includes("is required for") ||
+      lower.includes("is necessary for") ||
+      lower.includes("is sufficient for") ||
+      lower.includes("if and only if") ||
+      lower.includes("contributed to") ||
+      lower.includes("contributory factor") ||
+      lower.includes("correlated with") ||
+      lower.includes("happened before") ||
+      lower.includes("is actually caused by") ||
+      lower.includes("both caused by") ||
+      lower.includes("at the same time as") ||
+      lower.includes("leads to") ||
+      lower.includes("resulted in") ||
+      lower.includes("results in")
+    ) {
+      return "ASSERTION";
+    }
+
+    // Default declarative statement without non-assertive markers is treated as user assertion
+    return "ASSERTION";
+  }
+
+  /**
    * Extract evidence nodes from input message, executive context, deep reasoning, temporal memory, etc.
    */
   private extractEvidenceNodes(
@@ -207,7 +313,8 @@ export class CausalReasoningEngine {
       sourceType: CausalEvidenceNode["sourceType"],
       scope: string = "global",
       timestamp?: number,
-      confidence: number = 0.9
+      confidence: number = 0.9,
+      isObserved: boolean = true
     ) => {
       const sanitizedStatement = this.sanitizeText(statement, diagnostics);
       const normalizedKey = sanitizedStatement.toLowerCase().trim();
@@ -234,24 +341,52 @@ export class CausalReasoningEngine {
         authority,
         scope,
         timestamp,
-        isObserved: true,
+        isObserved,
         confidence,
         sourceType,
       });
     };
 
-    // 1. Extract from Current Turn Message
+    // 1. Extract from Current Turn Message (Gated by Intent Classification)
     const message = (input.message || "").trim();
     if (message) {
-      addNode(
-        "Current Turn Assertion",
-        message,
-        "CURRENT_TURN_EXPLICIT",
-        "USER_ASSERTION",
-        activeTopic || "global",
-        input.options?.currentTime,
-        1.0
-      );
+      const turnIntent = this.classifyTurnIntent(message);
+
+      if (turnIntent === "QUESTION") {
+        // Questions are reasoning queries, NOT causal evidence
+        diagnostics.questionsSuppressedCount++;
+      } else if (turnIntent === "HYPOTHETICAL" || turnIntent === "CONDITIONAL") {
+        // Hypotheticals/conditionals are NOT observed evidence
+        diagnostics.hypotheticalsSuppressedCount++;
+      } else if (turnIntent === "ASSISTANT_ATTRIBUTION") {
+        // Assistant attribution cannot count as independent user evidence
+        diagnostics.assistantAttributionsSuppressedCount++;
+      } else if (turnIntent === "SPECULATION") {
+        // Speculation contributes bounded advisory hypothesis only, not verified evidence
+        diagnostics.speculationsSuppressedCount++;
+        addNode(
+          "Current Turn Speculation",
+          message,
+          "SYSTEM_DEFAULT",
+          "SPECULATIVE_CLAIM",
+          activeTopic || "global",
+          input.options?.currentTime,
+          0.35,
+          false
+        );
+      } else if (turnIntent === "OBSERVATION" || turnIntent === "ASSERTION") {
+        // Explicit declarative assertion by user
+        addNode(
+          "Current Turn Assertion",
+          message,
+          "CURRENT_TURN_EXPLICIT",
+          "USER_ASSERTION",
+          activeTopic || "global",
+          input.options?.currentTime,
+          0.95,
+          true
+        );
+      }
     }
 
     // 2. Extract from Executive Context Authoritative Facts
@@ -264,12 +399,13 @@ export class CausalReasoningEngine {
           "SYSTEM_FACT",
           fact.topic || (fact.isGlobal ? "GLOBAL" : "global"),
           undefined,
-          fact.confidence ?? 0.95
+          fact.confidence ?? 0.95,
+          true
         );
       }
     }
 
-    // 3. Extract from Deep Reasoning Evidence
+    // 3. Extract from Deep Reasoning Evidence, Hypotheses, and Conclusion
     if (input.deepReasoning?.evidence) {
       for (const ev of input.deepReasoning.evidence) {
         addNode(
@@ -279,23 +415,86 @@ export class CausalReasoningEngine {
           ev.authority === "CURRENT_TURN_EXPLICIT" ? "USER_ASSERTION" : "SYSTEM_FACT",
           typeof ev.scope === "string" ? ev.scope : "global",
           ev.timestamp,
-          ev.reliability ?? 0.9
+          ev.reliability ?? 0.9,
+          true
         );
       }
     }
 
-    // 4. Extract from Contradiction Resolution Revisions
+    if (input.deepReasoning?.hypotheses) {
+      for (const hyp of input.deepReasoning.hypotheses) {
+        addNode(
+          hyp.id || "Deep Reasoning Hypothesis",
+          hyp.statement,
+          hyp.winningAuthority || "VERIFIED_EVIDENCE",
+          "SYSTEM_FACT",
+          "global",
+          undefined,
+          hyp.confidence ?? 0.8,
+          true
+        );
+      }
+    }
+
+    if (input.deepReasoning?.conclusion && input.deepReasoning.conclusion.statement) {
+      addNode(
+        "Deep Reasoning Conclusion",
+        input.deepReasoning.conclusion.statement,
+        "VERIFIED_EVIDENCE",
+        "SYSTEM_FACT",
+        "global",
+        undefined,
+        input.deepReasoning.conclusion.confidence ?? 0.85,
+        true
+      );
+    }
+
+    // 4. Extract from Contradiction Resolution Revisions, Directives, and Contradictions
     if (input.contradictionResolution?.revisions) {
       for (const rev of input.contradictionResolution.revisions) {
-        if (rev.revisedBelief) {
+        const text = rev.revisedBelief || rev.sanitizedDirective || rev.reason || rev.targetSubject;
+        if (text) {
           addNode(
             `Revised Belief: ${rev.targetSubject}`,
-            rev.revisedBelief,
+            text,
             "VERIFIED_EVIDENCE",
             "SYSTEM_FACT",
             rev.scope || "global",
             undefined,
-            rev.confidence ?? 0.9
+            rev.confidence ?? 0.9,
+            true
+          );
+        }
+      }
+    }
+
+    if (input.contradictionResolution?.activeDirectives) {
+      for (const dir of input.contradictionResolution.activeDirectives) {
+        addNode(
+          "Contradiction Directive",
+          dir,
+          "VERIFIED_EVIDENCE",
+          "SYSTEM_FACT",
+          "global",
+          undefined,
+          0.9,
+          true
+        );
+      }
+    }
+
+    if (input.contradictionResolution?.contradictions) {
+      for (const c of input.contradictionResolution.contradictions) {
+        if (c.subject || c.description) {
+          addNode(
+            `Contradiction: ${c.subject}`,
+            c.description || c.subject,
+            "VERIFIED_EVIDENCE",
+            "SYSTEM_FACT",
+            "global",
+            undefined,
+            0.85,
+            true
           );
         }
       }
@@ -311,7 +510,8 @@ export class CausalReasoningEngine {
           "TEMPORAL_EVENT",
           "global",
           trans.transitionTimestamp,
-          0.9
+          0.9,
+          true
         );
       }
     }
@@ -326,12 +526,13 @@ export class CausalReasoningEngine {
           "SYSTEM_FACT",
           proj.name,
           undefined,
-          proj.confidence ?? 0.9
+          proj.confidence ?? 0.9,
+          true
         );
       }
     }
 
-    // 7. Extract from Predictive Context Candidates (Advisory)
+    // 7. Extract from Predictive Context Candidates (Advisory - Bounded)
     if (input.predictiveContext?.acceptedCandidates) {
       for (const cand of input.predictiveContext.acceptedCandidates) {
         addNode(
@@ -341,7 +542,8 @@ export class CausalReasoningEngine {
           "PREDICTIVE_INFERENCE",
           cand.topic || "global",
           undefined,
-          cand.confidence * 0.7 // Bounded down to prevent elevating prediction over fact
+          cand.confidence * 0.7, // Bounded down to prevent elevating prediction over fact
+          false // Predictive context is inferential, not observed history
         );
       }
     }
@@ -377,7 +579,7 @@ export class CausalReasoningEngine {
 
     // 2. Extract causal statements from other authoritative/evidence nodes
     for (const node of nodes) {
-      if (node.sourceType !== "USER_ASSERTION") {
+      if (node.sourceType !== "USER_ASSERTION" && node.sourceType !== "SPECULATIVE_CLAIM") {
         const nodeRels = this.extractExplicitTurnCausalRelations(node.statement, nodes, diagnostics, node.scope || activeTopic);
         for (const rel of nodeRels) {
           // Adjust authority to match node authority
@@ -420,7 +622,7 @@ export class CausalReasoningEngine {
   }
 
   /**
-   * Extract causal relations explicitly asserted in the user message.
+   * Extract causal relations explicitly asserted in a declarative text.
    */
   private extractExplicitTurnCausalRelations(
     message: string,
@@ -430,6 +632,18 @@ export class CausalReasoningEngine {
   ): CausalRelation[] {
     const relations: CausalRelation[] = [];
     if (!message) return relations;
+
+    // Gate against questions, hypotheticals, assistant attributions, and speculations
+    const intent = this.classifyTurnIntent(message);
+    if (
+      intent === "QUESTION" ||
+      intent === "HYPOTHETICAL" ||
+      intent === "CONDITIONAL" ||
+      intent === "ASSISTANT_ATTRIBUTION" ||
+      intent === "SPECULATION"
+    ) {
+      return relations;
+    }
 
     const lower = message.toLowerCase();
 
@@ -482,7 +696,6 @@ export class CausalReasoningEngine {
     ];
 
     // Check post hoc ergo propter hoc fallacy avoidance
-    // e.g. "A happened before B, therefore A caused B" or "A happened then B happened"
     const postHocPatterns = [
       /(.*?)\s+(?:happened before|preceded)\s+(.*?)(?:,\s*therefore it caused|\s+so it caused)/i,
       /after\s+(.*?)\s*,\s*(.*?)\s+happened/i,
@@ -653,7 +866,7 @@ export class CausalReasoningEngine {
       }
     }
 
-    // Process Post-Hoc Fallacy Avoidance (e.g. "A happened before B, did A cause B?")
+    // Process Post-Hoc Fallacy Avoidance
     for (const pattern of postHocPatterns) {
       const match = lower.match(pattern);
       if (match && match[1] && match[2]) {
@@ -725,6 +938,11 @@ export class CausalReasoningEngine {
     // Cross-topic isolation check
     if (nodeA.scope && nodeB.scope && nodeA.scope !== "global" && nodeB.scope !== "global" && nodeA.scope !== nodeB.scope) {
       diagnostics.topicIsolatedSuppressedCount++;
+      return null;
+    }
+
+    // Block non-observed / speculative nodes from forming direct verified relations
+    if (!nodeA.isObserved || !nodeB.isObserved || nodeA.sourceType === "SPECULATIVE_CLAIM" || nodeB.sourceType === "SPECULATIVE_CLAIM") {
       return null;
     }
 
@@ -896,7 +1114,7 @@ export class CausalReasoningEngine {
       lowerMessage.includes("had we used") ||
       lowerMessage.includes("if not for");
 
-    // 1. If explicit counterfactual query, build direct scenario
+    // 1. If explicit counterfactual query, build direct scenario from authorized background relations
     if (isCounterfactualQuery) {
       for (const rel of relations) {
         let projectedOutcome: CounterfactualOutcome = "UNCERTAIN";
@@ -988,7 +1206,34 @@ export class CausalReasoningEngine {
   }
 
   /**
-   * Synthesize clean, human-readable directives free of raw internal IDs or credentials.
+   * Format Primary Causal Claim in clean natural language without internal metadata tags.
+   */
+  private formatPrimaryCausalClaim(rel: CausalRelation): string {
+    switch (rel.relationType) {
+      case "DIRECT_CAUSE":
+        return `The available evidence indicates that ${rel.causeStatement} directly caused ${rel.effectStatement}.`;
+      case "NECESSARY_CONDITION":
+        return `The available evidence indicates that ${rel.effectStatement} strictly requires ${rel.causeStatement}.`;
+      case "SUFFICIENT_CONDITION":
+        return `The available evidence indicates that ${rel.causeStatement} is sufficient to produce ${rel.effectStatement}.`;
+      case "NECESSARY_AND_SUFFICIENT":
+        return `The available evidence indicates that ${rel.causeStatement} is necessary and sufficient for ${rel.effectStatement}.`;
+      case "CONTRIBUTORY_FACTOR":
+        return `The available evidence indicates that ${rel.causeStatement} is a contributory factor to ${rel.effectStatement}.`;
+      case "CORRELATION_ONLY":
+      case "COINCIDENCE":
+        return `The available evidence indicates correlation between ${rel.causeStatement} and ${rel.effectStatement}, but direct causation is unverified.`;
+      case "CONFOUNDED":
+        return `The relationship between ${rel.causeStatement} and ${rel.effectStatement} is confounded by shared common factors.`;
+      case "REVERSE_CAUSATION":
+        return `The available evidence indicates reverse causation: ${rel.effectStatement} is caused by ${rel.causeStatement}.`;
+      default:
+        return `The causal relationship between ${rel.causeStatement} and ${rel.effectStatement} is currently unverified.`;
+    }
+  }
+
+  /**
+   * Synthesize clean, human-readable directives free of raw internal IDs, brackets, or credentials.
    */
   private synthesizeDirectives(
     relations: CausalRelation[],
@@ -1004,13 +1249,13 @@ export class CausalReasoningEngine {
       if (directives.length >= maxDirectives) break;
 
       if (rel.relationType === "DIRECT_CAUSE" || rel.relationType === "NECESSARY_AND_SUFFICIENT") {
-        const d = `Acknowledge direct causal link: "${rel.causeStatement}" directly caused "${rel.effectStatement}".`;
+        const d = `The available evidence supports a direct causal relationship: "${rel.causeStatement}" directly caused "${rel.effectStatement}".`;
         directives.push(this.sanitizeText(d, diagnostics));
       } else if (rel.relationType === "NECESSARY_CONDITION") {
-        const d = `Enforce necessary condition: "${rel.effectStatement}" strictly requires "${rel.causeStatement}".`;
+        const d = `The available evidence indicates a necessary condition: "${rel.effectStatement}" strictly requires "${rel.causeStatement}".`;
         directives.push(this.sanitizeText(d, diagnostics));
       } else if (rel.relationType === "CORRELATION_ONLY") {
-        const d = `Maintain correlation caution: "${rel.causeStatement}" and "${rel.effectStatement}" are correlated in time, but direct causation is unverified.`;
+        const d = `Maintaining correlation caution: "${rel.causeStatement}" and "${rel.effectStatement}" are correlated in time, but direct causation is unverified.`;
         directives.push(this.sanitizeText(d, diagnostics));
       } else if (rel.relationType === "CONFOUNDED") {
         const d = `Account for confounding factor: The relationship between "${rel.causeStatement}" and "${rel.effectStatement}" is mediated by a common cause.`;
@@ -1029,19 +1274,23 @@ export class CausalReasoningEngine {
     for (const cf of counterfactuals) {
       if (directives.length >= maxDirectives) break;
       if (cf.consequentEvaluation.counterfactualNecessityEstablished) {
-        const d = `Counterfactual analysis indicates: In the absence of "${cf.antecedentModification.originalCondition}", "${cf.consequentEvaluation.targetEffect}" would not have occurred.`;
+        const d = `This is a counterfactual scenario rather than an observed event: In the absence of "${cf.antecedentModification.originalCondition}", "${cf.consequentEvaluation.targetEffect}" would not have occurred.`;
+        directives.push(this.sanitizeText(d, diagnostics));
+      } else {
+        const d = `This is a counterfactual scenario rather than an observed event: In the hypothetical scenario where "${cf.antecedentModification.originalCondition}" is altered, projected outcome is ${cf.consequentEvaluation.projectedOutcome.toLowerCase()}.`;
         directives.push(this.sanitizeText(d, diagnostics));
       }
     }
 
-    // Scrub any remaining raw internal IDs or duplicate directives
+    // Scrub any remaining raw internal IDs, tags, brackets, confidence floats, or timestamps
     const uniqueCleanDirectives: string[] = [];
     for (const dir of directives) {
       const scrubbed = dir
-        .replace(/\bnode_\d+_[a-f0-9]+\b/gi, "")
-        .replace(/\bcausal_\w+_\d+\b/gi, "")
-        .replace(/\bcf_\d+_[a-f0-9]+\b/gi, "")
-        .replace(/\bchain_\d+_[a-f0-9]+\b/gi, "")
+        .replace(/\[(?:DIRECT_CAUSE|INDIRECT_CAUSE|CORRELATION_ONLY|CONFOUNDED|NECESSARY_CONDITION|SUFFICIENT_CONDITION|NECESSARY_AND_SUFFICIENT|REVERSE_CAUSATION|UNRESOLVED)\]/gi, "")
+        .replace(/\b(?:node|causal|cf|chain)_[a-zA-Z0-9_]+\b/gi, "")
+        .replace(/\b(?:confidence|authority|timestamp)\s*=\s*[0-9\.]+\b/gi, "")
+        .replace(/\b\d{10,13}\b/g, "")
+        .replace(/\s{2,}/g, " ")
         .trim();
 
       if (scrubbed && !uniqueCleanDirectives.includes(scrubbed)) {
