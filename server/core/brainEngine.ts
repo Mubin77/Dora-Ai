@@ -92,6 +92,8 @@ import { deepReasoningEngine } from "./deepReasoningEngine";
 import { DeepReasoningAnalysis } from "./deepReasoningTypes";
 import { contradictionResolutionEngine } from "./contradictionResolutionEngine";
 import { ContradictionResolutionAnalysis } from "./contradictionResolutionTypes";
+import { causalReasoningEngine } from "./causalReasoningEngine";
+import { CausalReasoningAnalysis } from "./causalReasoningTypes";
 import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
 import { sharedExperienceEngine } from "./sharedExperienceEngine";
@@ -118,6 +120,7 @@ export * from "./executiveContextTypes";
 export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./deepReasoningTypes";
+export * from "./causalReasoningTypes";
 export * from "./conversationalBehaviorTypes";
 export * from "./sharedExperienceTypes";
 export type {
@@ -140,6 +143,21 @@ export type {
   ContradictionInput,
 } from "./contradictionResolutionTypes";
 export { DEFAULT_CONTRADICTION_RESOLUTION_BUDGET } from "./contradictionResolutionTypes";
+export type {
+  CausalRelationType,
+  CounterfactualOutcome,
+  NecessitySufficiencyClassification,
+  CausalEvidenceNode,
+  CausalRelation,
+  CausalChain,
+  CounterfactualScenario,
+  CausalReasoningBudgetConfig,
+  CausalReasoningDiagnostics,
+  CausalReasoningAnalysis,
+  CausalReasoningOptions,
+  CausalReasoningInput,
+} from "./causalReasoningTypes";
+export { DEFAULT_CAUSAL_REASONING_BUDGET } from "./causalReasoningTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -159,6 +177,7 @@ export { predictiveContextEngine } from "./predictiveContextEngine";
 export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { deepReasoningEngine } from "./deepReasoningEngine";
 export { contradictionResolutionEngine } from "./contradictionResolutionEngine";
+export { causalReasoningEngine } from "./causalReasoningEngine";
 export { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 export { sharedExperienceEngine } from "./sharedExperienceEngine";
 export { languageStyleAdapter } from "./languageStyleAdapter";
@@ -199,6 +218,8 @@ export interface BrainAnalysis {
   executiveContext?: ExecutiveContextPackage;
   deepReasoningAnalysis?: DeepReasoningAnalysis;
   contradictionResolutionAnalysis?: ContradictionResolutionAnalysis;
+  causalReasoningAnalysis?: CausalReasoningAnalysis;
+  causalReasoning?: CausalReasoningAnalysis;
   conversationalBehavior?: ConversationalBehaviorDecision;
   sharedExperience?: SharedExperienceContext;
   languageStyle?: {
@@ -773,6 +794,33 @@ export class BrainEngine {
       },
     });
 
+    // Step 14.5 / Phase 3 Step 3: Causal & Counterfactual Reasoning Engine (Deterministic, Bounded, Non-LLM)
+    const causalReasoningAnalysis = causalReasoningEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      deepReasoning: deepReasoningAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
+      executiveContext,
+      memoryGovernance: memoryGovernanceAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
     // Step 15: Conversational Behavior & Proactive Companion Engine
     const conversationalBehavior = conversationalBehaviorEngine.evaluate({
       userMessage: trimmed,
@@ -788,6 +836,13 @@ export class BrainEngine {
 
     // Add sanitized contradiction resolution directives to promptDirectives
     for (const d of contradictionResolutionAnalysis.activeDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add sanitized causal reasoning directives to promptDirectives
+    for (const d of causalReasoningAnalysis.activeDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -848,6 +903,8 @@ export class BrainEngine {
       executiveContext,
       deepReasoningAnalysis,
       contradictionResolutionAnalysis,
+      causalReasoningAnalysis,
+      causalReasoning: causalReasoningAnalysis,
       conversationalBehavior,
       sharedExperience,
       languageStyle: {
