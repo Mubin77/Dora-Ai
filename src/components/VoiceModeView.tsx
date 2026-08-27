@@ -4,15 +4,20 @@ import {
   MicOff,
   Tv,
   Camera,
+  Plus,
+  Send,
+  ArrowUp,
+  X,
   Sparkles,
   SwitchCamera,
   Maximize2,
   Minimize2,
-  AudioLines,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChatMessage, ConversationState, DoraEmotion } from "../types";
 import { VoiceOrb } from "./VoiceOrb";
+import { ActionMenu } from "./ActionMenu";
+import { ModeSelector } from "./ModeSelector";
 
 export interface VoiceModeViewProps {
   state: ConversationState;
@@ -28,6 +33,12 @@ export interface VoiceModeViewProps {
   screenSharingNotice: string | null;
   isCameraActive: boolean;
   cameraStream: MediaStream | null;
+  isDeepThinkActive?: boolean;
+  onToggleDeepThink?: () => void;
+  onSelectCamera?: () => void;
+  onSelectPhotos?: () => void;
+  onSelectFiles?: () => void;
+  onOpenPlugins?: () => void;
   onToggleCamera: () => void;
   onSwitchCameraFacing?: () => void;
   onDismissScreenNotice: () => void;
@@ -48,29 +59,39 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
   volumeLevel,
   isMuted,
   isCallActive,
-  callDuration,
+  callDuration: _callDuration,
   currentSpokenText,
   messages,
-  userName,
+  userName: _userName,
   isScreenVisionActive,
   screenSharingNotice,
   isCameraActive,
   cameraStream,
+  isDeepThinkActive,
+  onToggleDeepThink,
+  onSelectCamera,
+  onSelectPhotos,
+  onSelectFiles,
+  onOpenPlugins,
   onToggleCamera,
   onSwitchCameraFacing,
   onDismissScreenNotice,
   onToggleScreenVision,
   onToggleMute,
   onToggleCall,
-  onInterrupt,
+  onInterrupt: _onInterrupt,
   onOpenSidebar,
-  onOpenMemory,
-  onOpenSettings,
+  onOpenMemory: _onOpenMemory,
+  onOpenSettings: _onOpenSettings,
   onSwitchToChat,
   onSendTextMessage,
 }) => {
   const [isCameraExpanded, setIsCameraExpanded] = useState(false);
+  const [isTextInputOpen, setIsTextInputOpen] = useState(false);
+  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const [textInputVal, setTextInputVal] = useState("");
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
 
   // Reset expanded state if camera is stopped
   useEffect(() => {
@@ -78,6 +99,13 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
       setIsCameraExpanded(false);
     }
   }, [isCameraActive]);
+
+  // Focus input when opened
+  useEffect(() => {
+    if (isTextInputOpen && textInputRef.current) {
+      textInputRef.current.focus();
+    }
+  }, [isTextInputOpen]);
 
   // Attach camera stream to live video preview element
   useEffect(() => {
@@ -106,60 +134,77 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
   const activeDoraText = currentSpokenText || (isSpeaking ? latestDoraMsg?.text : null);
   const isUserSpeakingActive = isListening && latestUserVoiceMsg && latestUserVoiceMsg.isStreaming;
 
-  // Dora Voice button handler: single primary control for starting or ending immersive voice session
-  const handleDoraVoiceToggle = () => {
+  // Dora Orb tap handler: toggles immersive voice on or off
+  const handleOrbClick = () => {
     onToggleCall();
+  };
+
+  const handleSendPrompt = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (textInputVal.trim()) {
+      onSendTextMessage(textInputVal.trim());
+      setTextInputVal("");
+      setIsTextInputOpen(false);
+      textInputRef.current?.blur();
+    }
   };
 
   return (
     <div
       id="dora-voice-mode-root"
-      className="fixed inset-0 z-30 flex flex-col justify-between bg-black text-[#E3E3E3] font-sans select-none overflow-hidden"
+      className="fixed inset-0 z-30 flex flex-col justify-between bg-black text-[#E3E3E3] font-sans select-none overflow-hidden h-[100dvh] w-full"
     >
-      {/* Background Cinematic Deep-Blue Ambient Bottom Glow */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden select-none">
-        {/* Deep navy base layer for smooth falloff into pure AMOLED black */}
-        <div className="absolute -bottom-48 left-1/2 -translate-x-1/2 w-[900px] sm:w-[1200px] h-[450px] sm:h-[520px] bg-[#0E358A]/[0.25] rounded-full blur-[160px]" />
-        {/* Core lower deep-blue atmospheric bloom */}
-        <div className="absolute -bottom-36 left-1/2 -translate-x-1/2 w-[720px] sm:w-[900px] h-[360px] sm:h-[420px] bg-[#1A56DB]/[0.2] rounded-full blur-[120px]" />
-      </div>
-
       {/* ============================================================ */}
-      {/* TOP BAR: Clean Floating Top-Left Menu, Clean Top-Right       */}
+      {/* 1. TOP BAR: [Hamburger (Left)]                [Camera (Right)]*/}
       {/* ============================================================ */}
       <header
         id="dora-voice-topbar"
-        className="relative z-20 w-full px-5 sm:px-8 pt-6 pb-2 flex items-center justify-between"
+        className="relative z-20 w-full px-5 sm:px-8 md:px-12 lg:px-16 pt-[max(1.25rem,env(safe-area-inset-top,0px))] sm:pt-6 md:pt-8 pb-2 flex items-center justify-between shrink-0 max-w-7xl mx-auto"
       >
-        {/* Left: Floating Circular Hamburger Icon Button */}
+        {/* Top-Left: Circular Menu / Hamburger Button */}
         <button
           id="btn-voice-menu"
           type="button"
           onClick={onOpenSidebar}
           aria-label="Open Navigation Menu"
-          className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#18181b]/80 hover:bg-[#232328] active:bg-[#2c2c32] border border-white/[0.1] text-white/90 hover:text-white active:scale-95 transition-all flex items-center justify-center shrink-0 backdrop-blur-md shadow-md"
+          title="Open Menu"
+          className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#18181b] hover:bg-[#222226] active:bg-[#2c2c32] border border-white/[0.08] text-white/90 hover:text-white active:scale-95 transition-all flex items-center justify-center shrink-0 shadow-sm"
         >
-          <div className="flex flex-col gap-1 w-4 sm:w-4.5">
+          <div className="flex flex-col gap-1 w-4 sm:w-4.5 items-start">
             <span className="w-full h-0.5 bg-white/90 rounded-full" />
-            <span className="w-3 h-0.5 bg-white/90 rounded-full" />
+            <span className="w-3.5 h-0.5 bg-white/90 rounded-full" />
           </div>
         </button>
 
-        {/* Center/Right Vision Status Indicators (if active) */}
+        {/* Center: Mode Selector & Status Indicators */}
         <div className="flex items-center gap-2">
-          {isCameraActive && (
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1D72FE]/20 border border-[#1D72FE]/40 text-[#38BDF8] text-xs font-medium backdrop-blur-md animate-fade-in">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#38BDF8] animate-pulse" />
-              <span>Camera Active</span>
-            </div>
-          )}
+          <ModeSelector
+            currentMode="voice"
+            onSelectMode={(mode) => {
+              if (mode === "chat") {
+                onSwitchToChat();
+              }
+            }}
+          />
           {isScreenVisionActive && (
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-medium backdrop-blur-md animate-fade-in">
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-medium backdrop-blur-md animate-fade-in">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>Screen Sharing</span>
             </div>
           )}
         </div>
+
+        {/* Top-Right: Circular Camera Control Button */}
+        <button
+          id="btn-voice-top-camera"
+          type="button"
+          onClick={onToggleCamera}
+          aria-label={isCameraActive ? "Turn off camera" : "Turn on camera"}
+          title={isCameraActive ? "Turn off camera" : "Turn on camera"}
+          className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border border-white/[0.08] bg-[#18181b] hover:bg-[#222226] active:bg-[#2c2c32] text-white/90 hover:text-white transition-all flex items-center justify-center shrink-0 active:scale-95 shadow-sm"
+        >
+          <Camera className="w-5 h-5" />
+        </button>
       </header>
 
       {/* Screen Sharing / Camera Notice Toast */}
@@ -180,25 +225,26 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
       )}
 
       {/* ============================================================ */}
-      {/* CENTER STAGE: Centered Dora Celestial Orb & Minimal Dialogue */}
+      {/* 2. CENTER STAGE: Centered Dora Celestial Orb & Minimal Text   */}
       {/* ============================================================ */}
       <main
         id="dora-voice-center-stage"
-        className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 sm:px-8 max-w-3xl mx-auto w-full my-auto"
+        className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 sm:px-8 max-w-4xl mx-auto w-full my-auto py-2"
       >
-        {/* Large Centered Celestial Voice Orb (Animated Ethereal Sphere) */}
+        {/* Centered Celestial Dora Orb (Voice ON/OFF Primary Control) */}
         <div className="relative flex flex-col items-center justify-center">
           <VoiceOrb
             state={state}
             volumeLevel={volumeLevel}
             emotion={emotion}
             isMuted={isMuted}
-            onClick={isSpeaking ? onInterrupt : handleDoraVoiceToggle}
+            isCallActive={isCallActive}
+            onClick={handleOrbClick}
           />
         </div>
 
         {/* Minimal Subtitle / Status Dialogue (Clean negative space) */}
-        <div className="w-full text-center mt-6 min-h-[48px] flex items-center justify-center">
+        <div className="w-full text-center mt-6 sm:mt-8 min-h-[48px] sm:min-h-[56px] flex items-center justify-center px-4">
           {activeDoraText ? (
             <p className="text-base sm:text-lg text-white/80 font-light max-w-xl mx-auto line-clamp-2 animate-fade-in">
               {activeDoraText}
@@ -213,7 +259,9 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
               <span>Thinking...</span>
             </div>
           ) : isMuted ? (
-            <p className="text-sm text-amber-400/80 font-normal">Microphone Muted</p>
+            <p className="text-sm text-white/50 font-light">Microphone muted</p>
+          ) : !isCallActive ? (
+            <p className="text-sm text-white/35 font-light">Tap orb to talk</p>
           ) : null}
         </div>
       </main>
@@ -230,7 +278,7 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
             exit={{ opacity: 0, scale: 0.8, y: 15 }}
             transition={{ type: "spring", stiffness: 400, damping: 30 }}
             onClick={() => setIsCameraExpanded(true)}
-            className="fixed bottom-28 sm:bottom-32 right-4 sm:right-6 md:right-8 z-30 w-[34vw] min-w-[125px] max-w-[155px] sm:w-44 md:w-52 aspect-[3/4] sm:aspect-[4/3] rounded-2xl overflow-hidden bg-[#121316] border border-white/20 hover:border-[#1D72FE]/70 shadow-[0_12px_36px_rgba(0,0,0,0.85),0_0_24px_rgba(29,114,254,0.18)] cursor-pointer group select-none backdrop-blur-md"
+            className="fixed bottom-28 sm:bottom-32 md:bottom-36 right-4 sm:right-6 md:right-10 z-30 w-[clamp(120px,22vw,200px)] aspect-[3/4] sm:aspect-[4/3] rounded-2xl overflow-hidden bg-[#121316] border border-white/20 hover:border-[#1D72FE]/70 shadow-[0_12px_36px_rgba(0,0,0,0.85)] cursor-pointer group select-none backdrop-blur-md"
             title="Tap to expand camera preview"
           >
             <video
@@ -338,106 +386,122 @@ export const VoiceModeView: React.FC<VoiceModeViewProps> = ({
       </AnimatePresence>
 
       {/* ============================================================ */}
-      {/* BOTTOM CONTROLS BAR: Circular Floating Controls             */}
-      {/* EXACT LAYOUT: Camera → Device/Media → Dora Voice → Mic       */}
+      {/* 3. BOTTOM CONTROLS BAR: Minimal ChatGPT-style Composition    */}
+      {/* LAYOUT: [ + Ask Dora text input pill ] [Mic] [Camera/Screen]  */}
       {/* ============================================================ */}
       <footer
         id="dora-voice-bottom-controls"
-        className="relative z-20 w-full pb-8 sm:pb-12 pt-2 px-4 flex items-center justify-center"
+        className="relative z-20 w-full pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] sm:pb-8 md:pb-10 pt-2 px-4 sm:px-8 max-w-md sm:max-w-xl md:max-w-2xl mx-auto flex items-center justify-center gap-2.5 sm:gap-3.5 shrink-0"
       >
-        <div className="flex items-center justify-center gap-3.5 sm:gap-5">
-          {/* 1. Camera Control Button */}
-          <button
-            id="btn-voice-camera"
-            type="button"
-            onClick={onToggleCamera}
-            title={isCameraActive ? "Turn Off Camera" : "Turn On Camera"}
-            aria-label={isCameraActive ? "Turn Off Camera" : "Turn On Camera"}
-            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-200 shrink-0 backdrop-blur-md active:scale-95 shadow-md ${
-              isCameraActive
-                ? "bg-[#1D72FE]/20 border-[#1D72FE]/60 text-[#38BDF8] hover:bg-[#1D72FE]/30"
-                : "bg-[#141519]/90 hover:bg-[#1C1D23] active:bg-[#25262E] border-white/[0.09] text-white/80 hover:text-white"
-            }`}
-          >
-            <Camera className="w-5 h-5 sm:w-6 sm:h-6" />
-          </button>
+        {/* Unified "Ask Dora" Text Composer Pill (In-place typing, with ActionMenu anchored above) */}
+        <div className="relative flex-1 min-w-0">
+          {/* Action Menu (opens above + button) */}
+          <ActionMenu
+            isOpen={isActionMenuOpen}
+            onClose={() => setIsActionMenuOpen(false)}
+            onSelectCamera={() => onSelectCamera?.()}
+            onSelectPhotos={() => onSelectPhotos?.()}
+            onSelectFiles={() => onSelectFiles?.()}
+            isDeepThinkActive={isDeepThinkActive}
+            onToggleDeepThink={onToggleDeepThink}
+            onOpenPlugins={onOpenPlugins}
+          />
 
-          {/* 2. Device / Media (Screen Share) Control Button */}
-          <button
-            id="btn-voice-screen"
-            type="button"
-            onClick={onToggleScreenVision}
-            title={isScreenVisionActive ? "Stop Screen Sharing" : "Share Screen / Device Media"}
-            aria-label={isScreenVisionActive ? "Stop Screen Sharing" : "Share Screen / Device Media"}
-            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-200 shrink-0 backdrop-blur-md active:scale-95 shadow-md ${
-              isScreenVisionActive
-                ? "bg-emerald-500/20 border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/30"
-                : "bg-[#141519]/90 hover:bg-[#1C1D23] active:bg-[#25262E] border-white/[0.09] text-white/80 hover:text-white"
-            }`}
+          <form
+            id="form-voice-ask-dora"
+            onSubmit={handleSendPrompt}
+            className="w-full h-12 sm:h-14 px-3.5 sm:px-4 rounded-full bg-[#18181b] hover:bg-[#202024] focus-within:bg-[#202024] border border-white/[0.08] focus-within:border-white/[0.18] transition-all flex items-center gap-2.5 shadow-sm"
           >
-            <Tv className="w-5 h-5 sm:w-6 sm:h-6" />
-          </button>
-
-          {/* 3. Dora Immersive Voice Button (Session Toggle Control) */}
-          <button
-            id="btn-voice-dora"
-            type="button"
-            onClick={handleDoraVoiceToggle}
-            title={isCallActive ? "End Voice Session" : "Start Voice Session"}
-            aria-label={isCallActive ? "End Voice Session" : "Start Voice Session"}
-            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-300 shrink-0 backdrop-blur-md active:scale-95 shadow-md ${
-              isCallActive
-                ? "bg-[#1D72FE]/20 border-[#1D72FE]/60 text-[#38BDF8] hover:bg-[#1D72FE]/30 shadow-[0_0_16px_rgba(29,114,254,0.3)]"
-                : "bg-[#141519]/90 hover:bg-[#1C1D23] active:bg-[#25262E] border-white/[0.09] text-white/80 hover:text-white"
-            }`}
-          >
-            <motion.div
-              className="flex items-center justify-center"
-              animate={
-                isCallActive
-                  ? {
-                      scale: state === "speaking" ? [1, 1.1, 1] : state === "listening" ? [1, 1.05, 1] : 1,
-                    }
-                  : { scale: 1 }
-              }
-              transition={
-                isCallActive
-                  ? {
-                      duration: state === "speaking" ? 0.8 : 1.6,
-                      repeat: Infinity,
-                      ease: "easeInOut",
-                    }
-                  : { duration: 0.2 }
-              }
+            {/* Left [+] Button / Icon (Opens Action Sheet) */}
+            <button
+              id="btn-voice-plus"
+              type="button"
+              onClick={() => setIsActionMenuOpen((prev) => !prev)}
+              title="Add attachment or action"
+              aria-label="Add attachment or action"
+              className="flex items-center justify-center text-white/70 hover:text-white shrink-0 transition-colors p-1"
             >
-              <AudioLines
-                className={`w-5 h-5 sm:w-6 sm:h-6 transition-all duration-300 ${
-                  isCallActive
-                    ? "text-[#38BDF8] drop-shadow-[0_0_8px_rgba(56,189,248,0.6)]"
-                    : "text-white/80 hover:text-white"
+              <Plus
+                className={`w-4 h-4 text-white/70 hover:text-white shrink-0 transition-transform duration-150 ${
+                  isActionMenuOpen ? "rotate-45" : ""
                 }`}
               />
-            </motion.div>
-          </button>
+            </button>
 
-          {/* 4. Microphone Mute / Unmute Control Button */}
+            {/* Integrated Text Input */}
+            <input
+              ref={textInputRef}
+              type="text"
+              value={textInputVal}
+              onChange={(e) => setTextInputVal(e.target.value)}
+              onFocus={() => setIsTextInputOpen(true)}
+              onBlur={() => {
+                if (!textInputVal.trim()) {
+                  setIsTextInputOpen(false);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSendPrompt();
+                }
+                if (e.key === "Escape") {
+                  setTextInputVal("");
+                  setIsTextInputOpen(false);
+                  textInputRef.current?.blur();
+                }
+              }}
+              placeholder="Ask Dora something..."
+              className="flex-1 bg-transparent text-sm sm:text-base text-white placeholder-white/40 focus:outline-none min-w-0"
+            />
+
+            {/* Send Action when text is entered */}
+            {textInputVal.trim() && (
+              <button
+                id="btn-voice-send-text"
+                type="submit"
+                onClick={handleSendPrompt}
+                title="Send to Dora"
+                aria-label="Send to Dora"
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white text-black hover:bg-white/90 active:scale-95 flex items-center justify-center transition-all shrink-0 shadow-sm"
+              >
+                <ArrowUp className="w-4 h-4 stroke-[2.5]" />
+              </button>
+            )}
+          </form>
+        </div>
+
+        <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+          {/* 2. Microphone Mute / Unmute Control Button */}
           <button
             id="btn-voice-mic"
             type="button"
             onClick={onToggleMute}
             title={isMuted ? "Unmute Microphone" : "Mute Microphone"}
             aria-label={isMuted ? "Unmute Microphone" : "Mute Microphone"}
-            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-200 shrink-0 backdrop-blur-md active:scale-95 shadow-md ${
-              isMuted
-                ? "bg-amber-500/20 border-amber-500/60 text-amber-300 hover:bg-amber-500/30"
-                : "bg-[#141519]/90 hover:bg-[#1C1D23] active:bg-[#25262E] border-white/[0.09] text-white/80 hover:text-white"
-            }`}
+            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border border-white/[0.08] bg-[#18181b] hover:bg-[#222226] active:bg-[#2c2c32] text-white/90 hover:text-white transition-all duration-200 shrink-0 active:scale-95 shadow-sm"
           >
             {isMuted ? (
-              <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-amber-400" />
+              <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-white/70" />
             ) : (
-              <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
+              <Mic className="w-5 h-5 sm:w-6 sm:h-6 text-white/90" />
             )}
+          </button>
+
+          {/* 3. Screen Share Control Button (Replacing X close button) */}
+          <button
+            id="btn-voice-screen-share"
+            type="button"
+            onClick={onToggleScreenVision}
+            title={isScreenVisionActive ? "Stop Screen Sharing" : "Share Screen"}
+            aria-label={isScreenVisionActive ? "Stop Screen Sharing" : "Share Screen"}
+            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center border transition-all duration-200 shrink-0 active:scale-95 shadow-sm ${
+              isScreenVisionActive
+                ? "bg-emerald-500/15 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/25"
+                : "bg-[#18181b] hover:bg-[#222226] active:bg-[#2c2c32] border-white/[0.08] text-white/90 hover:text-white"
+            }`}
+          >
+            <Tv className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
         </div>
       </footer>

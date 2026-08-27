@@ -8,7 +8,7 @@ import {
   Volume2,
   VolumeX,
   Share2,
-  MoreHorizontal,
+  MoreVertical,
   FileText,
   Radio,
   ExternalLink,
@@ -88,13 +88,13 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
 
   if (isUser) {
     return (
-      <div className="flex justify-end w-full group select-text">
+      <div className="flex justify-end w-full group select-text my-2">
         <div className="flex flex-col items-end max-w-[85%] sm:max-w-[75%] space-y-1.5">
           {/* Attached Image Preview */}
           {message.imageAttachment && (
             <div
               onClick={() => onPreviewImage?.(message.imageAttachment!)}
-              className="cursor-pointer overflow-hidden rounded-2xl border border-white/[0.1] bg-black/40 max-w-sm hover:opacity-95 transition-opacity"
+              className="cursor-pointer overflow-hidden rounded-2xl border border-white/[0.1] bg-black/40 max-w-sm hover:opacity-95 transition-opacity mb-1"
             >
               <img
                 src={message.imageAttachment}
@@ -107,7 +107,7 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
 
           {/* Attached Document Preview */}
           {message.fileAttachment && (
-            <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-white/[0.1] border border-white/[0.12] text-sm text-white/90">
+            <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-white/[0.1] border border-white/[0.12] text-sm text-white/90 mb-1">
               <FileText className="w-4 h-4 text-[#38BDF8] shrink-0" />
               <div className="flex flex-col min-w-0">
                 <span className="truncate font-medium text-xs sm:text-sm">
@@ -122,10 +122,10 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
             </div>
           )}
 
-          {/* User Message Text Bubble */}
+          {/* User Message Text Bubble (ChatGPT-style Blue Rounded Bubble) */}
           {message.text && (
             <div
-              className="bg-[#1D72FE] text-white rounded-[20px] rounded-br-[6px] px-4 py-2.5 sm:px-5 sm:py-3 text-[15px] sm:text-base leading-relaxed shadow-sm break-words"
+              className="bg-[#1E5DB5] text-white rounded-3xl px-4.5 py-2.5 sm:px-5 sm:py-3 text-[16px] leading-relaxed shadow-xs inline-block max-w-full break-words"
               style={{ wordBreak: "break-word" }}
             >
               {message.inputMode === "voice" && (
@@ -142,10 +142,10 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
     );
   }
 
-  // Dora Response (ChatGPT Style: Off-white text directly on black canvas, clean markdown, no heavy bubble)
+  // Dora Response (ChatGPT Style: Off-white/white clean text directly on pure black canvas)
   return (
-    <div className="flex flex-col items-start w-full group select-text text-[#ECECEC]">
-      <div className="w-full max-w-full sm:max-w-[90%] space-y-2">
+    <div className="flex flex-col items-start w-full group select-text text-[#ECECEC] my-2">
+      <div className="w-full max-w-full sm:max-w-[92%] space-y-2">
         {/* Streaming Loading Indicator if message is empty */}
         {!message.text && message.isStreaming ? (
           <div className="flex items-center gap-2 py-3 text-white/50">
@@ -154,11 +154,11 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
             <span className="w-2 h-2 rounded-full bg-[#38BDF8] animate-bounce [animation-delay:0.4s]" />
           </div>
         ) : (
-          <div className="text-[15px] sm:text-[16px] leading-[1.7] space-y-3 prose prose-invert max-w-none text-[#ECECEC]">
+          <div className="text-[16px] leading-[1.75] space-y-3 prose prose-invert max-w-none text-[#ECECEC] font-sans">
             <Markdown
               components={{
                 p: ({ children }) => (
-                  <p className="whitespace-pre-wrap leading-relaxed text-[#ECECEC] mb-3 last:mb-0">
+                  <p className="whitespace-pre-wrap leading-[1.75] text-[#EDEDED] mb-3 last:mb-0">
                     {children}
                   </p>
                 ),
@@ -181,12 +181,12 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
                   </h3>
                 ),
                 ul: ({ children }) => (
-                  <ul className="list-disc list-outside pl-5 space-y-1.5 my-2.5 text-[#ECECEC]">
+                  <ul className="list-disc list-outside pl-5 space-y-1.5 my-2.5 text-[#EDEDED]">
                     {children}
                   </ul>
                 ),
                 ol: ({ children }) => (
-                  <ol className="list-decimal list-outside pl-5 space-y-1.5 my-2.5 text-[#ECECEC]">
+                  <ol className="list-decimal list-outside pl-5 space-y-1.5 my-2.5 text-[#EDEDED]">
                     {children}
                   </ol>
                 ),
@@ -272,93 +272,95 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
           </span>
         )}
 
-        {/* Compact Action Controls under Dora Response */}
+        {/* Action Row under Dora Response (Unified Dora minimal action buttons) */}
         {message.text && (
-          <div className="flex items-center gap-1 pt-1.5 text-white/40 select-none">
-            {/* Copy button */}
+          <div className="flex items-center gap-1 sm:gap-1.5 pt-2.5 text-white/50 select-none">
+            {/* 1. Copy button */}
             <button
               type="button"
               onClick={handleCopy}
               title={copied ? "Copied" : "Copy response"}
               aria-label="Copy response"
-              className="p-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all"
+              className="w-8 h-8 rounded-full flex items-center justify-center hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all"
             >
               {copied ? (
                 <Check className="w-4 h-4 text-emerald-400" />
               ) : (
-                <Copy className="w-4 h-4" />
+                <Copy className="w-4 h-4 stroke-[1.75]" />
               )}
             </button>
 
-            {/* Read Aloud button */}
-            <button
-              type="button"
-              onClick={handleReadAloud}
-              title={isSpeaking ? "Stop reading" : "Read aloud"}
-              aria-label={isSpeaking ? "Stop reading" : "Read aloud"}
-              className={`p-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all ${
-                isSpeaking ? "text-[#38BDF8]" : ""
-              }`}
-            >
-              {isSpeaking ? (
-                <VolumeX className="w-4 h-4 text-[#38BDF8] animate-pulse" />
-              ) : (
-                <Volume2 className="w-4 h-4" />
-              )}
-            </button>
-
-            {/* Like button */}
+            {/* 2. Like button */}
             <button
               type="button"
               onClick={() => onFeedback?.(message.id, "like")}
               title="Good response"
               aria-label="Good response"
-              className={`p-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all ${
-                message.feedback === "like" ? "text-[#38BDF8]" : ""
+              className={`w-8 h-8 rounded-full flex items-center justify-center hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all ${
+                message.feedback === "like" ? "text-white bg-white/[0.12]" : ""
               }`}
             >
-              <ThumbsUp className="w-4 h-4" />
+              <ThumbsUp className="w-4 h-4 stroke-[1.75]" />
             </button>
 
-            {/* Dislike button */}
+            {/* 3. Dislike button */}
             <button
               type="button"
               onClick={() => onFeedback?.(message.id, "dislike")}
               title="Bad response"
               aria-label="Bad response"
-              className={`p-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all ${
-                message.feedback === "dislike" ? "text-rose-400" : ""
+              className={`w-8 h-8 rounded-full flex items-center justify-center hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all ${
+                message.feedback === "dislike" ? "text-white bg-white/[0.12]" : ""
               }`}
             >
-              <ThumbsDown className="w-4 h-4" />
+              <ThumbsDown className="w-4 h-4 stroke-[1.75]" />
             </button>
 
-            {/* Share button */}
+            {/* 4. Speaker / Read Aloud button */}
+            <button
+              type="button"
+              onClick={handleReadAloud}
+              title={isSpeaking ? "Stop reading" : "Read aloud"}
+              aria-label={isSpeaking ? "Stop reading" : "Read aloud"}
+              className={`w-8 h-8 rounded-full flex items-center justify-center hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all ${
+                isSpeaking ? "text-white bg-white/[0.12]" : ""
+              }`}
+            >
+              {isSpeaking ? (
+                <VolumeX className="w-4 h-4 text-white animate-pulse" />
+              ) : (
+                <Volume2 className="w-4 h-4 stroke-[1.75]" />
+              )}
+            </button>
+
+            {/* 5. Share button */}
             <button
               type="button"
               onClick={handleShare}
               title="Share response"
               aria-label="Share response"
-              className="p-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all"
+              className="w-8 h-8 rounded-full flex items-center justify-center hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all"
             >
-              <Share2 className="w-4 h-4" />
+              <Share2 className="w-4 h-4 stroke-[1.75]" />
             </button>
 
-            {/* More menu */}
+            {/* 6. More menu */}
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setIsMoreOpen((prev) => !prev)}
                 title="More actions"
                 aria-label="More actions"
-                className="p-1.5 rounded-lg hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all"
+                className={`w-8 h-8 rounded-full flex items-center justify-center hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all ${
+                  isMoreOpen ? "text-white bg-white/[0.12]" : ""
+                }`}
               >
-                <MoreHorizontal className="w-4 h-4" />
+                <MoreVertical className="w-4 h-4 stroke-[1.75]" />
               </button>
 
               {isMoreOpen && (
                 <div
-                  className="absolute left-0 bottom-full mb-1 w-44 rounded-xl bg-[#1C1D24] border border-white/[0.1] shadow-2xl p-1 z-30 flex flex-col gap-0.5 text-xs text-white/80"
+                  className="absolute left-0 bottom-full mb-2 w-48 rounded-[22px] bg-[#212124] border border-white/[0.08] shadow-[0_20px_50px_rgba(0,0,0,0.85)] p-1.5 z-30 flex flex-col gap-0.5 text-xs text-white/90 font-sans"
                   onMouseLeave={() => setIsMoreOpen(false)}
                 >
                   <button
@@ -367,9 +369,9 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
                       handleCopy();
                       setIsMoreOpen(false);
                     }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/[0.08] text-left"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] hover:text-white text-left transition-colors"
                   >
-                    <Copy className="w-3.5 h-3.5" />
+                    <Copy className="w-4 h-4 text-white/70" />
                     <span>Copy Text</span>
                   </button>
                   {onSaveToLibrary && (
@@ -379,9 +381,9 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
                         onSaveToLibrary(message);
                         setIsMoreOpen(false);
                       }}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/[0.08] text-left"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] hover:text-white text-left transition-colors"
                     >
-                      <Bookmark className="w-3.5 h-3.5" />
+                      <Bookmark className="w-4 h-4 text-white/70" />
                       <span>Save to Library</span>
                     </button>
                   )}

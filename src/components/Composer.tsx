@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
-import { Plus, ArrowUp, AudioLines, Mic, MicOff, Square } from "lucide-react";
+import { Plus, ArrowUp, AudioLines, Mic, MicOff } from "lucide-react";
 import { ActionMenu } from "./ActionMenu";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { ConversationState, PendingAttachment } from "../types";
@@ -47,19 +47,27 @@ export const Composer: React.FC<ComposerProps> = ({
   onSelectCamera,
   onSelectPhotos,
   onSelectFiles,
-  isScreenVisionActive,
-  onToggleScreenVision,
   cameraInputRef,
   photoInputRef,
   docInputRef,
   handleImageFileSelected,
   handleDocFileSelected,
 }) => {
-  const textInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isDictating, setIsDictating] = useState(false);
   const dictationRecognizerRef = useRef<SpeechRecognizer | null>(null);
 
   const hasTextOrAttachment = Boolean(inputText.trim() || pendingAttachment);
+
+  // Auto-resize textarea height
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      const scrollHeight = textareaRef.current.scrollHeight;
+      const maxHeight = 160; // Max 5-6 lines
+      textareaRef.current.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
+    }
+  }, [inputText]);
 
   // Setup Dictation SpeechRecognizer
   useEffect(() => {
@@ -72,7 +80,6 @@ export const Composer: React.FC<ComposerProps> = ({
         if (!interim.trim()) return;
         setInputText((prev) => {
           const base = typeof prev === "string" ? prev : "";
-          // If input has text, add a space if needed
           return base.endsWith(" ") || !base ? `${base}${interim}` : `${base} ${interim}`;
         });
       },
@@ -108,7 +115,7 @@ export const Composer: React.FC<ComposerProps> = ({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (hasTextOrAttachment && state !== "thinking") {
@@ -123,7 +130,7 @@ export const Composer: React.FC<ComposerProps> = ({
 
   return (
     <div className="w-full max-w-2xl lg:max-w-3xl mx-auto px-3 sm:px-4 z-30">
-      {/* Hidden File Inputs */}
+      {/* Hidden Native File Inputs */}
       <input
         ref={cameraInputRef}
         type="file"
@@ -147,8 +154,18 @@ export const Composer: React.FC<ComposerProps> = ({
         className="hidden"
       />
 
-      {/* Floating Pill Container Wrapper */}
-      <div className="relative flex flex-col">
+      {/* Attachment Preview (Rendered cleanly above the input bar) */}
+      {pendingAttachment && (
+        <div className="mb-2">
+          <AttachmentPreview
+            attachment={pendingAttachment}
+            onRemove={onRemoveAttachment}
+          />
+        </div>
+      )}
+
+      {/* Composer Row: [ [ + ] [ Input Area ] [ Mic / Send ] ] + [ Immersive Voice ] */}
+      <div className="relative flex items-end gap-2.5 sm:gap-3">
         {/* Action Menu (Floats above [+] button) */}
         <ActionMenu
           isOpen={isActionMenuOpen}
@@ -158,137 +175,115 @@ export const Composer: React.FC<ComposerProps> = ({
           onSelectFiles={onSelectFiles}
           isDeepThinkActive={isDeepThinkActive}
           onToggleDeepThink={onToggleDeepThink}
-          isScreenVisionActive={isScreenVisionActive}
-          onToggleScreenVision={onToggleScreenVision}
         />
 
-        {/* Floating Rounded Pill Bar (ChatGPT-style AMOLED dark surface) */}
+        {/* Unified Main Composer Pill Container */}
         <div
           id="dora-input-container"
-          className="relative w-full bg-[#1A1A1E] border border-white/[0.08] rounded-full px-2 py-1.5 sm:px-3 sm:py-2 flex flex-col shadow-[0_16px_40px_rgba(0,0,0,0.85)] transition-all"
+          className="relative flex-1 bg-[#212124] border border-white/[0.08] rounded-full px-3 py-1.5 sm:py-2 flex items-center gap-2 shadow-lg transition-all focus-within:border-white/[0.16]"
         >
-          {/* Staged Attachment Preview Chip inside / above pill input */}
-          {pendingAttachment && (
-            <div className="px-2 pt-1 pb-1">
-              <AttachmentPreview
-                attachment={pendingAttachment}
-                onRemove={onRemoveAttachment}
-              />
-            </div>
-          )}
-
-          <div className="flex items-center justify-between w-full gap-1 sm:gap-2">
-            {/* Left: [+] Action Button */}
-            <button
-              id="btn-action-menu"
-              type="button"
-              onClick={() => setIsActionMenuOpen((prev) => !prev)}
-              aria-label="Add attachment or action"
-              title="Add attachment"
-              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-95 focus:outline-none ${
-                isActionMenuOpen || isDeepThinkActive
-                  ? "bg-[#1D72FE]/20 text-[#38BDF8]"
-                  : "text-white/80 hover:text-white hover:bg-white/[0.08]"
+          {/* 1. Left: [+] Attachment Action Button */}
+          <button
+            id="btn-action-menu"
+            type="button"
+            onClick={() => setIsActionMenuOpen((prev) => !prev)}
+            aria-label="Add attachment or action"
+            title="Add attachment"
+            className={`p-2 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-95 focus:outline-none ${
+              isActionMenuOpen
+                ? "text-white bg-white/[0.12]"
+                : "text-white/80 hover:text-white hover:bg-white/[0.06]"
+            }`}
+          >
+            <Plus
+              className={`w-5 h-5 transition-transform duration-150 stroke-[2] ${
+                isActionMenuOpen ? "rotate-45" : ""
               }`}
-            >
-              <Plus
-                className={`w-5 h-5 transition-transform duration-150 ${
-                  isActionMenuOpen ? "rotate-45" : ""
-                }`}
-              />
-            </button>
+            />
+          </button>
 
-            {/* Middle: Text Input Field */}
-            <div className="flex-1 px-1 sm:px-2 min-w-0">
-              <input
-                ref={textInputRef}
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={
-                  isDictating
-                    ? "Listening... speak now"
-                    : pendingAttachment
-                    ? "Ask about this file..."
-                    : isDeepThinkActive
-                    ? "Deep Think mode: ask a question..."
-                    : "Message Dora..."
-                }
+          {/* 2. Middle: Text Area / Input */}
+          <div className="flex-1 py-1 px-1 min-w-0 flex items-center">
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                isDictating
+                  ? "Listening... speak now"
+                  : pendingAttachment
+                  ? "Ask about this file..."
+                  : "Reply to Dora..."
+              }
+              disabled={state === "thinking"}
+              className={`w-full bg-transparent text-[16px] text-white placeholder-white/40 focus:outline-none resize-none leading-relaxed custom-scrollbar max-h-36 ${
+                isDictating ? "placeholder-white/70 animate-pulse" : ""
+              }`}
+            />
+          </div>
+
+          {/* 3. Right inside Pill: Microphone OR Send button */}
+          <div className="flex items-center shrink-0 pr-0.5">
+            {hasTextOrAttachment ? (
+              /* Send Message Button (Integrated inside pill) */
+              <button
+                id="btn-send-message"
+                type="submit"
+                onClick={(e) => {
+                  if (isDictating) {
+                    dictationRecognizerRef.current?.stop();
+                    setIsDictating(false);
+                  }
+                  onSubmit(e);
+                }}
                 disabled={state === "thinking"}
-                className={`w-full bg-transparent text-[15px] sm:text-base text-white placeholder-white/40 focus:outline-none font-normal ${
-                  isDictating ? "placeholder-sky-400 animate-pulse" : ""
-                }`}
-              />
-            </div>
-
-            {/* Right Action Cluster: [Mic] [Immersive Voice] or [Send] */}
-            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-              {/* Dictation Microphone Button */}
+                title="Send message"
+                aria-label="Send message"
+                className="w-8 h-8 sm:w-8.5 sm:h-8.5 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 bg-white text-black hover:bg-white/90 disabled:opacity-40 shadow-sm"
+              >
+                <ArrowUp className="w-4.5 h-4.5 stroke-[2.5]" />
+              </button>
+            ) : (
+              /* Microphone Dictation Button (Inside pill, neutral styling) */
               <button
                 id="btn-dictation-mic"
                 type="button"
                 onClick={handleToggleDictation}
-                title={isDictating ? "Stop listening" : "Speech-to-text dictation"}
-                aria-label={isDictating ? "Stop listening" : "Speech-to-text dictation"}
-                className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 ${
+                title={isDictating ? "Stop listening" : "Microphone"}
+                aria-label={isDictating ? "Stop listening" : "Microphone"}
+                className={`p-2 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 ${
                   isDictating
-                    ? "bg-rose-500/20 border border-rose-500/40 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.4)] animate-pulse"
-                    : "text-white/80 hover:text-white hover:bg-white/[0.08]"
+                    ? "text-white bg-white/[0.12]"
+                    : "text-white/80 hover:text-white hover:bg-white/[0.06]"
                 }`}
               >
                 {isDictating ? (
-                  <MicOff className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                  <MicOff className="w-5 h-5 text-white animate-pulse" />
                 ) : (
-                  <Mic className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                  <Mic className="w-5 h-5 stroke-[1.8]" />
                 )}
               </button>
-
-              {/* If user has entered text or attachment -> show Send button */}
-              {hasTextOrAttachment ? (
-                <button
-                  id="btn-send-message"
-                  type="submit"
-                  onClick={(e) => {
-                    if (isDictating) {
-                      dictationRecognizerRef.current?.stop();
-                      setIsDictating(false);
-                    }
-                    onSubmit(e);
-                  }}
-                  disabled={state === "thinking"}
-                  title="Send message"
-                  aria-label="Send message"
-                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 bg-[#1D72FE] hover:bg-[#155FD6] text-white shadow-[0_0_12px_rgba(29,114,254,0.4)] disabled:opacity-50"
-                >
-                  <ArrowUp className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
-                </button>
-              ) : (
-                /* Immersive Voice Button (Waveform icon - neutral white when inactive, electric-blue when active) */
-                <button
-                  id="btn-voice-mode"
-                  type="button"
-                  onClick={onToggleCall}
-                  title={isCallActive ? "End Immersive Voice" : "Start Immersive Voice"}
-                  aria-label={isCallActive ? "End Immersive Voice" : "Start Immersive Voice"}
-                  className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 ${
-                    isCallActive
-                      ? "bg-[#1D72FE]/25 border border-[#1D72FE]/60 text-[#38BDF8] shadow-[0_0_12px_rgba(29,114,254,0.4)]"
-                      : "text-white/80 hover:text-white hover:bg-white/[0.08]"
-                  }`}
-                >
-                  <AudioLines
-                    className={`w-4 h-4 sm:w-4.5 sm:h-4.5 transition-colors ${
-                      isCallActive
-                        ? "text-[#38BDF8] animate-pulse"
-                        : "text-white/80 hover:text-white"
-                    }`}
-                  />
-                </button>
-              )}
-            </div>
+            )}
           </div>
         </div>
+
+        {/* 4. Far Right: Dora Immersive Voice Blue Circle Button (Immediately beside composer) */}
+        <button
+          id="btn-voice-mode"
+          type="button"
+          onClick={onToggleCall}
+          title={isCallActive ? "End Immersive Voice" : "Start Immersive Voice"}
+          aria-label={isCallActive ? "End Immersive Voice" : "Start Immersive Voice"}
+          className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all shrink-0 active:scale-95 shadow-md ${
+            isCallActive
+              ? "bg-[#155FD6] text-white ring-2 ring-[#38BDF8]/40"
+              : "bg-[#1D72FE] hover:bg-[#155FD6] text-white"
+          }`}
+        >
+          <AudioLines className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+        </button>
       </div>
     </div>
   );

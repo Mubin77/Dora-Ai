@@ -49,6 +49,7 @@ import { ConversationHistoryPanel } from "./components/ConversationHistoryPanel"
 import { ChatMessageItem } from "./components/ChatMessageItem";
 import { ImagesGalleryModal } from "./components/ImagesGalleryModal";
 import { LibraryModal } from "./components/LibraryModal";
+import { ModeSelector } from "./components/ModeSelector";
 
 const SESSIONS_STORAGE_KEY = "dora_conversations_v1";
 const ACTIVE_SESSION_KEY = "dora_active_session_id";
@@ -110,14 +111,9 @@ export default function App() {
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState<boolean>(false);
   const [screenSharingNotice, setScreenSharingNotice] = useState<string | null>(null);
 
-  // Model Selector Dropdown State (Defaults to Dora Live for voice-first experience)
-  const [selectedModel, setSelectedModel] = useState<string>("Dora Live");
-  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState<boolean>(false);
-
   // Safe navigation helpers between Immersive Voice (home) and Chat
   const navigateToChat = useCallback(() => {
     setActiveMode("chat");
-    setSelectedModel("Dora Flash");
     if (typeof window !== "undefined" && window.history.state?.doraMode !== "chat") {
       window.history.pushState({ doraMode: "chat" }, "");
     }
@@ -125,7 +121,6 @@ export default function App() {
 
   const navigateToVoice = useCallback(() => {
     setActiveMode("voice");
-    setSelectedModel("Dora Live");
     if (typeof window !== "undefined") {
       if (window.history.state?.doraMode === "chat") {
         window.history.back();
@@ -145,10 +140,8 @@ export default function App() {
       const handlePopState = (e: PopStateEvent) => {
         if (e.state?.doraMode === "chat") {
           setActiveMode("chat");
-          setSelectedModel("Dora Flash");
         } else {
           setActiveMode("voice");
-          setSelectedModel("Dora Live");
         }
       };
 
@@ -917,7 +910,6 @@ export default function App() {
         setIsMuted(false);
         setState("listening");
         setActiveMode("voice");
-        setSelectedModel("Dora Live");
         console.log("[VOICE DEBUG] voice mode started");
 
         // Start proactive companion monitoring for spontaneous, unprompted turns
@@ -1317,13 +1309,15 @@ export default function App() {
       id="dora-app-root"
       className="min-h-screen h-[100dvh] dora-dark-bg text-[#E3E3E3] flex flex-row font-sans selection:bg-[#1D72FE]/30 overflow-hidden relative"
     >
-      {/* Background Cinematic Deep-Blue Ambient Bottom Glow (70-80% AMOLED Black / 20-30% Visible Ambient Glow) */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden select-none z-0">
-        {/* Deep navy base layer for smooth falloff into AMOLED black */}
-        <div className="absolute -bottom-48 left-1/2 -translate-x-1/2 w-[900px] sm:w-[1200px] h-[450px] sm:h-[520px] bg-[#0E358A]/[0.28] rounded-full blur-[160px]" />
-        {/* Core lower deep-blue atmospheric bloom */}
-        <div className="absolute -bottom-36 left-1/2 -translate-x-1/2 w-[720px] sm:w-[900px] h-[360px] sm:h-[420px] bg-[#1A56DB]/[0.22] rounded-full blur-[120px]" />
-      </div>
+      {/* Background Cinematic Deep-Blue Ambient Bottom Glow (Only in Voice Mode, Normal Chat is Pure Clean Dark) */}
+      {activeMode === "voice" && (
+        <div className="fixed inset-0 pointer-events-none overflow-hidden select-none z-0">
+          {/* Deep navy base layer for smooth falloff into AMOLED black */}
+          <div className="absolute -bottom-48 left-1/2 -translate-x-1/2 w-[900px] sm:w-[1200px] h-[450px] sm:h-[520px] bg-[#0E358A]/[0.28] rounded-full blur-[160px]" />
+          {/* Core lower deep-blue atmospheric bloom */}
+          <div className="absolute -bottom-36 left-1/2 -translate-x-1/2 w-[720px] sm:w-[900px] h-[360px] sm:h-[420px] bg-[#1A56DB]/[0.22] rounded-full blur-[120px]" />
+        </div>
+      )}
 
       {/* Left Modern AI Sidebar (Clean Navigation Only: Images, Library, Recents) */}
       <Sidebar
@@ -1341,6 +1335,8 @@ export default function App() {
         onOpenImages={() => setIsImagesOpen(true)}
         onOpenLibrary={() => setIsLibraryOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenVoice={navigateToVoice}
+        userName={userName}
       />
 
       {/* Main Content Workspace */}
@@ -1360,6 +1356,12 @@ export default function App() {
             screenSharingNotice={screenSharingNotice}
             isCameraActive={isCameraActive}
             cameraStream={cameraStream}
+            isDeepThinkActive={isDeepThinkActive}
+            onToggleDeepThink={handleToggleDeepThink}
+            onSelectCamera={handleSelectCamera}
+            onSelectPhotos={handleSelectPhotos}
+            onSelectFiles={handleSelectFiles}
+            onOpenPlugins={() => setIsSkillsOpen(true)}
             onToggleCamera={handleToggleCamera}
             onSwitchCameraFacing={handleSwitchCameraFacing}
             onDismissScreenNotice={() => setScreenSharingNotice(null)}
@@ -1399,188 +1401,145 @@ export default function App() {
         ) : (
           <>
             {/* ============================================================ */}
-            {/* TOP BAR: Minimal ChatGPT-style AMOLED Header                */}
+            {/* TOP BAR: Unified Header matching Dora Voice                 */}
             {/* ============================================================ */}
             <header
               id="dora-top-bar"
-              className="w-full px-3 sm:px-6 pt-3.5 pb-2.5 flex items-center justify-between z-30 shrink-0 select-none"
+              className="relative z-20 w-full px-5 sm:px-8 md:px-12 lg:px-16 pt-[max(1.25rem,env(safe-area-inset-top,0px))] sm:pt-6 md:pt-8 pb-2 flex items-center justify-between shrink-0 max-w-7xl mx-auto select-none"
             >
-              {/* Left: Rounded dark circular hamburger/sidebar button */}
-              <div className="flex items-center gap-2">
-                <button
-                  id="btn-hamburger-sidebar"
-                  type="button"
-                  onClick={() => {
-                    if (window.innerWidth >= 1024) {
-                      setIsDesktopSidebarCollapsed((prev) => !prev);
-                    } else {
-                      setIsMobileDrawerOpen(true);
-                    }
-                  }}
-                  aria-label="Open sidebar"
-                  title="Open sidebar"
-                  className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#18181b] hover:bg-[#242429] border border-white/[0.08] active:scale-95 text-white/80 hover:text-white transition-all flex items-center justify-center shrink-0 shadow-sm"
-                >
-                  <Menu className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
-                </button>
-              </div>
+              {/* Left: Circular Menu / Hamburger Button matching Voice mode */}
+              <button
+                id="btn-hamburger-sidebar"
+                type="button"
+                onClick={() => {
+                  if (window.innerWidth >= 1024) {
+                    setIsDesktopSidebarCollapsed((prev) => !prev);
+                  } else {
+                    setIsMobileDrawerOpen(true);
+                  }
+                }}
+                aria-label="Open Navigation Menu"
+                title="Open Menu"
+                className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#18181b] hover:bg-[#222226] active:bg-[#2c2c32] border border-white/[0.08] text-white/90 hover:text-white active:scale-95 transition-all flex items-center justify-center shrink-0 shadow-sm"
+              >
+                <div className="flex flex-col gap-1 w-4 sm:w-4.5 items-start">
+                  <span className="w-full h-0.5 bg-white/90 rounded-full" />
+                  <span className="w-3.5 h-0.5 bg-white/90 rounded-full" />
+                </div>
+              </button>
 
-              {/* Center: Clean Model Selector / Dora Title */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setIsModelDropdownOpen((prev) => !prev)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-full hover:bg-white/[0.06] text-white/90 hover:text-white font-medium text-sm sm:text-base tracking-tight transition-colors"
-                >
-                  <span>{selectedModel}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-white/40" />
-                </button>
+              {/* Center: Clean Top-Center Mode Selector */}
+              <ModeSelector
+                currentMode="chat"
+                onSelectMode={(mode) => {
+                  if (mode === "voice") {
+                    navigateToVoice();
+                  }
+                }}
+              />
 
-                {/* Model Selector Dropdown Popover */}
-                {isModelDropdownOpen && (
-                  <div
-                    className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-48 rounded-2xl bg-[#18191E] border border-white/10 shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-sm"
-                    onMouseLeave={() => setIsModelDropdownOpen(false)}
-                  >
-                    <button
-                      onClick={() => {
-                        navigateToChat();
-                        setIsModelDropdownOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left transition-colors ${
-                        selectedModel === "Dora Flash"
-                          ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
-                          : "text-white/80 hover:bg-white/[0.08] hover:text-white"
-                      }`}
-                    >
-                      <span>Dora Flash</span>
-                      {selectedModel === "Dora Flash" && <Check className="w-4 h-4 text-[#38BDF8]" />}
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        navigateToVoice();
-                        if (!isCallActive) handleToggleCall();
-                        setIsModelDropdownOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-left transition-colors ${
-                        selectedModel === "Dora Live"
-                          ? "bg-[#1D72FE]/20 text-[#38BDF8] font-medium"
-                          : "text-white/80 hover:bg-white/[0.08] hover:text-white"
-                      }`}
-                    >
-                      <span>Dora Live</span>
-                      {selectedModel === "Dora Live" && <Check className="w-4 h-4 text-[#38BDF8]" />}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Right: Rounded dark pill containing [New Chat] and [More (three-dot)] */}
-              <div className="flex items-center gap-2 shrink-0">
+              {/* Right: Circular Top-Right Actions matching Voice mode proportions */}
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 {isScreenVisionActive && (
                   <button
                     onClick={handleToggleScreenVision}
                     title="Screen Vision Active"
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-medium"
+                    className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-medium backdrop-blur-md animate-fade-in"
                   >
-                    <Tv className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Vision Active</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>Vision Active</span>
                   </button>
                 )}
 
-                {/* Top-right pill container */}
-                <div className="relative flex items-center bg-[#18181b] border border-white/[0.08] rounded-full p-0.5 sm:p-1 shadow-sm">
-                  {/* New Chat Button */}
+                {/* New Chat Button */}
+                <button
+                  id="btn-topbar-new-chat"
+                  type="button"
+                  onClick={handleNewChat}
+                  title="New Chat"
+                  aria-label="New Chat"
+                  className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#18181b] hover:bg-[#222226] active:bg-[#2c2c32] border border-white/[0.08] text-white/90 hover:text-white transition-all flex items-center justify-center shrink-0 active:scale-95 shadow-sm"
+                >
+                  <SquarePen className="w-5 h-5 stroke-[1.75]" />
+                </button>
+
+                {/* More Options Button */}
+                <div className="relative">
                   <button
-                    id="btn-topbar-new-chat"
+                    id="btn-topbar-more-menu"
                     type="button"
-                    onClick={handleNewChat}
-                    title="New Chat"
-                    aria-label="New Chat"
-                    className="w-8 h-8 sm:w-8.5 sm:h-8.5 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all shrink-0"
+                    onClick={() => setIsTopMoreMenuOpen((prev) => !prev)}
+                    title="More actions"
+                    aria-label="More actions"
+                    className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#18181b] hover:bg-[#222226] active:bg-[#2c2c32] border border-white/[0.08] text-white/90 hover:text-white transition-all flex items-center justify-center shrink-0 active:scale-95 shadow-sm"
                   >
-                    <SquarePen className="w-4 h-4" />
+                    <MoreVertical className="w-5 h-5 stroke-[1.75]" />
                   </button>
 
-                  {/* More Options Button */}
-                  <div className="relative">
-                    <button
-                      id="btn-topbar-more-menu"
-                      type="button"
-                      onClick={() => setIsTopMoreMenuOpen((prev) => !prev)}
-                      title="More actions"
-                      aria-label="More actions"
-                      className="w-8 h-8 sm:w-8.5 sm:h-8.5 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/[0.08] active:scale-95 transition-all shrink-0"
+                  {/* More Menu Dropdown in dark charcoal floating sheet */}
+                  {isTopMoreMenuOpen && (
+                    <div
+                      className="absolute right-0 top-full mt-2 w-52 rounded-[24px] bg-[#212124] border border-white/[0.08] shadow-[0_20px_50px_rgba(0,0,0,0.85)] p-2 z-50 flex flex-col gap-0.5 text-xs sm:text-sm font-sans select-none"
+                      onMouseLeave={() => setIsTopMoreMenuOpen(false)}
                     >
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
-
-                    {/* More Menu Dropdown */}
-                    {isTopMoreMenuOpen && (
-                      <div
-                        className="absolute right-0 top-full mt-2 w-48 rounded-2xl bg-[#18191E] border border-white/10 shadow-2xl p-1.5 z-50 flex flex-col gap-0.5 text-xs sm:text-sm"
-                        onMouseLeave={() => setIsTopMoreMenuOpen(false)}
+                      <button
+                        onClick={() => {
+                          handleNewChat();
+                          setIsTopMoreMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-white/90 hover:bg-white/[0.08] hover:text-white text-left transition-colors"
                       >
+                        <SquarePen className="w-4 h-4 text-white/70" />
+                        <span>New conversation</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setIsImagesOpen(true);
+                          setIsTopMoreMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-white/90 hover:bg-white/[0.08] hover:text-white text-left transition-colors"
+                      >
+                        <ImageIcon className="w-4 h-4 text-white/70" />
+                        <span>Images gallery</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setIsLibraryOpen(true);
+                          setIsTopMoreMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-white/90 hover:bg-white/[0.08] hover:text-white text-left transition-colors"
+                      >
+                        <Bookmark className="w-4 h-4 text-white/70" />
+                        <span>Library</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setIsSettingsOpen(true);
+                          setIsTopMoreMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-white/90 hover:bg-white/[0.08] hover:text-white text-left transition-colors"
+                      >
+                        <Settings className="w-4 h-4 text-white/70" />
+                        <span>Voice settings</span>
+                      </button>
+
+                      {messages.length > 0 && (
                         <button
                           onClick={() => {
-                            handleNewChat();
+                            setMessages([]);
                             setIsTopMoreMenuOpen(false);
                           }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/80 hover:bg-white/[0.08] hover:text-white text-left"
+                          className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/20 text-left transition-colors"
                         >
-                          <SquarePen className="w-4 h-4" />
-                          <span>New conversation</span>
+                          <Trash2 className="w-4 h-4 text-rose-400" />
+                          <span>Clear chat messages</span>
                         </button>
-
-                        <button
-                          onClick={() => {
-                            setIsImagesOpen(true);
-                            setIsTopMoreMenuOpen(false);
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/80 hover:bg-white/[0.08] hover:text-white text-left"
-                        >
-                          <ImageIcon className="w-4 h-4" />
-                          <span>Images gallery</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setIsLibraryOpen(true);
-                            setIsTopMoreMenuOpen(false);
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/80 hover:bg-white/[0.08] hover:text-white text-left"
-                        >
-                          <Bookmark className="w-4 h-4" />
-                          <span>Library</span>
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setIsSettingsOpen(true);
-                            setIsTopMoreMenuOpen(false);
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/80 hover:bg-white/[0.08] hover:text-white text-left"
-                        >
-                          <Settings className="w-4 h-4" />
-                          <span>Voice settings</span>
-                        </button>
-
-                        {messages.length > 0 && (
-                          <button
-                            onClick={() => {
-                              setMessages([]);
-                              setIsTopMoreMenuOpen(false);
-                            }}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/20 text-left"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            <span>Clear chat messages</span>
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </header>
@@ -1610,14 +1569,14 @@ export default function App() {
               className="flex-1 flex flex-col justify-between overflow-y-auto custom-scrollbar relative z-10 w-full"
             >
               {messages.length === 0 ? (
-                /* Clean Minimal Empty State - AMOLED Canvas */
-                <div className="flex-1 flex flex-col items-center justify-center px-4 text-center select-none">
-                  <div className="w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-white/40 mb-3 shadow-sm">
-                    <Sparkles className="w-6 h-6 text-[#38BDF8]" />
+                /* Clean Minimal Empty State - Quiet Dora Identity */
+                <div className="flex-1 flex flex-col items-center justify-center px-4 text-center select-none max-w-sm mx-auto">
+                  <div className="w-11 h-11 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-white/50 mb-3.5 shadow-sm">
+                    <span className="font-semibold text-sm tracking-tight text-white/80">Dora</span>
                   </div>
-                  <p className="text-sm font-medium text-white/70">What would you like to explore today?</p>
-                  <p className="text-xs text-white/40 mt-1 max-w-xs">
-                    Type a message, tap the microphone to dictate, or switch to Immersive Voice.
+                  <p className="text-[15px] font-medium text-white/75">Ready to assist you</p>
+                  <p className="text-[13px] text-white/40 mt-1">
+                    Ask a question, brainstorm ideas, or share files
                   </p>
                 </div>
               ) : (
