@@ -100,6 +100,8 @@ import { epistemicCalibrationEngine } from "./epistemicCalibrationEngine";
 import { EpistemicCalibrationAnalysis } from "./epistemicCalibrationTypes";
 import { scenarioSimulationEngine } from "./scenarioSimulationEngine";
 import { ScenarioSimulationAnalysis } from "./scenarioSimulationTypes";
+import { metaReasoningEngine } from "./metaReasoningEngine";
+import { MetaReasoningAnalysis } from "./metaReasoningTypes";
 import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
 import { sharedExperienceEngine } from "./sharedExperienceEngine";
@@ -128,6 +130,7 @@ export * from "./responseAdaptationTypes";
 export * from "./deepReasoningTypes";
 export * from "./causalReasoningTypes";
 export * from "./scenarioSimulationTypes";
+export * from "./metaReasoningTypes";
 export * from "./conversationalBehaviorTypes";
 export * from "./sharedExperienceTypes";
 export type {
@@ -233,6 +236,25 @@ export {
   HARD_CEILING_SCENARIO_SIMULATION_BUDGET,
 } from "./scenarioSimulationTypes";
 export { scenarioSimulationEngine } from "./scenarioSimulationEngine";
+export type {
+  MetaReasoningIssueType,
+  CritiqueSeverity,
+  CritiqueCategory,
+  CritiqueVerdict,
+  CritiqueIssue,
+  AuditSectionResult,
+  EpistemicAdjustment,
+  MetaReasoningBudgetConfig,
+  MetaReasoningDiagnostics,
+  MetaReasoningAnalysis,
+  MetaReasoningOptions,
+  MetaReasoningInput,
+} from "./metaReasoningTypes";
+export {
+  DEFAULT_META_REASONING_BUDGET,
+  HARD_CEILING_META_REASONING_BUDGET,
+} from "./metaReasoningTypes";
+export { metaReasoningEngine } from "./metaReasoningEngine";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -302,6 +324,8 @@ export interface BrainAnalysis {
   epistemicCalibration?: EpistemicCalibrationAnalysis;
   scenarioSimulationAnalysis?: ScenarioSimulationAnalysis;
   scenarioSimulation?: ScenarioSimulationAnalysis;
+  metaReasoningAnalysis?: MetaReasoningAnalysis;
+  metaReasoning?: MetaReasoningAnalysis;
   conversationalBehavior?: ConversationalBehaviorDecision;
   sharedExperience?: SharedExperienceContext;
   languageStyle?: {
@@ -990,6 +1014,38 @@ export class BrainEngine {
       },
     });
 
+    // Step 14.9 / Phase 3 Step 7: Meta-Reasoning & Self-Critique Engine (Deterministic, Bounded, Non-LLM)
+    // Downstream of Steps 1-6 — audits grounding, epistemic calibration, causal chains, multi-hop chains, simulation reality boundaries & constraints
+    const metaReasoningAnalysis = metaReasoningEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      executiveContext,
+      deepReasoning: deepReasoningAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
+      causalReasoning: causalReasoningAnalysis,
+      multiHopReasoning: multiHopReasoningAnalysis,
+      epistemicCalibration: epistemicCalibrationAnalysis,
+      scenarioSimulation: scenarioSimulationAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
     // Step 15: Conversational Behavior & Proactive Companion Engine
     const conversationalBehavior = conversationalBehaviorEngine.evaluate({
       userMessage: trimmed,
@@ -1033,6 +1089,13 @@ export class BrainEngine {
 
     // Add sanitized scenario simulation directives to promptDirectives
     for (const d of scenarioSimulationAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add sanitized meta-reasoning directives to promptDirectives
+    for (const d of metaReasoningAnalysis.sanitizedDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -1101,6 +1164,8 @@ export class BrainEngine {
       epistemicCalibration: epistemicCalibrationAnalysis,
       scenarioSimulationAnalysis,
       scenarioSimulation: scenarioSimulationAnalysis,
+      metaReasoningAnalysis,
+      metaReasoning: metaReasoningAnalysis,
       conversationalBehavior,
       sharedExperience,
       languageStyle: {

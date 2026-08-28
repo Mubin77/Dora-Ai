@@ -1200,7 +1200,18 @@ runTest("DR-37: Phase 1 and Phase 2 determinism regression remains green with St
   contextStore.clear("sess_dr37");
   const a2 = brainEngine.analyze("Keep it concise and in English", [], undefined, "sess_dr37", undefined, options);
 
-  assert(JSON.stringify(a1) === JSON.stringify(a2), "Bit-for-bit identical BrainAnalysis across repeated runs");
+  const s1 = JSON.stringify(a1);
+  const s2 = JSON.stringify(a2);
+  if (s1 !== s2) {
+    for (const k of Object.keys(a1)) {
+      if (JSON.stringify((a1 as any)[k]) !== JSON.stringify((a2 as any)[k])) {
+        console.error(`Diff on key: ${k}`);
+        console.error("a1:", JSON.stringify((a1 as any)[k]));
+        console.error("a2:", JSON.stringify((a2 as any)[k]));
+      }
+    }
+  }
+  assert(s1 === s2, "Bit-for-bit identical BrainAnalysis across repeated runs");
   assert(a1.deepReasoningAnalysis.diagnostics.isDeterministic === true, "Deep reasoning engine reports deterministic execution");
 });
 
