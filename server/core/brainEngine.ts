@@ -351,7 +351,9 @@ export interface BrainAnalysis {
   responseAdaptationAnalysis?: ResponseAdaptationAnalysis;
   executiveContext?: ExecutiveContextPackage;
   deepReasoningAnalysis?: DeepReasoningAnalysis;
+  deepReasoning?: DeepReasoningAnalysis;
   contradictionResolutionAnalysis?: ContradictionResolutionAnalysis;
+  contradictionResolution?: ContradictionResolutionAnalysis;
   causalReasoningAnalysis?: CausalReasoningAnalysis;
   causalReasoning?: CausalReasoningAnalysis;
   multiHopReasoningAnalysis?: MultiHopReasoningAnalysis;
@@ -1233,7 +1235,9 @@ export class BrainEngine {
       responseAdaptationAnalysis,
       executiveContext,
       deepReasoningAnalysis,
+      deepReasoning: deepReasoningAnalysis,
       contradictionResolutionAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
       causalReasoningAnalysis,
       causalReasoning: causalReasoningAnalysis,
       multiHopReasoningAnalysis,

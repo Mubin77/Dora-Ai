@@ -470,10 +470,16 @@ export interface DecisionEngineOptions {
   strictTopicIsolation?: boolean;
   activeTopic?: string;
   explicitCandidateOptions?: Array<{
+    candidateKey?: string;
     title: string;
     description?: string;
+    source?: DecisionCandidateSource;
+    scope?: EpistemicScope;
+    topic?: string;
     benefits?: string[];
-    risks?: string[];
+    risks?: string[] | DecisionRisk[];
+    dependencies?: string[];
+    assumptions?: string[];
     reversibility?: DecisionReversibility;
   }>;
 }

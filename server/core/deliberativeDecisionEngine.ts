@@ -513,7 +513,7 @@ export class DeliberativeDecisionEngine {
         candidatesConditionallySupported++;
       } else if (warningReasons.length > 0 || compositeUncertainty > 0.45) {
         candidateState = "READY_WITH_WARNINGS";
-      } else if (evidenceCount === 0 && raw.source !== "EXPLICIT_USER_OPTION" && raw.source !== "DEFAULT_CONTINUATION" && (raw.source as any) !== "REASONING_ENGINE" && (raw.source as any) !== "PLANNING_ENGINE") {
+      } else if (evidenceCount === 0 && (raw.source === "ACTION_PROPOSAL" || raw.source === "SCENARIO_SIMULATION" || (raw.source === "DEFAULT_CONTINUATION" && !input.message && !input.intent?.primaryIntent))) {
         candidateState = "INSUFFICIENT_INFORMATION";
       }
 
@@ -865,19 +865,28 @@ export class DeliberativeDecisionEngine {
     if (input.options?.explicitCandidateOptions && input.options.explicitCandidateOptions.length > 0) {
       for (const opt of input.options.explicitCandidateOptions) {
         discovered.push({
-          candidateKey: this.sanitizeKey(opt.title),
+          candidateKey: (opt as any).candidateKey || this.sanitizeKey(opt.title),
           title: opt.title,
           description: opt.description || opt.title,
-          source: "EXPLICIT_USER_OPTION",
-          scope: "CURRENT_TURN",
+          source: (opt as any).source || "EXPLICIT_USER_OPTION",
+          scope: (opt as any).scope || "CURRENT_TURN",
+          topic: (opt as any).topic,
           benefits: opt.benefits || [],
-          risks: (opt.risks || []).map((r, i) => ({
+          risks: (opt.risks || []).map((r: any, i: number) => (typeof r === "string" ? {
             id: `risk_${i}`,
             category: "UNKNOWN_RISK",
             severity: "MODERATE",
             description: r,
             isBlocking: false,
+          } : {
+            id: r.id || `risk_${i}`,
+            category: r.category || "UNKNOWN_RISK",
+            severity: r.severity || "MODERATE",
+            description: r.description || "Identified risk",
+            isBlocking: !!r.isBlocking,
           })),
+          dependencies: (opt as any).dependencies || [],
+          assumptions: (opt as any).assumptions || [],
           reversibility: opt.reversibility || "REVERSIBLE",
         });
       }
@@ -1016,7 +1025,7 @@ export class DeliberativeDecisionEngine {
   }
 
   /**
-   * Extract Authoritative Claims & Facts
+   * Extract Authoritative Claims & Facts (with exclusion of rejected, quarantined, and duplicate entries)
    */
   private extractAuthoritativeClaims(input: DecisionEngineInput): Array<{
     sourceId: string;
@@ -1032,9 +1041,23 @@ export class DeliberativeDecisionEngine {
       epistemicState: EpistemicState;
       statement: string;
     }> = [];
+    const seenStatements = new Set<string>();
 
     if (input.epistemicCalibration?.claims) {
       for (const c of input.epistemicCalibration.claims) {
+        // Exclude quarantined, deleted, or explicitly rejected claims
+        if ((c as any).isQuarantined || (c as any).isDeleted || (c as any).status === "QUARANTINED" || (c as any).status === "DELETED") {
+          continue;
+        }
+        if (c.epistemicState === "REJECTED") {
+          continue;
+        }
+        const norm = c.statement.trim().toLowerCase();
+        if (seenStatements.has(norm)) {
+          continue; // Prevent duplicate evidence inflation
+        }
+        seenStatements.add(norm);
+
         list.push({
           sourceId: c.id || (c as any).claimKey || c.statement,
           sourceType: "EPISTEMIC_CLAIM",
@@ -1047,12 +1070,22 @@ export class DeliberativeDecisionEngine {
 
     if (input.executiveContext?.authoritativeFacts) {
       for (const f of input.executiveContext.authoritativeFacts) {
+        if ((f as any).isQuarantined || (f as any).isDeleted || (f as any).status === "QUARANTINED" || (f as any).status === "DELETED") {
+          continue;
+        }
+        const stmt = `${f.key}: ${f.value}`;
+        const norm = stmt.trim().toLowerCase();
+        if (seenStatements.has(norm)) {
+          continue;
+        }
+        seenStatements.add(norm);
+
         list.push({
           sourceId: f.id,
           sourceType: "EXECUTIVE_FACT",
           authority: f.authority || "GOVERNANCE_APPROVED_MEMORY",
           epistemicState: "VERIFIED",
-          statement: `${f.key}: ${f.value}`,
+          statement: stmt,
         });
       }
     }
@@ -1387,6 +1420,7 @@ export class DeliberativeDecisionEngine {
     budget: Required<DecisionBudgetConfig>
   ): string[] {
     const directives: string[] = [];
+    const cleanTitle = this.sanitizeSentence(topCandidate?.title || "selected option");
 
     if (overallState === "BLOCKED" || overallState === "REJECTED") {
       directives.push("A mandatory constraint prevents this action from being recommended.");
@@ -1399,17 +1433,17 @@ export class DeliberativeDecisionEngine {
         directives.push(`Clarification needed: ${this.sanitizeSentence(recommendation.informationRequests[0])}`);
       }
     } else if (overallState === "CONDITIONAL") {
-      directives.push(`Option '${topCandidate?.title || "selected option"}' is preferred if stated conditions and assumptions hold.`);
+      directives.push(`Option '${cleanTitle}' is preferred if stated conditions and assumptions hold.`);
       if (topCandidate?.assumptions && topCandidate.assumptions.length > 0) {
         directives.push(`Key condition: ${this.sanitizeSentence(topCandidate.assumptions[0])}`);
       }
     } else if (overallState === "READY_WITH_WARNINGS") {
-      directives.push(`Option '${topCandidate?.title || "selected option"}' is currently best supported, with minor caveats.`);
+      directives.push(`Option '${cleanTitle}' is currently best supported, with minor caveats.`);
       if (topCandidate?.warningReasons && topCandidate.warningReasons.length > 0) {
         directives.push(`Note: ${this.sanitizeSentence(topCandidate.warningReasons[0])}`);
       }
     } else {
-      directives.push(`The option '${topCandidate?.title || "selected option"}' is currently best supported by the available evidence.`);
+      directives.push(`The option '${cleanTitle}' is currently best supported by the available evidence.`);
     }
 
     // Add unresolved tradeoff directive if applicable
@@ -1423,18 +1457,29 @@ export class DeliberativeDecisionEngine {
       directives.push("Note that this action is irreversible; ensure prerequisites are confirmed before execution.");
     }
 
-    return directives.slice(0, budget.maxDirectives);
+    return directives.map((d) => this.sanitizeSentence(d)).slice(0, budget.maxDirectives);
   }
 
   /**
-   * Sanitize text to remove UUIDs, hashes, and raw floating-point metrics
+   * Sanitize text to remove credentials, UUIDs, internal IDs, timestamps, and raw floating-point metrics
    */
   private sanitizeSentence(str: string): string {
     if (!str) return "";
     return str
+      // Credentials & Tokens
+      .replace(/AIzaSy[A-Za-z0-9_-]{20,}/gi, "[REDACTED_API_KEY]")
+      .replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, "[REDACTED_AUTH_TOKEN]")
+      .replace(/\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/gi, "[REDACTED_TOKEN]")
+      .replace(/\bsk-[A-Za-z0-9]{20,}\b/gi, "[REDACTED_SECRET]")
+      .replace(/(?:password|secret|token|api_key|auth_token)\s*[:=]\s*\S+/gi, "[REDACTED_CREDENTIAL]")
+      // UUIDs
       .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "")
-      .replace(/\b(cand|risk|step|plan|opt)_[0-9a-f]{6,}\b/gi, "")
-      .replace(/\b0\.\d{3,}\b/g, "")
+      // Internal IDs & hashes
+      .replace(/\b(cand|risk|step|plan|opt|rc|claim|node|chain|eval)_[0-9a-f]{4,}\b/gi, "")
+      // 10-13 digit timestamps
+      .replace(/\b1[5-9]\d{8,11}\b/g, "")
+      // Raw floating point numbers like 0.8523 or score: 0.85
+      .replace(/\b\d+\.\d{2,}\b/g, "")
       .replace(/\s+/g, " ")
       .trim();
   }
