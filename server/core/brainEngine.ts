@@ -102,6 +102,8 @@ import { scenarioSimulationEngine } from "./scenarioSimulationEngine";
 import { ScenarioSimulationAnalysis } from "./scenarioSimulationTypes";
 import { metaReasoningEngine } from "./metaReasoningEngine";
 import { MetaReasoningAnalysis } from "./metaReasoningTypes";
+import { deliberativeDecisionEngine } from "./deliberativeDecisionEngine";
+import { DecisionAnalysis } from "./deliberativeDecisionTypes";
 import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
 import { sharedExperienceEngine } from "./sharedExperienceEngine";
@@ -255,6 +257,40 @@ export {
   HARD_CEILING_META_REASONING_BUDGET,
 } from "./metaReasoningTypes";
 export { metaReasoningEngine } from "./metaReasoningEngine";
+export type {
+  DecisionState,
+  DecisionRecommendationType,
+  DecisionCandidateSource,
+  DecisionReversibility,
+  DecisionCriterionType,
+  DecisionCriterionStatus,
+  DecisionRiskCategory,
+  DecisionTradeoffState,
+  DecisionRisk,
+  DecisionTradeoff,
+  GoalAlignmentEvaluation,
+  DecisionEvidenceRef,
+  DecisionConstraintRef,
+  DecisionUncertainty,
+  DecisionCandidate,
+  DecisionCriterionScore,
+  DecisionEvaluation,
+  DecisionRanking,
+  DecisionStep,
+  DecisionPlan,
+  DecisionRecommendation,
+  DecisionProvenance,
+  DecisionBudgetConfig,
+  DecisionDiagnostics,
+  DecisionAnalysis,
+  DecisionEngineOptions,
+  DecisionEngineInput,
+} from "./deliberativeDecisionTypes";
+export {
+  DEFAULT_DECISION_BUDGET,
+  HARD_CEILING_DECISION_BUDGET,
+} from "./deliberativeDecisionTypes";
+export { deliberativeDecisionEngine } from "./deliberativeDecisionEngine";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -326,6 +362,8 @@ export interface BrainAnalysis {
   scenarioSimulation?: ScenarioSimulationAnalysis;
   metaReasoningAnalysis?: MetaReasoningAnalysis;
   metaReasoning?: MetaReasoningAnalysis;
+  decisionAnalysis?: DecisionAnalysis;
+  decision?: DecisionAnalysis;
   conversationalBehavior?: ConversationalBehaviorDecision;
   sharedExperience?: SharedExperienceContext;
   languageStyle?: {
@@ -1046,6 +1084,39 @@ export class BrainEngine {
       },
     });
 
+    // Step 14.10 / Phase 3 Step 8: Deliberative Decision & Action Planning Engine (Deterministic, Bounded, Non-LLM)
+    // Downstream of Steps 1-7 — evaluates candidate options, constraints, goal alignment, evidence, risks, tradeoffs & action plan
+    const decisionAnalysis = deliberativeDecisionEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      executiveContext,
+      deepReasoning: deepReasoningAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
+      causalReasoning: causalReasoningAnalysis,
+      multiHopReasoning: multiHopReasoningAnalysis,
+      epistemicCalibration: epistemicCalibrationAnalysis,
+      scenarioSimulation: scenarioSimulationAnalysis,
+      metaReasoning: metaReasoningAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
     // Step 15: Conversational Behavior & Proactive Companion Engine
     const conversationalBehavior = conversationalBehaviorEngine.evaluate({
       userMessage: trimmed,
@@ -1096,6 +1167,13 @@ export class BrainEngine {
 
     // Add sanitized meta-reasoning directives to promptDirectives
     for (const d of metaReasoningAnalysis.sanitizedDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add sanitized decision directives to promptDirectives
+    for (const d of decisionAnalysis.sanitizedDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -1166,6 +1244,8 @@ export class BrainEngine {
       scenarioSimulation: scenarioSimulationAnalysis,
       metaReasoningAnalysis,
       metaReasoning: metaReasoningAnalysis,
+      decisionAnalysis,
+      decision: decisionAnalysis,
       conversationalBehavior,
       sharedExperience,
       languageStyle: {

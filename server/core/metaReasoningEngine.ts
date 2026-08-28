@@ -129,21 +129,22 @@ export class MetaReasoningEngine {
     let groundingPassed = 0;
 
     // Collect claims from Epistemic Calibration
-    const epistemicClaims = input.epistemicCalibration?.claims || [];
-    const deepHypotheses = input.deepReasoning?.hypotheses || [];
-    const authoritativeFacts = input.executiveContext?.authoritativeFacts || [];
-    const verifiedFacts = input.verification?.verifiedFacts || [];
+    const epistemicClaims = (input.epistemicCalibration?.claims || []) as any[];
+    const deepHypotheses = (input.deepReasoning?.hypotheses || []) as any[];
+    const authoritativeFacts = (input.executiveContext?.authoritativeFacts || []) as any[];
+    const verifiedFacts = ((input.verification as any)?.verifiedFacts || (input.verification as any)?.facts || []) as any[];
 
     for (const claim of epistemicClaims.slice(0, budget.maxAuditedClaims)) {
       claimsAudited++;
       groundingAudited++;
-      const claimIdentifier = claim.claimKey || claim.statement || "claim";
+      const claimIdentifier = claim.claimKey || claim.id || claim.statement || "claim";
 
       const hasDirectEvidence = (claim.evidence && claim.evidence.length > 0) ||
-        verifiedFacts.some((f) => (claim.claimKey && f.factKey === claim.claimKey) || (claim.statement && f.factText && f.factText.toLowerCase().includes(claim.statement.toLowerCase()))) ||
-        authoritativeFacts.some((f) => (claim.claimKey && f.key === claim.claimKey) || (claim.statement && f.value && f.value.toLowerCase().includes(claim.statement.toLowerCase())));
+        (claim.supportingEvidenceIds && claim.supportingEvidenceIds.length > 0) ||
+        verifiedFacts.some((f: any) => (claim.claimKey && (f.factKey === claim.claimKey || f.key === claim.claimKey)) || (claim.statement && f.factText && f.factText.toLowerCase().includes(claim.statement.toLowerCase()))) ||
+        authoritativeFacts.some((f: any) => (claim.claimKey && f.key === claim.claimKey) || (claim.statement && f.value && f.value.toLowerCase().includes(claim.statement.toLowerCase())));
 
-      const hasProvenance = claim.provenance && claim.provenance.length > 0;
+      const hasProvenance = (claim.provenance && claim.provenance.length > 0) || Boolean(claim.source);
 
       if (!hasProvenance) {
         addIssue({
@@ -198,17 +199,19 @@ export class MetaReasoningEngine {
     for (const hyp of deepHypotheses.slice(0, budget.maxAuditedClaims)) {
       groundingAudited++;
       const hasSupport = (hyp.supportingEvidence && hyp.supportingEvidence.length > 0) ||
+        (hyp.supportingEvidenceIds && hyp.supportingEvidenceIds.length > 0) ||
         (hyp.evidenceNodes && hyp.evidenceNodes.length > 0);
 
-      if (!hasSupport && hyp.epistemicStatus === "ESTABLISHED") {
-        unsupportedClaims.push(hyp.hypothesisKey || hyp.id);
+      const hypKey = hyp.hypothesisKey || hyp.id || hyp.statement || "hypothesis";
+      if (!hasSupport && (hyp.epistemicStatus === "ESTABLISHED" || hyp.status === "ESTABLISHED")) {
+        unsupportedClaims.push(hypKey);
         addIssue({
           type: "UNSUPPORTED_CLAIM",
           category: "GROUNDING",
           severity: "MAJOR",
           targetComponent: "deepReasoning",
-          targetIdentifier: hyp.hypothesisKey || hyp.id,
-          description: `Hypothesis '${hyp.hypothesisKey || hyp.id}' is marked as ESTABLISHED but possesses no supporting evidence.`,
+          targetIdentifier: hypKey,
+          description: `Hypothesis '${hypKey}' is marked as ESTABLISHED but possesses no supporting evidence.`,
           remediationRecommendation: "Mark hypothesis as EXPLORATORY or UNPROVEN.",
           scorePenalty: 0.20,
         });
@@ -233,8 +236,8 @@ export class MetaReasoningEngine {
     let coherenceAudited = 0;
     let coherencePassed = 0;
 
-    const unresolvedContradictions = input.contradictionResolution?.unresolvedContradictions || [];
-    const verificationContradictions = input.verification?.contradictions || [];
+    const unresolvedContradictions = ((input.contradictionResolution as any)?.unresolvedContradictions || (input.contradictionResolution as any)?.contradictions || []) as any[];
+    const verificationContradictions = ((input.verification as any)?.contradictions || []) as any[];
     contradictionsAudited = unresolvedContradictions.length + verificationContradictions.length;
 
     for (const contra of unresolvedContradictions) {
@@ -255,13 +258,13 @@ export class MetaReasoningEngine {
     // Check verification contradictions
     for (const vContra of verificationContradictions) {
       coherenceAudited++;
-      if (vContra.severity === "CRITICAL" || vContra.severity === "MAJOR") {
+      if (vContra.severity === "CRITICAL" || (vContra.severity as any) === "MAJOR") {
         addIssue({
           type: "UNRESOLVED_CONTRADICTION",
           category: "COHERENCE",
           severity: vContra.severity === "CRITICAL" ? "CRITICAL" : "MAJOR",
           targetComponent: "verification",
-          targetIdentifier: vContra.id,
+          targetIdentifier: vContra.id || vContra.description,
           description: `Verification engine flagged unresolved contradiction: ${vContra.description}`,
           remediationRecommendation: "Reconcile competing statements with authoritative memory or current turn instruction.",
           scorePenalty: vContra.severity === "CRITICAL" ? 0.35 : 0.20,
@@ -273,65 +276,68 @@ export class MetaReasoningEngine {
 
     // Circular Reasoning check in causal and multi-hop graphs
     const causalChains = input.causalReasoning?.chains || [];
-    for (const chain of causalChains) {
+    for (const chain of causalChains as any[]) {
       const visited = new Set<string>();
-      for (const node of chain.nodes || []) {
-        if (visited.has(node.nodeKey)) {
+      for (const node of chain.nodes || chain.relations || []) {
+        const nodeKey = node.nodeKey || node.id || node.relationKey || `${node.causeKey}->${node.effectKey}`;
+        if (visited.has(nodeKey)) {
           addIssue({
             type: "CIRCULAR_REASONING",
             category: "LOGIC",
             severity: "MAJOR",
             targetComponent: "causalReasoning",
-            targetIdentifier: chain.chainId,
-            description: `Circular causal dependency detected at node '${node.nodeKey}' in chain '${chain.chainId}'.`,
+            targetIdentifier: chain.chainId || chain.id || "causal_chain",
+            description: `Circular causal dependency detected at node '${nodeKey}' in chain '${chain.chainId || chain.id}'.`,
             remediationRecommendation: "Break circular feedback loop into separate temporal stages.",
             scorePenalty: 0.20,
           });
           break;
         }
-        visited.add(node.nodeKey);
+        visited.add(nodeKey);
       }
     }
 
     const multiHopChains = input.multiHopReasoning?.chains || [];
-    for (const chain of multiHopChains) {
+    for (const chain of multiHopChains as any[]) {
       const visitedEntities = new Set<string>();
       for (const hop of chain.hops || []) {
-        if (hop.sourceEntity && hop.targetEntity && hop.sourceEntity === hop.targetEntity) {
+        const sourceEntity = hop.sourceEntity || hop.source || hop.sourceConcept;
+        const targetEntity = hop.targetEntity || hop.target || hop.targetConcept;
+        if (sourceEntity && targetEntity && sourceEntity === targetEntity) {
           addIssue({
             type: "CIRCULAR_REASONING",
             category: "LOGIC",
             severity: "MAJOR",
             targetComponent: "multiHopReasoning",
-            targetIdentifier: chain.chainId,
-            description: `Circular entity self-hop detected on '${hop.sourceEntity}' in chain '${chain.chainId}'.`,
+            targetIdentifier: chain.chainId || chain.id || "multi_hop_chain",
+            description: `Circular entity self-hop detected on '${sourceEntity}' in chain '${chain.chainId || chain.id}'.`,
             remediationRecommendation: "Prune recursive self-referential reasoning hops.",
             scorePenalty: 0.20,
           });
           break;
         }
-        if (hop.sourceEntity && visitedEntities.has(hop.sourceEntity)) {
+        if (sourceEntity && visitedEntities.has(sourceEntity)) {
           addIssue({
             type: "CIRCULAR_REASONING",
             category: "LOGIC",
             severity: "MAJOR",
             targetComponent: "multiHopReasoning",
-            targetIdentifier: chain.chainId,
-            description: `Circular entity cycle detected on '${hop.sourceEntity}' in chain '${chain.chainId}'.`,
+            targetIdentifier: chain.chainId || chain.id || "multi_hop_chain",
+            description: `Circular entity cycle detected on '${sourceEntity}' in chain '${chain.chainId || chain.id}'.`,
             remediationRecommendation: "Prune cyclic reasoning hops.",
             scorePenalty: 0.20,
           });
           break;
         }
-        if (hop.sourceEntity) visitedEntities.add(hop.sourceEntity);
-        if (hop.targetEntity && visitedEntities.has(hop.targetEntity) && visitedEntities.size > 1) {
+        if (sourceEntity) visitedEntities.add(sourceEntity);
+        if (targetEntity && visitedEntities.has(targetEntity) && visitedEntities.size > 1) {
           addIssue({
             type: "CIRCULAR_REASONING",
             category: "LOGIC",
             severity: "MAJOR",
             targetComponent: "multiHopReasoning",
-            targetIdentifier: chain.chainId,
-            description: `Circular entity cycle back to '${hop.targetEntity}' in chain '${chain.chainId}'.`,
+            targetIdentifier: chain.chainId || chain.id || "multi_hop_chain",
+            description: `Circular entity cycle back to '${targetEntity}' in chain '${chain.chainId || chain.id}'.`,
             remediationRecommendation: "Prune cyclic reasoning hops.",
             scorePenalty: 0.20,
           });
@@ -356,15 +362,16 @@ export class MetaReasoningEngine {
     let calibrationAudited = 0;
     let calibrationPassed = 0;
 
-    for (const claim of epistemicClaims.slice(0, budget.maxAuditedClaims)) {
+    for (const claim of epistemicClaims.slice(0, budget.maxAuditedClaims) as any[]) {
       calibrationAudited++;
       const authorityWeight = claim.authority ? (EPISTEMIC_AUTHORITY_WEIGHTS[claim.authority] ?? 0.50) : 0.50;
+      const claimIdentifier = claim.claimKey || claim.id || claim.statement || "epistemic_claim";
 
       // Detect Confidence Overclaim
       if (claim.confidence > authorityWeight + 0.25 && claim.confidence > 0.75) {
         const recommended = Math.min(0.70, authorityWeight + 0.10);
         epistemicAdjustments.push({
-          claimKey: claim.claimKey,
+          claimKey: claimIdentifier,
           originalConfidence: claim.confidence,
           recommendedConfidence: recommended,
           reason: `Stated confidence (${claim.confidence.toFixed(2)}) significantly exceeds authority warrant (${claim.authority}: ${authorityWeight.toFixed(2)}).`,
@@ -375,8 +382,8 @@ export class MetaReasoningEngine {
           category: "EPISTEMIC_CALIBRATION",
           severity: claim.confidence >= 0.90 ? "MAJOR" : "MODERATE",
           targetComponent: "epistemicCalibration",
-          targetIdentifier: claim.claimKey,
-          description: `Confidence overclaim on '${claim.claimKey}': stated ${claim.confidence.toFixed(2)}, max warranted ${recommended.toFixed(2)}.`,
+          targetIdentifier: claimIdentifier,
+          description: `Confidence overclaim on '${claimIdentifier}': stated ${claim.confidence.toFixed(2)}, max warranted ${recommended.toFixed(2)}.`,
           remediationRecommendation: `Calibrate confidence downward to ${recommended.toFixed(2)} or label as INFERRED.`,
           scorePenalty: claim.confidence >= 0.90 ? 0.20 : 0.10,
         });
@@ -384,7 +391,7 @@ export class MetaReasoningEngine {
       // Detect Confidence Underclaim
       else if (authorityWeight >= 0.90 && claim.epistemicState === "VERIFIED" && claim.confidence < 0.35) {
         epistemicAdjustments.push({
-          claimKey: claim.claimKey,
+          claimKey: claimIdentifier,
           originalConfidence: claim.confidence,
           recommendedConfidence: 0.85,
           reason: "Verified authoritative evidence supports higher confidence.",
@@ -395,8 +402,8 @@ export class MetaReasoningEngine {
           category: "EPISTEMIC_CALIBRATION",
           severity: "MINOR",
           targetComponent: "epistemicCalibration",
-          targetIdentifier: claim.claimKey,
-          description: `Confidence underclaim on verified claim '${claim.claimKey}': stated ${claim.confidence.toFixed(2)}.`,
+          targetIdentifier: claimIdentifier,
+          description: `Confidence underclaim on verified claim '${claimIdentifier}': stated ${claim.confidence.toFixed(2)}.`,
           remediationRecommendation: "Raise confidence to reflect authoritative verified grounding.",
           scorePenalty: 0.05,
         });
@@ -414,8 +421,8 @@ export class MetaReasoningEngine {
               category: "EPISTEMIC_CALIBRATION",
               severity: "MAJOR",
               targetComponent: "epistemicCalibration",
-              targetIdentifier: claim.claimKey,
-              description: `Lower-authority claim '${claim.claimKey}' (${claim.authority}) supersedes higher-authority claim (${competing.authority}).`,
+              targetIdentifier: claimIdentifier,
+              description: `Lower-authority claim '${claimIdentifier}' (${claim.authority}) supersedes higher-authority claim (${competing.authority}).`,
               remediationRecommendation: "Enforce canonical authority hierarchy: higher-authority evidence must take precedence.",
               scorePenalty: 0.20,
             });
@@ -443,16 +450,20 @@ export class MetaReasoningEngine {
     const causalRelations = input.causalReasoning?.relations || [];
     causalRelationsAudited = causalRelations.length;
 
-    for (const rel of causalRelations.slice(0, budget.maxAuditedChains)) {
+    for (const rel of causalRelations.slice(0, budget.maxAuditedChains) as any[]) {
       causalAudited++;
+      const causeName = rel.causeKey || rel.cause || rel.causeStatement || "cause";
+      const effectName = rel.effectKey || rel.effect || rel.effectStatement || "effect";
+      const relIdentifier = rel.relationKey || rel.id || `${causeName}->${effectName}`;
+
       if (rel.relationType === "INSUFFICIENT" || !rel.mechanism) {
         addIssue({
           type: "CAUSAL_GAP",
           category: "CAUSAL_JUSTIFICATION",
           severity: "MODERATE",
           targetComponent: "causalReasoning",
-          targetIdentifier: rel.relationKey || `${rel.causeKey}->${rel.effectKey}`,
-          description: `Causal relation from '${rel.causeKey}' to '${rel.effectKey}' lacks explicit explanatory mechanism or necessity.`,
+          targetIdentifier: relIdentifier,
+          description: `Causal relation from '${causeName}' to '${effectName}' lacks explicit explanatory mechanism or necessity.`,
           remediationRecommendation: "Establish intermediate mechanism or qualify causal link as correlational.",
           scorePenalty: 0.10,
         });
@@ -463,16 +474,20 @@ export class MetaReasoningEngine {
 
     // Check counterfactuals
     const counterfactuals = input.causalReasoning?.counterfactuals || [];
-    for (const cf of counterfactuals) {
+    for (const cf of counterfactuals as any[]) {
       causalAudited++;
-      if (cf.outcome === "INVALID" || !cf.antecedent) {
+      const cfId = cf.scenarioId || cf.id || "counterfactual_scenario";
+      const cfOutcome = cf.outcome || (cf.consequentEvaluation ? cf.consequentEvaluation.projectedOutcome : undefined);
+      const cfAntecedent = cf.antecedent || (cf.antecedentModification ? cf.antecedentModification.counterfactualPremise : undefined);
+
+      if (cfOutcome === "INVALID" || !cfAntecedent) {
         addIssue({
           type: "COUNTERFACTUAL_INVALIDITY",
           category: "CAUSAL_JUSTIFICATION",
           severity: "MAJOR",
           targetComponent: "causalReasoning",
-          targetIdentifier: cf.scenarioId,
-          description: `Counterfactual scenario '${cf.scenarioId}' possesses invalid antecedent or impossible outcome.`,
+          targetIdentifier: cfId,
+          description: `Counterfactual scenario '${cfId}' possesses invalid antecedent or impossible outcome.`,
           remediationRecommendation: "Validate antecedent against physical/logical constraints.",
           scorePenalty: 0.20,
         });
@@ -497,9 +512,11 @@ export class MetaReasoningEngine {
     let multiHopAudited = 0;
     let multiHopPassed = 0;
 
-    for (const chain of multiHopChains.slice(0, budget.maxAuditedChains)) {
+    for (const chain of multiHopChains.slice(0, budget.maxAuditedChains) as any[]) {
       chainsAudited++;
       multiHopAudited++;
+      const chainIdentifier = chain.chainId || chain.id || chain.chainKey || "multi_hop_chain";
+      const chainConfidence = chain.cumulativeConfidence ?? chain.overallConfidence ?? 0.5;
 
       if (chain.status === "BROKEN" || chain.status === "INVALID") {
         addIssue({
@@ -507,8 +524,8 @@ export class MetaReasoningEngine {
           category: "MULTI_HOP_INTEGRITY",
           severity: "MAJOR",
           targetComponent: "multiHopReasoning",
-          targetIdentifier: chain.chainId,
-          description: `Multi-hop chain '${chain.chainId}' has broken or missing intermediate inference links.`,
+          targetIdentifier: chainIdentifier,
+          description: `Multi-hop chain '${chainIdentifier}' has broken or missing intermediate inference links.`,
           remediationRecommendation: "Prune severed chain or request additional evidence to bridge missing hop.",
           scorePenalty: 0.20,
         });
@@ -518,14 +535,14 @@ export class MetaReasoningEngine {
 
       // Check hop depth penalty compliance
       if (chain.hops && chain.hops.length >= 3) {
-        if (chain.cumulativeConfidence > 0.85) {
+        if (chainConfidence > 0.85) {
           addIssue({
             type: "CONFIDENCE_OVERCLAIM",
             category: "MULTI_HOP_INTEGRITY",
             severity: "MODERATE",
             targetComponent: "multiHopReasoning",
-            targetIdentifier: chain.chainId,
-            description: `Multi-hop chain '${chain.chainId}' spans ${chain.hops.length} hops but retains excessively high cumulative confidence (${chain.cumulativeConfidence.toFixed(2)}).`,
+            targetIdentifier: chainIdentifier,
+            description: `Multi-hop chain '${chainIdentifier}' spans ${chain.hops.length} hops but retains excessively high cumulative confidence (${chainConfidence.toFixed(2)}).`,
             remediationRecommendation: "Apply standard hop-depth decay penalty (minimum 0.05 per hop).",
             scorePenalty: 0.10,
           });
@@ -555,20 +572,22 @@ export class MetaReasoningEngine {
     scenariosAudited = simulationScenarios.length;
     assumptionsAudited = simulationAssumptions.length;
 
-    for (const scenario of simulationScenarios.slice(0, budget.maxAuditedScenarios)) {
+    for (const scenario of simulationScenarios.slice(0, budget.maxAuditedScenarios) as any[]) {
       simSanityAudited++;
+      const scenId = scenario.scenarioId || scenario.id || "simulated_scenario";
+      const status = scenario.epistemicStatus;
 
       // CRITICAL REALITY BOUNDARY DEFENSE:
       // Epistemic status MUST NEVER BE VERIFIED or KNOWN for simulated outcomes
-      if (scenario.epistemicStatus === ("VERIFIED" as any) || scenario.epistemicStatus === ("KNOWN" as any)) {
-        simulationRealityConfusions.push(scenario.scenarioId);
+      if (status === "VERIFIED" || status === "KNOWN") {
+        simulationRealityConfusions.push(scenId);
         addIssue({
           type: "SIMULATION_REALITY_CONFUSION",
           category: "SIMULATION_SANITY",
           severity: "CRITICAL",
           targetComponent: "scenarioSimulation",
-          targetIdentifier: scenario.scenarioId,
-          description: `Simulated scenario '${scenario.scenarioId}' improperly claims authoritative epistemic status (${scenario.epistemicStatus}).`,
+          targetIdentifier: scenId,
+          description: `Simulated scenario '${scenId}' improperly claims authoritative epistemic status (${status}).`,
           remediationRecommendation: "Strictly enforce epistemic boundary: simulated projections must be SIMULATED, PROJECTED, or ADVISORY.",
           scorePenalty: 0.35,
         });
@@ -578,16 +597,18 @@ export class MetaReasoningEngine {
     }
 
     // Check simulation outcomes for reality confusion
-    for (const outcome of simulationOutcomes) {
-      if (outcome.epistemicStatus === ("VERIFIED" as any) || outcome.epistemicStatus === ("KNOWN" as any)) {
-        simulationRealityConfusions.push(outcome.outcomeId);
+    for (const outcome of simulationOutcomes as any[]) {
+      const outId = outcome.outcomeId || outcome.id || "simulation_outcome";
+      const outStatus = outcome.epistemicStatus;
+      if (outStatus === "VERIFIED" || outStatus === "KNOWN") {
+        simulationRealityConfusions.push(outId);
         addIssue({
           type: "SIMULATION_REALITY_CONFUSION",
           category: "SIMULATION_SANITY",
           severity: "CRITICAL",
           targetComponent: "scenarioSimulation",
-          targetIdentifier: outcome.outcomeId,
-          description: `Simulated outcome '${outcome.outcomeId}' incorrectly asserts reality status (${outcome.epistemicStatus}).`,
+          targetIdentifier: outId,
+          description: `Simulated outcome '${outId}' incorrectly asserts reality status (${outStatus}).`,
           remediationRecommendation: "Demote outcome epistemic status to PROJECTED or SIMULATED.",
           scorePenalty: 0.35,
         });
@@ -672,16 +693,17 @@ export class MetaReasoningEngine {
 
     // Check temporal continuity state
     if (input.temporalMemory) {
-      temporalAudited += input.temporalMemory.stateRecords?.length || 0;
-      for (const record of input.temporalMemory.stateRecords || []) {
+      const records = (input.temporalMemory as any).stateRecords || (input.temporalMemory as any).states || [];
+      temporalAudited += records.length;
+      for (const record of records) {
         if (record.isSuperseded && record.isActiveInCurrentTurn) {
           addIssue({
             type: "TEMPORAL_INCONSISTENCY",
             category: "TEMPORAL_AND_SCOPE",
             severity: "MODERATE",
             targetComponent: "temporalMemory",
-            targetIdentifier: record.key,
-            description: `Superseded temporal record '${record.key}' is asserted as currently active state.`,
+            targetIdentifier: record.key || record.id || "temporal_record",
+            description: `Superseded temporal record '${record.key || record.id}' is asserted as currently active state.`,
             remediationRecommendation: "Promote latest temporal evolution state and archive superseded record.",
             scorePenalty: 0.10,
           });
@@ -708,15 +730,16 @@ export class MetaReasoningEngine {
     let constraintPassed = 0;
 
     const reasoningConstraints = input.executiveContext?.reasoningConstraints || [];
-    const planSteps = input.planning?.plan?.steps || [];
-    const activeGoals = input.goalProject?.goals || [];
+    const planSteps = (input.planning?.plan?.steps || []) as any[];
+    const activeGoals = ((input.goalProject as any)?.goals || (input.goalProject as any)?.activeGoals || []) as any[];
 
     for (const constraint of reasoningConstraints) {
       constraintAudited++;
       if (constraint.type === "HARD_CONSTRAINT" && constraint.enforceStrictly) {
         // Check if any plan step or claim violates hard constraint
         for (const step of planSteps) {
-          const stepText = `${step.action || ""} ${step.description || ""}`.toLowerCase();
+          const stepAction = step.action || step.title || step.step || "";
+          const stepText = `${stepAction} ${step.description || ""}`.toLowerCase();
           const constraintDesc = constraint.description.toLowerCase();
 
           // Check if plan description opposes explicit hard constraint directive
@@ -730,8 +753,8 @@ export class MetaReasoningEngine {
               category: "CONSTRAINT_AND_GOAL",
               severity: "CRITICAL",
               targetComponent: "planning",
-              targetIdentifier: step.id || step.action,
-              description: `Plan step '${step.description}' violates strict hard constraint '${constraint.description}'.`,
+              targetIdentifier: step.id || stepAction,
+              description: `Plan step '${step.description || stepAction}' violates strict hard constraint '${constraint.description}'.`,
               remediationRecommendation: "Cancel plan step and reformulate strategy adhering strictly to hard safety constraint.",
               scorePenalty: 0.35,
             });
@@ -745,7 +768,8 @@ export class MetaReasoningEngine {
     for (const goal of activeGoals) {
       if (goal.status === "BLOCKED") {
         for (const step of planSteps) {
-          if (step.action === goal.title && !step.riskMitigation) {
+          const stepAction = step.action || step.title || step.step || "";
+          if (stepAction === goal.title && !step.riskMitigation) {
             addIssue({
               type: "GOAL_CONFLICT",
               category: "CONSTRAINT_AND_GOAL",

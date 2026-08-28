@@ -64,7 +64,7 @@ function createBaseMockInput(): MetaReasoningInput {
           topic: "database_optimization",
           groundingType: "GOVERNED_MEMORY",
           sanitizedDirective: "Database is PostgreSQL 16",
-        },
+        } as any,
       ],
       activePreferences: [],
       reasoningConstraints: [
@@ -75,7 +75,7 @@ function createBaseMockInput(): MetaReasoningInput {
           authority: "HARD_CONSTRAINT",
           enforceStrictly: true,
           sanitizedDirective: "Never drop production tables",
-        },
+        } as any,
       ],
       activeGoals: [
         {
@@ -84,7 +84,7 @@ function createBaseMockInput(): MetaReasoningInput {
           status: "IN_PROGRESS",
           progress: 0.50,
           sanitizedDirective: "Optimize latency under 50ms",
-        },
+        } as any,
       ],
       activeProjects: [],
       activeCommitments: [],
@@ -95,7 +95,7 @@ function createBaseMockInput(): MetaReasoningInput {
         activeTemporalAnchors: [],
         stateHistory: [],
         staleEntityThresholdMs: 86400000,
-      },
+      } as any,
       promptDirectives: [],
       sanitizedContextPackage: "Active DB is PostgreSQL 16",
       diagnostics: {
@@ -109,8 +109,8 @@ function createBaseMockInput(): MetaReasoningInput {
         topicFilterApplied: false,
         totalDirectivesGenerated: 1,
         contextPackageLength: 30,
-      },
-    },
+      } as any,
+    } as any,
     epistemicCalibration: {
       records: [],
       claims: [
@@ -129,7 +129,7 @@ function createBaseMockInput(): MetaReasoningInput {
       calibratedConfidenceScore: 0.88,
       directives: ["High confidence database context"],
       diagnostics: {} as any,
-    },
+    } as any,
     deepReasoning: {
       hypotheses: [
         {
@@ -144,7 +144,7 @@ function createBaseMockInput(): MetaReasoningInput {
       activeHypotheses: [],
       sanitizedDirectives: [],
       diagnostics: {} as any,
-    },
+    } as any,
     causalReasoning: {
       relations: [
         {
@@ -157,13 +157,13 @@ function createBaseMockInput(): MetaReasoningInput {
           necessitySufficiency: "NECESSARY_AND_SUFFICIENT",
           isCounterfactuallyRobust: true,
           provenance: [],
-        },
+        } as any,
       ],
       chains: [],
       counterfactuals: [],
       activeDirectives: [],
       diagnostics: {} as any,
-    },
+    } as any,
     multiHopReasoning: {
       chains: [
         {
@@ -186,7 +186,7 @@ function createBaseMockInput(): MetaReasoningInput {
       groundedConclusions: [],
       directives: [],
       diagnostics: {} as any,
-    },
+    } as any,
     scenarioSimulation: {
       scenarios: [
         {
@@ -405,7 +405,7 @@ runTest("MR-13: Detects UNRESOLVED_CONTRADICTION when active unresolved contradi
     resolvedContradictions: [],
     activeDirectives: [],
     diagnostics: {} as any,
-  };
+  } as any;
   const res = metaReasoningEngine.evaluate(input);
   assert(res.issues.some((i) => i.type === "UNRESOLVED_CONTRADICTION"), "Must detect UNRESOLVED_CONTRADICTION");
   assert(res.verdict === "REJECTED" || res.verdict === "NEEDS_REVISION", "Verdict must not be PASS");
@@ -420,7 +420,7 @@ runTest("MR-14: Validates resolved contradictions when belief revision successfu
     ],
     activeDirectives: [],
     diagnostics: {} as any,
-  };
+  } as any;
   const res = metaReasoningEngine.evaluate(input);
   assert(!res.issues.some((i) => i.type === "UNRESOLVED_CONTRADICTION"), "Must not flag resolved contradictions");
 });
@@ -465,7 +465,7 @@ runTest("MR-17: Coherence score calculation reflects presence and severity of lo
     resolvedContradictions: [],
     activeDirectives: [],
     diagnostics: {} as any,
-  };
+  } as any;
   const res = metaReasoningEngine.evaluate(input);
   assert(res.diagnostics.coherenceScore <= 0.60, "Coherence score must be penalized heavily");
 });
@@ -480,7 +480,7 @@ runTest("MR-18: Multiple co-existing contradictions handled without budget overf
     resolvedContradictions: [],
     activeDirectives: [],
     diagnostics: {} as any,
-  };
+  } as any;
   const res = metaReasoningEngine.evaluate(input);
   assert(res.issues.length <= 25, "Issues must stay within budget cap");
 });
