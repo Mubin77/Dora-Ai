@@ -98,6 +98,8 @@ import { multiHopReasoningEngine } from "./multiHopReasoningEngine";
 import { MultiHopReasoningAnalysis } from "./multiHopReasoningTypes";
 import { epistemicCalibrationEngine } from "./epistemicCalibrationEngine";
 import { EpistemicCalibrationAnalysis } from "./epistemicCalibrationTypes";
+import { scenarioSimulationEngine } from "./scenarioSimulationEngine";
+import { ScenarioSimulationAnalysis } from "./scenarioSimulationTypes";
 import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
 import { sharedExperienceEngine } from "./sharedExperienceEngine";
@@ -125,6 +127,7 @@ export * from "./predictiveContextTypes";
 export * from "./responseAdaptationTypes";
 export * from "./deepReasoningTypes";
 export * from "./causalReasoningTypes";
+export * from "./scenarioSimulationTypes";
 export * from "./conversationalBehaviorTypes";
 export * from "./sharedExperienceTypes";
 export type {
@@ -205,6 +208,31 @@ export {
   DEFAULT_EPISTEMIC_CALIBRATION_BUDGET,
 } from "./epistemicCalibrationTypes";
 export { epistemicCalibrationEngine } from "./epistemicCalibrationEngine";
+export type {
+  ScenarioType,
+  ScenarioEpistemicStatus,
+  OutcomeType,
+  ActionReversibility,
+  ScenarioAssumption,
+  SimulationAction,
+  SimulationState,
+  ScenarioRisk,
+  ScenarioBenefit,
+  ScenarioTradeoff,
+  ScenarioOutcome,
+  ScenarioDefinition,
+  ScenarioComparison,
+  ScenarioSimulationBudgetConfig,
+  ScenarioSimulationDiagnostics,
+  ScenarioSimulationAnalysis,
+  ScenarioSimulationOptions,
+  ScenarioSimulationInput,
+} from "./scenarioSimulationTypes";
+export {
+  DEFAULT_SCENARIO_SIMULATION_BUDGET,
+  HARD_CEILING_SCENARIO_SIMULATION_BUDGET,
+} from "./scenarioSimulationTypes";
+export { scenarioSimulationEngine } from "./scenarioSimulationEngine";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -272,6 +300,8 @@ export interface BrainAnalysis {
   multiHopReasoning?: MultiHopReasoningAnalysis;
   epistemicCalibrationAnalysis?: EpistemicCalibrationAnalysis;
   epistemicCalibration?: EpistemicCalibrationAnalysis;
+  scenarioSimulationAnalysis?: ScenarioSimulationAnalysis;
+  scenarioSimulation?: ScenarioSimulationAnalysis;
   conversationalBehavior?: ConversationalBehaviorDecision;
   sharedExperience?: SharedExperienceContext;
   languageStyle?: {
@@ -930,6 +960,36 @@ export class BrainEngine {
       },
     });
 
+    // Step 14.8 / Phase 3 Step 6: Scenario Simulation & Predictive Planning Engine (Deterministic, Bounded, Non-LLM)
+    const scenarioSimulationAnalysis = scenarioSimulationEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      executiveContext,
+      deepReasoning: deepReasoningAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
+      causalReasoning: causalReasoningAnalysis,
+      multiHopReasoning: multiHopReasoningAnalysis,
+      epistemicCalibration: epistemicCalibrationAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
     // Step 15: Conversational Behavior & Proactive Companion Engine
     const conversationalBehavior = conversationalBehaviorEngine.evaluate({
       userMessage: trimmed,
@@ -966,6 +1026,13 @@ export class BrainEngine {
 
     // Add sanitized epistemic calibration directives to promptDirectives
     for (const d of epistemicCalibrationAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add sanitized scenario simulation directives to promptDirectives
+    for (const d of scenarioSimulationAnalysis.directives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -1032,6 +1099,8 @@ export class BrainEngine {
       multiHopReasoning: multiHopReasoningAnalysis,
       epistemicCalibrationAnalysis,
       epistemicCalibration: epistemicCalibrationAnalysis,
+      scenarioSimulationAnalysis,
+      scenarioSimulation: scenarioSimulationAnalysis,
       conversationalBehavior,
       sharedExperience,
       languageStyle: {
