@@ -94,6 +94,8 @@ import { contradictionResolutionEngine } from "./contradictionResolutionEngine";
 import { ContradictionResolutionAnalysis } from "./contradictionResolutionTypes";
 import { causalReasoningEngine } from "./causalReasoningEngine";
 import { CausalReasoningAnalysis } from "./causalReasoningTypes";
+import { multiHopReasoningEngine } from "./multiHopReasoningEngine";
+import { MultiHopReasoningAnalysis } from "./multiHopReasoningTypes";
 import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
 import { sharedExperienceEngine } from "./sharedExperienceEngine";
@@ -158,6 +160,27 @@ export type {
   CausalReasoningInput,
 } from "./causalReasoningTypes";
 export { DEFAULT_CAUSAL_REASONING_BUDGET } from "./causalReasoningTypes";
+export type {
+  MultiHopEvidenceAuthority,
+  MultiHopScope,
+  MultiHopEvidenceEligibility,
+  MultiHopInferenceType,
+  MultiHopChainStatus,
+  MultiHopEvidenceNode,
+  MultiHopReasoningHop,
+  MultiHopReasoningChain,
+  MultiHopGroundedConclusion,
+  MultiHopReasoningBudgetConfig,
+  MultiHopReasoningDiagnostics,
+  MultiHopReasoningAnalysis,
+  MultiHopReasoningOptions,
+  MultiHopReasoningInput,
+} from "./multiHopReasoningTypes";
+export {
+  MULTI_HOP_AUTHORITY_WEIGHTS,
+  DEFAULT_MULTI_HOP_BUDGET,
+  HARD_CEILING_MULTI_HOP_BUDGET,
+} from "./multiHopReasoningTypes";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -178,6 +201,7 @@ export { responseAdaptationEngine } from "./responseAdaptationEngine";
 export { deepReasoningEngine } from "./deepReasoningEngine";
 export { contradictionResolutionEngine } from "./contradictionResolutionEngine";
 export { causalReasoningEngine } from "./causalReasoningEngine";
+export { multiHopReasoningEngine } from "./multiHopReasoningEngine";
 export { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 export { sharedExperienceEngine } from "./sharedExperienceEngine";
 export { languageStyleAdapter } from "./languageStyleAdapter";
@@ -220,6 +244,8 @@ export interface BrainAnalysis {
   contradictionResolutionAnalysis?: ContradictionResolutionAnalysis;
   causalReasoningAnalysis?: CausalReasoningAnalysis;
   causalReasoning?: CausalReasoningAnalysis;
+  multiHopReasoningAnalysis?: MultiHopReasoningAnalysis;
+  multiHopReasoning?: MultiHopReasoningAnalysis;
   conversationalBehavior?: ConversationalBehaviorDecision;
   sharedExperience?: SharedExperienceContext;
   languageStyle?: {
@@ -821,6 +847,34 @@ export class BrainEngine {
       },
     });
 
+    // Step 14.6 / Phase 3 Step 4: Multi-Hop Reasoning & Evidence Chain Engine (Deterministic, Bounded, Non-LLM)
+    const multiHopReasoningAnalysis = multiHopReasoningEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      executiveContext,
+      deepReasoning: deepReasoningAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
+      causalReasoning: causalReasoningAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
     // Step 15: Conversational Behavior & Proactive Companion Engine
     const conversationalBehavior = conversationalBehaviorEngine.evaluate({
       userMessage: trimmed,
@@ -843,6 +897,13 @@ export class BrainEngine {
 
     // Add sanitized causal reasoning directives to promptDirectives
     for (const d of causalReasoningAnalysis.activeDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add sanitized multi-hop reasoning directives to promptDirectives
+    for (const d of multiHopReasoningAnalysis.directives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -905,6 +966,8 @@ export class BrainEngine {
       contradictionResolutionAnalysis,
       causalReasoningAnalysis,
       causalReasoning: causalReasoningAnalysis,
+      multiHopReasoningAnalysis,
+      multiHopReasoning: multiHopReasoningAnalysis,
       conversationalBehavior,
       sharedExperience,
       languageStyle: {
