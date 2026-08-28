@@ -96,6 +96,8 @@ import { causalReasoningEngine } from "./causalReasoningEngine";
 import { CausalReasoningAnalysis } from "./causalReasoningTypes";
 import { multiHopReasoningEngine } from "./multiHopReasoningEngine";
 import { MultiHopReasoningAnalysis } from "./multiHopReasoningTypes";
+import { epistemicCalibrationEngine } from "./epistemicCalibrationEngine";
+import { EpistemicCalibrationAnalysis } from "./epistemicCalibrationTypes";
 import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
 import { sharedExperienceEngine } from "./sharedExperienceEngine";
@@ -181,6 +183,28 @@ export {
   DEFAULT_MULTI_HOP_BUDGET,
   HARD_CEILING_MULTI_HOP_BUDGET,
 } from "./multiHopReasoningTypes";
+export type {
+  EpistemicAuthority,
+  EpistemicState,
+  EpistemicScope,
+  ConfidenceLabel,
+  EpistemicProvenance,
+  EpistemicUncertainty,
+  CompetingClaim,
+  EpistemicClaim,
+  EpistemicCalibrationRecord,
+  EpistemicCalibrationBudgetConfig,
+  EpistemicCalibrationDiagnostics,
+  EpistemicCalibrationAnalysis,
+  EpistemicCalibrationOptions,
+  EpistemicCalibrationInput,
+} from "./epistemicCalibrationTypes";
+export {
+  EPISTEMIC_AUTHORITY_WEIGHTS,
+  EPISTEMIC_STATE_RANKS,
+  DEFAULT_EPISTEMIC_CALIBRATION_BUDGET,
+} from "./epistemicCalibrationTypes";
+export { epistemicCalibrationEngine } from "./epistemicCalibrationEngine";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -246,6 +270,8 @@ export interface BrainAnalysis {
   causalReasoning?: CausalReasoningAnalysis;
   multiHopReasoningAnalysis?: MultiHopReasoningAnalysis;
   multiHopReasoning?: MultiHopReasoningAnalysis;
+  epistemicCalibrationAnalysis?: EpistemicCalibrationAnalysis;
+  epistemicCalibration?: EpistemicCalibrationAnalysis;
   conversationalBehavior?: ConversationalBehaviorDecision;
   sharedExperience?: SharedExperienceContext;
   languageStyle?: {
@@ -875,6 +901,35 @@ export class BrainEngine {
       },
     });
 
+    // Step 14.7 / Phase 3 Step 5: Uncertainty, Confidence & Epistemic Calibration Engine (Deterministic, Bounded, Non-LLM)
+    const epistemicCalibrationAnalysis = epistemicCalibrationEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      executiveContext,
+      deepReasoning: deepReasoningAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
+      causalReasoning: causalReasoningAnalysis,
+      multiHopReasoning: multiHopReasoningAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
     // Step 15: Conversational Behavior & Proactive Companion Engine
     const conversationalBehavior = conversationalBehaviorEngine.evaluate({
       userMessage: trimmed,
@@ -904,6 +959,13 @@ export class BrainEngine {
 
     // Add sanitized multi-hop reasoning directives to promptDirectives
     for (const d of multiHopReasoningAnalysis.directives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add sanitized epistemic calibration directives to promptDirectives
+    for (const d of epistemicCalibrationAnalysis.directives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -968,6 +1030,8 @@ export class BrainEngine {
       causalReasoning: causalReasoningAnalysis,
       multiHopReasoningAnalysis,
       multiHopReasoning: multiHopReasoningAnalysis,
+      epistemicCalibrationAnalysis,
+      epistemicCalibration: epistemicCalibrationAnalysis,
       conversationalBehavior,
       sharedExperience,
       languageStyle: {
