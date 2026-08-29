@@ -104,6 +104,8 @@ import { metaReasoningEngine } from "./metaReasoningEngine";
 import { MetaReasoningAnalysis } from "./metaReasoningTypes";
 import { deliberativeDecisionEngine } from "./deliberativeDecisionEngine";
 import { DecisionAnalysis } from "./deliberativeDecisionTypes";
+import { adaptiveExecutiveControlEngine } from "./adaptiveExecutiveControlEngine";
+import { ExecutiveControlAnalysis } from "./adaptiveExecutiveControlTypes";
 import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
 import { sharedExperienceEngine } from "./sharedExperienceEngine";
@@ -133,6 +135,8 @@ export * from "./deepReasoningTypes";
 export * from "./causalReasoningTypes";
 export * from "./scenarioSimulationTypes";
 export * from "./metaReasoningTypes";
+export * from "./deliberativeDecisionTypes";
+export * from "./adaptiveExecutiveControlTypes";
 export * from "./conversationalBehaviorTypes";
 export * from "./sharedExperienceTypes";
 export type {
@@ -366,6 +370,8 @@ export interface BrainAnalysis {
   metaReasoning?: MetaReasoningAnalysis;
   decisionAnalysis?: DecisionAnalysis;
   decision?: DecisionAnalysis;
+  adaptiveExecutiveControlAnalysis?: ExecutiveControlAnalysis;
+  adaptiveExecutiveControl?: ExecutiveControlAnalysis;
   conversationalBehavior?: ConversationalBehaviorDecision;
   sharedExperience?: SharedExperienceContext;
   languageStyle?: {
@@ -1119,6 +1125,40 @@ export class BrainEngine {
       },
     });
 
+    // Step 14.11 / Phase 3 Step 9: Adaptive Executive Control & Cognitive Prioritization Engine (Deterministic, Bounded, Non-LLM)
+    // Downstream of Step 8 — determines cognitive attention, priority classes, suppression, escalation, focus, response mode & sanitized directives
+    const adaptiveExecutiveControlAnalysis = adaptiveExecutiveControlEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      executiveContext,
+      deepReasoning: deepReasoningAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
+      causalReasoning: causalReasoningAnalysis,
+      multiHopReasoning: multiHopReasoningAnalysis,
+      epistemicCalibration: epistemicCalibrationAnalysis,
+      scenarioSimulation: scenarioSimulationAnalysis,
+      metaReasoning: metaReasoningAnalysis,
+      decision: decisionAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
     // Step 15: Conversational Behavior & Proactive Companion Engine
     const conversationalBehavior = conversationalBehaviorEngine.evaluate({
       userMessage: trimmed,
@@ -1176,6 +1216,13 @@ export class BrainEngine {
 
     // Add sanitized decision directives to promptDirectives
     for (const d of decisionAnalysis.sanitizedDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add sanitized executive control directives to promptDirectives
+    for (const d of adaptiveExecutiveControlAnalysis.sanitizedDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -1250,6 +1297,8 @@ export class BrainEngine {
       metaReasoning: metaReasoningAnalysis,
       decisionAnalysis,
       decision: decisionAnalysis,
+      adaptiveExecutiveControlAnalysis,
+      adaptiveExecutiveControl: adaptiveExecutiveControlAnalysis,
       conversationalBehavior,
       sharedExperience,
       languageStyle: {
