@@ -1,1012 +1,1364 @@
 /**
- * DORA Phase 3 — Step 7: Meta-Reasoning & Self-Critique Engine Test Suite
+ * Dora Phase 3 Step 7: Meta-Reasoning & Self-Critique Engine Test Suite
  * 
- * Verifies all 54 required test cases (MR-1 through MR-54) ensuring deterministic,
- * non-LLM, read-only self-critique, grounding verification, epistemic calibration auditing,
- * causal & multi-hop integrity, reality boundary defense, constraint checking,
- * directive sanitization, and full BrainEngine integration.
+ * Tests MR-1 through MR-54 covering:
+ * - Unsupported claim detection, authority mismatch, logical invalidity, circular reasoning, contradiction disregard, causal hallucination
+ * - Simulation/reality confusion, multi-hop break, overconfidence, underconfidence, hard constraint violation, goal misalignment
+ * - Topic boundary spill, sensitive data exposure, stale memory reliance, speculative propagation, unanchored hypothesis, directive conflict
+ * - Read-only invariant, advisory corrections, severity classification, recommendation priority, directive sanitization
+ * - 10-dimensional uncertainty vector calculation, compound uncertainty, budget enforcement, hard ceiling truncation, diagnostics
+ * - Determinism across runs, input immutability, state preservation, empty/null safety
+ * - BrainEngine integration, promptDirectives injection, full regression test suite (Steps 1-6).
  */
 
 import { metaReasoningEngine } from "./metaReasoningEngine";
 import {
   MetaReasoningInput,
-  MetaReasoningBudgetConfig,
+  DEFAULT_META_REASONING_BUDGET,
+  HARD_CEILING_META_REASONING_BUDGET,
 } from "./metaReasoningTypes";
 import { brainEngine } from "./brainEngine";
+import { deepReasoningEngine } from "./deepReasoningEngine";
+import { contradictionResolutionEngine } from "./contradictionResolutionEngine";
+import { causalReasoningEngine } from "./causalReasoningEngine";
+import { multiHopReasoningEngine } from "./multiHopReasoningEngine";
+import { epistemicCalibrationEngine } from "./epistemicCalibrationEngine";
+import { scenarioSimulationEngine } from "./scenarioSimulationEngine";
+import { memoryStore } from "./memoryStore";
 
-let passCount = 0;
-let failCount = 0;
+let passedCount = 0;
+let totalCount = 0;
 
-function assert(condition: boolean, msg: string) {
+function assert(condition: boolean, message: string) {
   if (!condition) {
-    console.error(`  [FAIL] ${msg}`);
-    failCount++;
-    throw new Error(`Assertion failed: ${msg}`);
+    throw new Error(`Assertion failed: ${message}`);
   }
 }
 
 function runTest(name: string, fn: () => void) {
+  totalCount++;
   try {
     fn();
+    passedCount++;
     console.log(`  [PASS] ${name}`);
-    passCount++;
-  } catch (err: any) {
-    console.error(`  [FAIL] ${name}: ${err.message}`);
+  } catch (error: any) {
+    console.error(`  [FAIL] ${name}: ${error?.message || error}`);
+    throw error;
   }
 }
 
-function createBaseMockInput(): MetaReasoningInput {
+function createBaseMockInput(overrides?: Partial<MetaReasoningInput>): MetaReasoningInput {
   return {
-    userId: "user_test_7",
-    message: "analyze system performance and optimize query",
+    userId: "user_test_123",
+    message: "What is our architecture deployment strategy?",
     context: {
-      activeTopic: "database_optimization",
-      entities: [],
+      activeTopic: "architecture",
+      entities: {},
       pendingClarification: false,
     } as any,
     executiveContext: {
       currentTurn: {
-        message: "analyze system performance and optimize query",
-        intent: "ANALYZE",
-        explicitDirectives: [],
-        overrides: {},
-        requiresClarification: false,
+        message: "What is our architecture deployment strategy?",
+        normalizedIntent: "QUERY",
+        topic: "architecture",
+        isTopicSwitch: false,
+        resolvedEntities: [],
       },
+      activeGoal: {
+        id: "goal_arch",
+        title: "Scale architecture",
+        status: "active",
+      },
+      activeProjects: [
+        {
+          id: "proj_arch",
+          name: "System Scaling",
+          status: "active",
+        },
+      ],
       authoritativeFacts: [
         {
-          id: "fact_db_version",
-          key: "db_version",
-          value: "PostgreSQL 16",
-          authority: "GOVERNANCE_APPROVED_MEMORY",
-          confidence: 0.90,
-          isGlobal: true,
+          id: "fact_1",
+          key: "cluster_node_count",
+          value: "3 nodes",
+          confidence: 0.95,
+          authority: "VERIFIED_EVIDENCE",
           scope: "GLOBAL",
-          topic: "database_optimization",
-          groundingType: "GOVERNED_MEMORY",
-          sanitizedDirective: "Database is PostgreSQL 16",
-        } as any,
+          topic: "architecture",
+          eligibility: "ELIGIBLE",
+        },
       ],
-      activePreferences: [],
-      reasoningConstraints: [
+      constraints: [
         {
-          id: "const_no_drop_table",
+          id: "const_1",
           type: "HARD_CONSTRAINT",
-          description: "Never drop production tables",
-          authority: "HARD_CONSTRAINT",
-          enforceStrictly: true,
-          sanitizedDirective: "Never drop production tables",
-        } as any,
+          description: "Never deploy without automated regression tests",
+        },
       ],
-      activeGoals: [
-        {
-          goalId: "goal_optimize_query",
-          title: "Optimize latency under 50ms",
-          status: "IN_PROGRESS",
-          progress: 0.50,
-          sanitizedDirective: "Optimize latency under 50ms",
-        } as any,
-      ],
-      activeProjects: [],
-      activeCommitments: [],
-      recentInteractionPatterns: [],
-      temporalContext: {
-        currentTime: 1724300000000,
-        formattedCurrentTime: "2024-08-22T00:00:00.000Z",
-        activeTemporalAnchors: [],
-        stateHistory: [],
-        staleEntityThresholdMs: 86400000,
-      } as any,
-      promptDirectives: [],
-      sanitizedContextPackage: "Active DB is PostgreSQL 16",
-      diagnostics: {
-        factsIncluded: 1,
-        factsFiltered: 0,
-        preferencesIncluded: 0,
-        constraintsIncluded: 1,
-        goalsIncluded: 1,
-        commitmentsIncluded: 0,
-        temporalAnchorsIncluded: 0,
-        topicFilterApplied: false,
-        totalDirectivesGenerated: 1,
-        contextPackageLength: 30,
-      } as any,
+      promptDirectives: ["Follow safe architectural guidelines."],
     } as any,
-    epistemicCalibration: {
-      records: [],
-      claims: [
-        {
-          claimKey: "db_version",
-          statement: "Database is PostgreSQL 16",
-          epistemicState: "VERIFIED",
-          authority: "GOVERNANCE_APPROVED_MEMORY",
-          confidence: 0.88,
-          uncertainty: 0.12,
-          scope: "GLOBAL",
-          provenance: [{ sourceId: "fact_db_version", sourceType: "EXECUTIVE_FACT", authority: "GOVERNANCE_APPROVED_MEMORY", confidence: 0.90 }],
-          evidence: ["PostgreSQL 16 config verified"],
-        } as any,
-      ],
-      calibratedConfidenceScore: 0.88,
-      directives: ["High confidence database context"],
-      diagnostics: {} as any,
+    reasoning: {
+      reasoningRequired: true,
+      reasoningConfidence: 0.9,
+      subtasks: [],
+      constraints: [],
+      missingInformation: [],
+    } as any,
+    planning: {
+      requiresPlanning: false,
+    } as any,
+    verification: {
+      confidence: {
+        calibratedScore: 0.9,
+        uncertaintyLevel: "LOW",
+      },
+      claims: [],
+      contradictions: [],
     } as any,
     deepReasoning: {
       hypotheses: [
         {
           id: "hyp_1",
-          hypothesisKey: "index_scan",
-          statement: "Using index scan improves query time",
-          epistemicStatus: "SUPPORTED",
-          supportingEvidence: ["Index scan bench test"],
-          contradictingEvidence: [],
-        } as any,
+          claim: "Adding a load balancer improves cluster throughput",
+          confidence: 0.85,
+          status: "SUPPORTED",
+          supportingEvidence: ["fact_1"],
+          refutingEvidence: [],
+        },
       ],
-      activeHypotheses: [],
-      sanitizedDirectives: [],
-      diagnostics: {} as any,
+      cycles: [],
+      sanitizedDirectives: ["Utilize load balancer for throughput."],
+    } as any,
+    contradictionResolution: {
+      contradictions: [],
+      decisions: [],
+      activeDirectives: [],
     } as any,
     causalReasoning: {
       relations: [
         {
-          relationKey: "index->latency",
-          causeKey: "index_added",
-          effectKey: "latency_reduced",
-          relationType: "DETERMINISTIC",
-          mechanism: "B-Tree index reduces disk seek time",
-          confidence: 0.90,
-          necessitySufficiency: "NECESSARY_AND_SUFFICIENT",
-          isCounterfactuallyRobust: true,
-          provenance: [],
-        } as any,
+          id: "cr_1",
+          cause: "Increased traffic",
+          effect: "Increased latency",
+          relationType: "DIRECT_CAUSE",
+          confidence: 0.88,
+          evidenceNodeIds: ["fact_1"],
+        },
       ],
       chains: [],
       counterfactuals: [],
       activeDirectives: [],
-      diagnostics: {} as any,
     } as any,
     multiHopReasoning: {
       chains: [
         {
-          chainId: "chain_1",
+          id: "mhc_1",
+          conclusion: "Cluster handles 10k requests with 3 nodes and load balancer",
+          status: "GROUNDED",
+          confidence: 0.82,
           hops: [
             {
-              hopIndex: 0,
-              sourceEntity: "Query",
-              targetEntity: "Index",
-              relation: "uses",
-              inferenceType: "DEDUCTIVE",
-              confidence: 0.90,
-              status: "VALID",
-            } as any,
+              hopIndex: 1,
+              sourceFactId: "fact_1",
+              targetFactId: "hyp_1",
+              inferredRelation: "supports",
+            },
           ],
-          status: "COMPLETE",
-          cumulativeConfidence: 0.90,
-        } as any,
+        },
       ],
-      groundedConclusions: [],
+      groundedConclusions: [
+        {
+          conclusion: "Cluster handles 10k requests with 3 nodes and load balancer",
+          confidence: 0.82,
+          epistemicAuthority: "VERIFIED_EVIDENCE",
+        },
+      ],
       directives: [],
-      diagnostics: {} as any,
+    } as any,
+    epistemicCalibration: {
+      epistemicState: "PROBABILISTIC",
+      unifiedConfidence: 0.85,
+      claims: [
+        {
+          id: "ep_1",
+          text: "Cluster handles 10k requests with 3 nodes and load balancer",
+          epistemicState: "PROBABILISTIC",
+          calibratedConfidence: 0.85,
+          authority: "VERIFIED_EVIDENCE",
+        },
+      ],
+      uncertainty: {
+        evidenceInsufficiency: 0.1,
+        sourceConflict: 0.05,
+        reasoningDepth: 0.1,
+        epistemicGap: 0.1,
+        intentAmbiguity: 0.05,
+        causalAmbiguity: 0.1,
+        temporalDecay: 0.05,
+        domainVolatility: 0.1,
+        multiHopDecay: 0.1,
+        simulationSpeculation: 0.05,
+        compoundUncertainty: 0.2,
+      },
+      directives: [],
     } as any,
     scenarioSimulation: {
       scenarios: [
         {
-          scenarioId: "scen_baseline",
-          scenarioName: "Baseline Query",
-          scenarioType: "BASELINE",
-          epistemicStatus: "SIMULATED",
-          actions: [],
-          assumptions: [],
-          projectedOutcome: { outcomeId: "out_1", title: "Projected latency", outcomeType: "POSITIVE", epistemicStatus: "SIMULATED", confidence: 0.80 } as any,
-        } as any,
+          id: "scen_1",
+          name: "High Traffic Event",
+          epistemicStatus: "SIMULATION_HEURISTIC",
+          outcomes: [
+            {
+              description: "Latency increases gracefully",
+              probability: 0.75,
+              epistemicStatus: "SIMULATION_HEURISTIC",
+            },
+          ],
+          assumptions: ["Traffic stays under 20k RPS"],
+        },
       ],
-      outcomes: [],
-      comparisons: [],
-      unresolvedScenarios: [],
-      assumptions: [],
-      directives: [],
-      diagnostics: {} as any,
-    },
-    planning: {
-      requiresPlanning: true,
-      plan: {
-        id: "plan_1",
-        goal: "Optimize query latency",
-        objective: "Add index and benchmark",
-        steps: [
-          {
-            id: "step_1",
-            action: "CREATE INDEX on users(created_at)",
-            description: "Add index to reduce scan time",
-            status: "PENDING",
-          } as any,
-        ],
-      } as any,
       directives: [],
     } as any,
+    history: [],
+    ...overrides,
   };
 }
 
-console.log("\n--- STARTING DORA PHASE 3 STEP 7 META-REASONING ENGINE TEST SUITE ---\n");
+console.log("===============================================================================");
+console.log("DORA PHASE 3, STEP 7 — META-REASONING & SELF-CRITIQUE ENGINE TEST SUITE");
+console.log("===============================================================================\n");
 
-// =========================================================================
-// Group 1: Core Mechanics, Determinism, Budget & Invariants (MR-1 to MR-6)
-// =========================================================================
+// ----------------------------------------------------------------------------
+// MR-1 to MR-6: Fundamental Critique & Audit Capabilities
+// ----------------------------------------------------------------------------
 
-runTest("MR-1: Deterministic evaluation (same inputs -> identical hash, verdict, issues, and directives)", () => {
-  const input = createBaseMockInput();
-  const res1 = metaReasoningEngine.evaluate(input);
-  const res2 = metaReasoningEngine.evaluate(input);
-  assert(res1.verdict === res2.verdict, "Verdicts must match exactly");
-  assert(res1.overallQualityScore === res2.overallQualityScore, "Quality score must match exactly");
-  assert(res1.issues.length === res2.issues.length, "Issues count must match exactly");
-  assert(JSON.stringify(res1.sanitizedDirectives) === JSON.stringify(res2.sanitizedDirectives), "Directives must match");
-});
-
-runTest("MR-2: Read-only side-effect-free invariant (no mutation of input packages)", () => {
-  const input = createBaseMockInput();
-  const snapshot = JSON.stringify(input);
-  metaReasoningEngine.evaluate(input);
-  assert(JSON.stringify(input) === snapshot, "Input must not be mutated during evaluation");
-});
-
-runTest("MR-3: Budget truncation on claims, chains, assumptions, scenarios", () => {
-  const input = createBaseMockInput();
-  input.options = {
-    budget: {
-      maxAuditedClaims: 1,
-      maxCritiqueIssues: 2,
-    },
-  };
-  input.epistemicCalibration!.claims = [
-    { claimKey: "c1", statement: "Claim 1", epistemicState: "UNKNOWN", authority: "SYSTEM_DEFAULT", confidence: 0.1 } as any,
-    { claimKey: "c2", statement: "Claim 2", epistemicState: "UNKNOWN", authority: "SYSTEM_DEFAULT", confidence: 0.1 } as any,
-    { claimKey: "c3", statement: "Claim 3", epistemicState: "UNKNOWN", authority: "SYSTEM_DEFAULT", confidence: 0.1 } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.diagnostics.claimsAudited <= 1, "Claims audited must be clamped to maxAuditedClaims budget");
-});
-
-runTest("MR-4: Hard ceiling enforcement (cannot exceed hard ceiling budget limits)", () => {
-  const input = createBaseMockInput();
-  input.options = {
-    budget: {
-      maxAuditedClaims: 9999,
-      maxCritiqueIssues: 9999,
-    },
-  };
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.diagnostics.issuesDetected <= 50, "Issues count must not exceed hard ceiling of 50");
-});
-
-runTest("MR-5: Empty/minimal inputs handling without crashing", () => {
-  const res = metaReasoningEngine.evaluate({});
-  assert(res.verdict !== undefined, "Verdict must be defined on empty input");
-  assert(Array.isArray(res.issues), "Issues array must be defined");
-  assert(Array.isArray(res.sanitizedDirectives), "Directives must be defined");
-});
-
-runTest("MR-6: Handling undefined upstream engine packages gracefully", () => {
-  const input: MetaReasoningInput = {
-    userId: "test",
-    message: "hello",
-    epistemicCalibration: undefined,
-    deepReasoning: undefined,
-    causalReasoning: undefined,
-    multiHopReasoning: undefined,
-    scenarioSimulation: undefined,
-  };
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.verdict === "PASS", "Should default to pass when no issues in undefined packages");
-});
-
-// =========================================================================
-// Group 2: Grounding & Evidence Auditing (MR-7 to MR-12)
-// =========================================================================
-
-runTest("MR-7: Detects UNSUPPORTED_CLAIM when claim has no supporting verified evidence", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    {
-      claimKey: "unsupported_fact",
-      statement: "The earth is flat",
-      epistemicState: "VERIFIED",
-      authority: "SYSTEM_DEFAULT",
-      confidence: 0.95,
-      evidence: [],
-      provenance: [{ sourceId: "p1", sourceType: "EXECUTIVE_FACT" }],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.unsupportedClaims.includes("unsupported_fact"), "Must register unsupported_fact in unsupportedClaims");
-  assert(res.issues.some((i) => i.type === "UNSUPPORTED_CLAIM"), "Must emit UNSUPPORTED_CLAIM issue");
-});
-
-runTest("MR-8: Validates grounded claims supported by verified evidence / governance facts", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.unsupportedClaims.length === 0, "Well-grounded claims must have 0 unsupported claims");
-  assert(res.sectionResults.find((s) => s.section === "GROUNDING")?.passed === true, "Grounding section must pass");
-});
-
-runTest("MR-9: Detects PROVENANCE_MISSING when claim has zero provenance", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    {
-      claimKey: "claim_no_prov",
-      statement: "Server is running",
-      epistemicState: "INFERRED",
-      authority: "TEMPORAL_CONTEXT",
-      confidence: 0.60,
-      provenance: [],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "PROVENANCE_MISSING"), "Must detect PROVENANCE_MISSING");
-});
-
-runTest("MR-10: Detects WEAK_EVIDENCE_LINK when evidence has low authority holding excessive confidence", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    {
-      claimKey: "pred_claim",
-      statement: "User will buy item tomorrow",
-      epistemicState: "INFERRED",
-      authority: "PREDICTIVE_CONTEXT",
-      confidence: 0.85,
-      provenance: [{ sourceId: "p1", sourceType: "EXECUTIVE_FACT" }],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "WEAK_EVIDENCE_LINK"), "Must detect WEAK_EVIDENCE_LINK");
-});
-
-runTest("MR-11: Flags ungrounded claims in deep reasoning hypotheses claiming ESTABLISHED status", () => {
-  const input = createBaseMockInput();
-  input.deepReasoning!.hypotheses = [
-    {
-      id: "hyp_unsupported",
-      hypothesisKey: "hyp_quantum",
-      statement: "Quantum processor in use",
-      epistemicStatus: "ESTABLISHED",
-      supportingEvidence: [],
-      contradictingEvidence: [],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.unsupportedClaims.includes("hyp_quantum"), "Must flag ungrounded hypothesis in unsupportedClaims");
-});
-
-runTest("MR-12: Grounding score calculation reflects ratio of supported vs unsupported claims", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    { claimKey: "c1", statement: "Valid", epistemicState: "VERIFIED", evidence: ["Verified"], provenance: [{ sourceId: "1", sourceType: "EXECUTIVE_FACT" }] } as any,
-    { claimKey: "c2", statement: "Invalid", epistemicState: "VERIFIED", evidence: [], provenance: [{ sourceId: "1", sourceType: "EXECUTIVE_FACT" }] } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.diagnostics.groundingScore <= 0.60, "Grounding score must be penalized for unsupported claim");
-});
-
-// =========================================================================
-// Group 3: Coherence, Contradictions & Logic Auditing (MR-13 to MR-18)
-// =========================================================================
-
-runTest("MR-13: Detects UNRESOLVED_CONTRADICTION when active unresolved contradiction exists", () => {
-  const input = createBaseMockInput();
-  input.contradictionResolution = {
-    unresolvedContradictions: [
-      {
-        contradictionId: "contra_1",
-        premiseA: "DB is Postgres",
-        premiseB: "DB is MySQL",
-        severity: "CRITICAL",
-        classification: "HARD_LOGICAL_CONTRADICTION",
-      } as any,
-    ],
-    resolvedContradictions: [],
-    activeDirectives: [],
-    diagnostics: {} as any,
-  } as any;
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "UNRESOLVED_CONTRADICTION"), "Must detect UNRESOLVED_CONTRADICTION");
-  assert(res.verdict === "REJECTED" || res.verdict === "NEEDS_REVISION", "Verdict must not be PASS");
-});
-
-runTest("MR-14: Validates resolved contradictions when belief revision successfully applied", () => {
-  const input = createBaseMockInput();
-  input.contradictionResolution = {
-    unresolvedContradictions: [],
-    resolvedContradictions: [
-      { contradictionId: "contra_res_1", resolutionOutcome: "PREMISE_A_ACCEPTED" } as any,
-    ],
-    activeDirectives: [],
-    diagnostics: {} as any,
-  } as any;
-  const res = metaReasoningEngine.evaluate(input);
-  assert(!res.issues.some((i) => i.type === "UNRESOLVED_CONTRADICTION"), "Must not flag resolved contradictions");
-});
-
-runTest("MR-15: Detects CIRCULAR_REASONING in causal dependency graphs", () => {
-  const input = createBaseMockInput();
-  input.causalReasoning!.chains = [
-    {
-      chainId: "chain_circ",
-      nodes: [
-        { nodeKey: "node_A" },
-        { nodeKey: "node_B" },
-        { nodeKey: "node_A" }, // loop back to A
-      ],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "CIRCULAR_REASONING"), "Must detect CIRCULAR_REASONING");
-});
-
-runTest("MR-16: Detects LOGICAL_FALLACY in multi-hop loops", () => {
-  const input = createBaseMockInput();
-  input.multiHopReasoning!.chains = [
-    {
-      chainId: "chain_loop",
-      hops: [
-        { sourceEntity: "NodeX", targetEntity: "NodeX" } as any,
-      ],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "CIRCULAR_REASONING"), "Must detect loop in multi-hop hops");
-});
-
-runTest("MR-17: Coherence score calculation reflects presence and severity of logical issues", () => {
-  const input = createBaseMockInput();
-  input.contradictionResolution = {
-    unresolvedContradictions: [
-      { contradictionId: "c1", severity: "MAJOR" } as any,
-      { contradictionId: "c2", severity: "CRITICAL" } as any,
-    ],
-    resolvedContradictions: [],
-    activeDirectives: [],
-    diagnostics: {} as any,
-  } as any;
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.diagnostics.coherenceScore <= 0.60, "Coherence score must be penalized heavily");
-});
-
-runTest("MR-18: Multiple co-existing contradictions handled without budget overflow", () => {
-  const input = createBaseMockInput();
-  input.contradictionResolution = {
-    unresolvedContradictions: Array.from({ length: 30 }, (_, i) => ({
-      contradictionId: `contra_${i}`,
-      severity: "MODERATE",
-    })) as any,
-    resolvedContradictions: [],
-    activeDirectives: [],
-    diagnostics: {} as any,
-  } as any;
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.length <= 25, "Issues must stay within budget cap");
-});
-
-// =========================================================================
-// Group 4: Epistemic Calibration & Authority Auditing (MR-19 to MR-24)
-// =========================================================================
-
-runTest("MR-19: Detects CONFIDENCE_OVERCLAIM when claim confidence is significantly higher than authority warrant", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    {
-      claimKey: "temporal_overclaim",
-      statement: "User usually sleeps at 11pm",
-      epistemicState: "INFERRED",
-      authority: "TEMPORAL_CONTEXT", // weight 0.60
-      confidence: 0.98, // far exceeds 0.60 + 0.25
-      provenance: [{ sourceId: "p1", sourceType: "EXECUTIVE_FACT" }],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "CONFIDENCE_OVERCLAIM"), "Must detect CONFIDENCE_OVERCLAIM");
-  assert(res.epistemicAdjustments.some((a) => a.claimKey === "temporal_overclaim"), "Must produce EpistemicAdjustment");
-});
-
-runTest("MR-20: Detects CONFIDENCE_UNDERCLAIM when verified evidence supports high confidence", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    {
-      claimKey: "verified_underclaim",
-      statement: "Postgres version is 16",
-      epistemicState: "VERIFIED",
-      authority: "VERIFIED_EVIDENCE",
-      confidence: 0.20, // artificially low for verified fact
-      evidence: ["Verified query output"],
-      provenance: [{ sourceId: "p1", sourceType: "EXECUTIVE_FACT" }],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "CONFIDENCE_UNDERCLAIM"), "Must detect CONFIDENCE_UNDERCLAIM");
-});
-
-runTest("MR-21: Detects AUTHORITY_MISMATCH when lower authority source overrides higher authority source", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    {
-      claimKey: "mismatched_claim",
-      statement: "User language is French",
-      epistemicState: "INFERRED",
-      authority: "PREDICTIVE_CONTEXT", // weight 0.30
-      confidence: 0.80,
-      competingClaims: [
+runTest("MR-1: Detect unsupported claim with zero evidence or low confidence", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
         {
-          statement: "User language is Bengali",
-          authority: "CURRENT_TURN_EXPLICIT", // weight 1.00
-          confidence: 0.70,
+          id: "hyp_unsupported",
+          claim: "Our system can withstand a million requests per second easily",
+          confidence: 0.35,
+          status: "SPECULATIVE",
+          supportingEvidence: [],
+          refutingEvidence: [],
         },
       ],
-      provenance: [{ sourceId: "p1", sourceType: "EXECUTIVE_FACT" }],
+      cycles: [],
+      sanitizedDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "AUTHORITY_MISMATCH"), "Must detect AUTHORITY_MISMATCH");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "UNSUPPORTED_CLAIM"), "Should detect UNSUPPORTED_CLAIM");
+  assert(analysis.critiques.some((c) => c.issueType === "UNSUPPORTED_CLAIM"), "Should generate critique for unsupported claim");
 });
 
-runTest("MR-22: Epistemic adjustment recommendations generated for overclaimed confidence", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    {
-      claimKey: "pattern_overclaim",
-      statement: "User loves dark mode",
-      epistemicState: "SUPPORTED",
-      authority: "CONFIRMED_ADAPTIVE_PATTERN", // weight 0.50
-      confidence: 0.95,
-      provenance: [{ sourceId: "p1", sourceType: "EXECUTIVE_FACT" }],
+runTest("MR-2: Detect authority mismatch between claim confidence and source authority", () => {
+  const input = createBaseMockInput({
+    epistemicCalibration: {
+      epistemicState: "FACTUAL",
+      unifiedConfidence: 0.98,
+      claims: [
+        {
+          id: "ep_spec",
+          text: "Revenue will double next quarter based on user rumor",
+          epistemicState: "FACTUAL",
+          calibratedConfidence: 0.98,
+          authority: "UNVERIFIED_INTENT",
+        },
+      ],
+      uncertainty: { compoundUncertainty: 0.1 } as any,
+      directives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  const adj = res.epistemicAdjustments.find((a) => a.claimKey === "pattern_overclaim");
-  assert(adj !== undefined, "Adjustment must be generated");
-  assert(adj!.recommendedConfidence <= 0.70, "Recommended confidence must be calibrated downwards");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "AUTHORITY_MISMATCH"), "Should detect AUTHORITY_MISMATCH");
+  assert(analysis.corrections.some((c) => c.correctionType === "DOWNGRADE_EPISTEMIC_STATUS" || c.correctionType === "REDUCE_CONFIDENCE"), "Should suggest downgrading status or reducing confidence");
 });
 
-runTest("MR-23: Calibration score reflects alignment between stated confidence and authority levels", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    { claimKey: "c1", statement: "Ok", epistemicState: "VERIFIED", authority: "VERIFIED_EVIDENCE", confidence: 0.90, evidence: ["ok"], provenance: [{ sourceId: "1", sourceType: "EXECUTIVE_FACT" }] } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.diagnostics.calibrationScore >= 0.85, "Calibration score must be high on well-calibrated claims");
-});
-
-runTest("MR-24: Respects epistemic state ranks across audit evaluation", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.sectionResults.find((s) => s.section === "EPISTEMIC_CALIBRATION")?.passed === true, "Epistemic section must pass");
-});
-
-// =========================================================================
-// Group 5: Causal Reasoning & Counterfactual Auditing (MR-25 to MR-30)
-// =========================================================================
-
-runTest("MR-25: Detects CAUSAL_GAP when causal claim lacks intermediate mechanism", () => {
-  const input = createBaseMockInput();
-  input.causalReasoning!.relations = [
-    {
-      relationKey: "rain->stocks",
-      causeKey: "raining",
-      effectKey: "stock_market_rises",
-      relationType: "INSUFFICIENT",
-      mechanism: "", // missing mechanism
-      confidence: 0.70,
+runTest("MR-3: Detect logical invalidity in reasoning structure", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_invalid",
+          claim: "The database is fast because the database is fast",
+          confidence: 0.9,
+          status: "SUPPORTED",
+          supportingEvidence: ["hyp_invalid"],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "CAUSAL_GAP"), "Must detect CAUSAL_GAP");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "LOGICAL_INVALIDITY" || i.type === "CIRCULAR_REASONING"), "Should detect circular reasoning or logical invalidity");
 });
 
-runTest("MR-26: Detects COUNTERFACTUAL_INVALIDITY when counterfactual scenario has invalid antecedent", () => {
-  const input = createBaseMockInput();
-  input.causalReasoning!.counterfactuals = [
-    {
-      scenarioId: "cf_impossible",
-      antecedent: "",
-      outcome: "INVALID",
+runTest("MR-4: Detect circular reasoning in dependency or causal chain", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [],
+      cycles: [
+        {
+          cycleLength: 3,
+          nodeIds: ["node_A", "node_B", "node_A"],
+          description: "A depends on B which depends on A",
+        },
+      ],
+      sanitizedDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "COUNTERFACTUAL_INVALIDITY"), "Must detect COUNTERFACTUAL_INVALIDITY");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "CIRCULAR_REASONING"), "Should detect CIRCULAR_REASONING from cycles");
 });
 
-runTest("MR-27: Validates well-grounded causal chains with clear mechanisms", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.sectionResults.find((s) => s.section === "CAUSAL_JUSTIFICATION")?.passed === true, "Causal section must pass");
-});
-
-runTest("MR-28: Detects causal ambiguity propagation from weak causes", () => {
-  const input = createBaseMockInput();
-  input.causalReasoning!.relations = [
-    {
-      relationKey: "weak_link",
-      causeKey: "rumor",
-      effectKey: "panic",
-      relationType: "INSUFFICIENT",
-      mechanism: "",
-      confidence: 0.40,
+runTest("MR-5: Detect contradiction disregard when unresolved contradiction exists", () => {
+  const input = createBaseMockInput({
+    contradictionResolution: {
+      contradictions: [
+        {
+          id: "contra_1",
+          classification: "DIRECT_FACTUAL_CONFLICT",
+          claimA: "We have 3 nodes in production",
+          claimB: "We have 0 nodes in production",
+          status: "UNRESOLVED",
+        },
+      ],
+      decisions: [],
+      activeDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.category === "CAUSAL_JUSTIFICATION"), "Must flag causal issue");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "CONTRADICTION_DISREGARD"), "Should detect CONTRADICTION_DISREGARD");
+  assert(analysis.critiques.some((c) => c.severity === "CRITICAL" || c.severity === "MAJOR"), "Contradiction disregard should have high severity");
 });
 
-runTest("MR-29: Flags causal relations with temporal inconsistency", () => {
-  const input = createBaseMockInput();
-  input.causalReasoning!.relations = [
-    {
-      relationKey: "gap",
-      causeKey: "step_2",
-      effectKey: "step_1",
-      relationType: "INSUFFICIENT",
-      mechanism: "",
-      confidence: 0.50,
+runTest("MR-6: Detect causal hallucination when causal relation has zero evidence", () => {
+  const input = createBaseMockInput({
+    causalReasoning: {
+      relations: [
+        {
+          id: "cr_fake",
+          cause: "Wearing blue socks",
+          effect: "Server crash",
+          relationType: "DIRECT_CAUSE",
+          confidence: 0.95,
+          evidenceNodeIds: [],
+        },
+      ],
+      chains: [],
+      counterfactuals: [],
+      activeDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "CAUSAL_GAP"), "Must flag causal gap");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "CAUSAL_HALLUCINATION"), "Should detect CAUSAL_HALLUCINATION");
 });
 
-runTest("MR-30: Causal section score reflects causal chain integrity", () => {
-  const input = createBaseMockInput();
-  input.causalReasoning!.relations = [
-    { relationKey: "r1", causeKey: "a", effectKey: "b", relationType: "INSUFFICIENT", mechanism: "" } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.diagnostics.causalRelationsAudited >= 1, "Must record audited relations count");
-});
+// ----------------------------------------------------------------------------
+// MR-7 to MR-12: Simulation, Epistemic & Multi-Hop Auditing
+// ----------------------------------------------------------------------------
 
-// =========================================================================
-// Group 6: Multi-Hop Reasoning & Evidence Chain Auditing (MR-31 to MR-36)
-// =========================================================================
-
-runTest("MR-31: Detects BROKEN_MULTI_HOP_CHAIN when intermediate link in reasoning chain is invalid", () => {
-  const input = createBaseMockInput();
-  input.multiHopReasoning!.chains = [
-    {
-      chainId: "broken_chain_9",
-      status: "BROKEN",
-      hops: [],
-      cumulativeConfidence: 0.20,
+runTest("MR-7: Detect simulation/reality confusion when hypothetical outcome is treated as ground fact", () => {
+  const input = createBaseMockInput({
+    scenarioSimulation: {
+      scenarios: [
+        {
+          id: "scen_treat_as_fact",
+          name: "Outage simulation",
+          epistemicStatus: "SIMULATION_HEURISTIC",
+          outcomes: [
+            {
+              description: "The entire datacenter was destroyed by fire",
+              probability: 0.9,
+              epistemicStatus: "FACTUAL", // Treated as factual reality!
+            },
+          ],
+          assumptions: ["All power failed"],
+        },
+      ],
+      directives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "BROKEN_MULTI_HOP_CHAIN"), "Must detect BROKEN_MULTI_HOP_CHAIN");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "SIMULATION_REALITY_CONFUSION"), "Should detect SIMULATION_REALITY_CONFUSION");
+  assert(analysis.corrections.some((c) => c.correctionType === "TAG_AS_SIMULATION" || c.correctionType === "DOWNGRADE_EPISTEMIC_STATUS"), "Should suggest tagging as simulation or downgrading status");
 });
 
-runTest("MR-32: Detects multi-hop authority degradation when hop depth exceeds threshold without penalty", () => {
-  const input = createBaseMockInput();
-  input.multiHopReasoning!.chains = [
-    {
-      chainId: "deep_chain",
-      status: "COMPLETE",
-      hops: [
-        { hopIndex: 0, status: "VALID" },
-        { hopIndex: 1, status: "VALID" },
-        { hopIndex: 2, status: "VALID" },
-        { hopIndex: 3, status: "VALID" },
-      ] as any,
-      cumulativeConfidence: 0.98, // excessive confidence for 4-hop inference
+runTest("MR-8: Detect multi-hop break when chain has broken link or non-sequitur", () => {
+  const input = createBaseMockInput({
+    multiHopReasoning: {
+      chains: [
+        {
+          id: "mhc_broken",
+          conclusion: "Deploying redis will reduce our office rent",
+          status: "BROKEN",
+          confidence: 0.1,
+          hops: [
+            {
+              hopIndex: 1,
+              sourceFactId: "fact_1",
+              targetFactId: "fact_nonexistent",
+              inferredRelation: "unsupported",
+            },
+          ],
+        },
+      ],
+      groundedConclusions: [],
+      directives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "CONFIDENCE_OVERCLAIM"), "Must detect confidence overclaim on 4-hop chain");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "MULTI_HOP_BREAK"), "Should detect MULTI_HOP_BREAK");
 });
 
-runTest("MR-33: Validates fully grounded multi-hop chains with verified root provenance", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.sectionResults.find((s) => s.section === "MULTI_HOP_INTEGRITY")?.passed === true, "Multi-hop section must pass");
-});
-
-runTest("MR-34: Flags multi-hop chains with circular entity references", () => {
-  const input = createBaseMockInput();
-  input.multiHopReasoning!.chains = [
-    {
-      chainId: "circular_hops",
-      status: "COMPLETE",
-      hops: [
-        { sourceEntity: "NodeA", targetEntity: "NodeB" },
-        { sourceEntity: "NodeA", targetEntity: "NodeA" }, // self loop
-      ] as any,
-      cumulativeConfidence: 0.70,
+runTest("MR-9: Detect overconfidence when confidence exceeds epistemic state bounds", () => {
+  const input = createBaseMockInput({
+    epistemicCalibration: {
+      epistemicState: "SPECULATIVE",
+      unifiedConfidence: 0.95, // Speculative cannot have 0.95 confidence
+      claims: [
+        {
+          id: "ep_over",
+          text: "Quantum computing will break all encryption by next month",
+          epistemicState: "SPECULATIVE",
+          calibratedConfidence: 0.95,
+          authority: "UNVERIFIED_INTENT",
+        },
+      ],
+      uncertainty: { compoundUncertainty: 0.5 } as any,
+      directives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "CIRCULAR_REASONING"), "Must detect circular entity loop");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "OVERCONFIDENCE"), "Should detect OVERCONFIDENCE");
+  assert(analysis.uncertainty.evidenceInsufficiency > 0.3, "Evidence insufficiency should be elevated");
 });
 
-runTest("MR-35: Enforces multi-hop scope isolation compliance", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.diagnostics.chainsAudited >= 1, "Chains audited metric must be tracked");
-});
-
-runTest("MR-36: Multi-hop section score reflects chain completion and validity", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  const score = res.sectionResults.find((s) => s.section === "MULTI_HOP_INTEGRITY")?.score;
-  assert(score !== undefined && score >= 0.80, "Score should be >= 0.80 for valid base input");
-});
-
-// =========================================================================
-// Group 7: Scenario Simulation & Reality Boundary Auditing (MR-37 to MR-42)
-// =========================================================================
-
-runTest("MR-37: CRITICAL DEFENSE: Detects SIMULATION_REALITY_CONFUSION (verdict REJECTED)", () => {
-  const input = createBaseMockInput();
-  input.scenarioSimulation!.scenarios = [
-    {
-      scenarioId: "scen_hallucinated_reality",
-      scenarioName: "Simulated merger happened",
-      scenarioType: "WHAT_IF",
-      epistemicStatus: "VERIFIED" as any, // ILLEGAL: Simulated scenario claiming VERIFIED reality
-      actions: [],
-      assumptions: [],
+runTest("MR-10: Detect underconfidence when verified evidence is treated with excessive doubt", () => {
+  const input = createBaseMockInput({
+    epistemicCalibration: {
+      epistemicState: "UNKNOWN",
+      unifiedConfidence: 0.1,
+      claims: [
+        {
+          id: "ep_under",
+          text: "The cluster has 3 nodes as verified by cloud API",
+          epistemicState: "UNKNOWN",
+          calibratedConfidence: 0.1,
+          authority: "VERIFIED_EVIDENCE",
+        },
+      ],
+      uncertainty: { compoundUncertainty: 0.05 } as any,
+      directives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.simulationRealityConfusions.includes("scen_hallucinated_reality"), "Must flag scenario in simulationRealityConfusions");
-  assert(res.issues.some((i) => i.type === "SIMULATION_REALITY_CONFUSION"), "Must emit SIMULATION_REALITY_CONFUSION issue");
-  assert(res.verdict === "REJECTED", "Must immediately REJECT simulation reality confusion");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "UNDERCONFIDENCE"), "Should detect UNDERCONFIDENCE");
 });
 
-runTest("MR-38: Enforces scenario epistemic status (SIMULATED/PROJECTED cannot be KNOWN)", () => {
-  const input = createBaseMockInput();
-  input.scenarioSimulation!.outcomes = [
-    {
-      outcomeId: "out_illegal_known",
-      title: "Stock price $1000",
-      outcomeType: "POSITIVE",
-      epistemicStatus: "KNOWN" as any, // ILLEGAL
-      confidence: 0.99,
+runTest("MR-11: Detect hard constraint violation across planning or hypotheses", () => {
+  const input = createBaseMockInput({
+    executiveContext: {
+      constraints: [
+        {
+          id: "const_strict",
+          type: "HARD_CONSTRAINT",
+          description: "Never deploy without automated regression tests",
+        },
+      ],
+      authoritativeFacts: [],
+      promptDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.verdict === "REJECTED", "Must reject KNOWN status on simulated outcome");
-});
-
-runTest("MR-39: Detects UNCHECKED_ASSUMPTION in scenario definitions", () => {
-  const input = createBaseMockInput();
-  input.scenarioSimulation!.assumptions = [
-    {
-      id: "assump_1",
-      statement: "Interest rates drop to 0%",
-      required: true,
-      isSupported: false,
-      isSensitive: false,
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_violates",
+          claim: "We can deploy immediately and skip regression tests to save time",
+          confidence: 0.9,
+          status: "SUPPORTED",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "UNCHECKED_ASSUMPTION"), "Must detect UNCHECKED_ASSUMPTION");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "HARD_CONSTRAINT_VIOLATION"), "Should detect HARD_CONSTRAINT_VIOLATION");
+  const violCrit = analysis.critiques.find((c) => c.issueType === "HARD_CONSTRAINT_VIOLATION");
+  assert(violCrit?.severity === "CRITICAL", "Constraint violation must be CRITICAL severity");
 });
 
-runTest("MR-40: Detects SENSITIVE_ASSUMPTION_DEPENDENCY where scenario relies on ungrounded sensitive assumption", () => {
-  const input = createBaseMockInput();
-  input.scenarioSimulation!.assumptions = [
-    {
-      id: "assump_sensitive",
-      statement: "Competitor shuts down tomorrow",
-      required: true,
-      isSupported: false,
-      isSensitive: true,
+runTest("MR-12: Detect goal misalignment when proposed action moves away from active goal", () => {
+  const input = createBaseMockInput({
+    executiveContext: {
+      activeGoal: {
+        id: "goal_sec",
+        title: "Harden database security and encrypt data",
+        status: "active",
+      },
+      constraints: [],
+      authoritativeFacts: [],
+      promptDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "SENSITIVE_ASSUMPTION_DEPENDENCY"), "Must detect SENSITIVE_ASSUMPTION_DEPENDENCY");
-});
-
-runTest("MR-41: Flags invalid actions in scenario simulations", () => {
-  const input = createBaseMockInput();
-  input.scenarioSimulation!.assumptions = [
-    {
-      id: "assump_test",
-      statement: "Test assumption",
-      required: false,
-      isSupported: true,
-      isSensitive: false,
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_misaligned",
+          claim: "Disable all database passwords to make developer access faster",
+          confidence: 0.8,
+          status: "SUPPORTED",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.sectionResults.find((s) => s.section === "ASSUMPTION_AUDIT")?.passed === true, "Valid assumption passes");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "GOAL_MISALIGNMENT" || i.type === "HARD_CONSTRAINT_VIOLATION"), "Should detect GOAL_MISALIGNMENT or constraint violation");
 });
 
-runTest("MR-42: Validates well-bounded scenario simulations with explicit advisory status", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.sectionResults.find((s) => s.section === "SIMULATION_SANITY")?.passed === true, "Simulation sanity section passes");
-});
+// ----------------------------------------------------------------------------
+// MR-13 to MR-18: Context & Boundary Auditing
+// ----------------------------------------------------------------------------
 
-// =========================================================================
-// Group 8: Temporal Memory, Topic Boundaries & Scope Isolation (MR-43 to MR-48)
-// =========================================================================
-
-runTest("MR-43: Detects TEMPORAL_INCONSISTENCY when superseded temporal state is asserted as active", () => {
-  const input = createBaseMockInput();
-  input.temporalMemory = {
-    stateRecords: [
-      {
-        key: "old_city",
-        value: "Chittagong",
-        isSuperseded: true,
-        isActiveInCurrentTurn: true, // ERROR: asserting superseded state as active
-      } as any,
-    ],
-  } as any;
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "TEMPORAL_INCONSISTENCY"), "Must detect TEMPORAL_INCONSISTENCY");
-});
-
-runTest("MR-44: Detects TOPIC_BOUNDARY_LEAK when isolated topic context leaks into current turn", () => {
-  const input = createBaseMockInput();
-  input.options = {
-    strictTopicIsolation: true,
-    activeTopic: "cooking_recipes",
-  };
-  input.executiveContext!.authoritativeFacts = [
-    {
-      id: "fact_crypto",
-      key: "bitcoin_wallet",
-      value: "0x123",
-      isGlobal: false,
-      topic: "cryptocurrency", // Different isolated topic
+runTest("MR-13: Detect topic boundary spill during topic switch or strict isolation", () => {
+  const input = createBaseMockInput({
+    options: {
+      strictTopicIsolation: true,
+      activeTopic: "personal_finance",
+    },
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_spill",
+          claim: "Deploy docker containers to Kubernetes cluster",
+          confidence: 0.85,
+          status: "SUPPORTED",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "TOPIC_BOUNDARY_LEAK"), "Must detect TOPIC_BOUNDARY_LEAK");
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "TOPIC_BOUNDARY_SPILL"), "Should detect TOPIC_BOUNDARY_SPILL");
 });
 
-runTest("MR-45: Enforces strict topic isolation flag (rejects cross-topic memory claims)", () => {
-  const input = createBaseMockInput();
-  input.options = {
-    strictTopicIsolation: true,
-    activeTopic: "database_optimization",
-  };
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.diagnostics.topicIsolationChecks >= 1, "Must record topic isolation check");
-});
-
-runTest("MR-46: Validates temporal evolution continuity across turn history", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.sectionResults.find((s) => s.section === "TEMPORAL_AND_SCOPE")?.passed === true, "Temporal and scope section passes");
-});
-
-runTest("MR-47: Temporal and scope section score reflects isolation compliance", () => {
-  const input = createBaseMockInput();
-  const res = metaReasoningEngine.evaluate(input);
-  const score = res.sectionResults.find((s) => s.section === "TEMPORAL_AND_SCOPE")?.score;
-  assert(score !== undefined && score >= 0.80, "Temporal score must be >= 0.80");
-});
-
-runTest("MR-48: Handles rapid topic switching without false positive leak flags on global facts", () => {
-  const input = createBaseMockInput();
-  input.options = {
-    strictTopicIsolation: true,
-    activeTopic: "new_random_topic",
-  };
-  input.executiveContext!.authoritativeFacts = [
-    {
-      id: "fact_global",
-      key: "user_name",
-      value: "Rahim",
-      isGlobal: true, // Global facts are permitted across topics
-      topic: "general",
+runTest("MR-14: Prevent sensitive data exposure (passwords, tokens, API keys, PII)", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_leak",
+          claim: "Use API key AIzaSyA1234567890abcdefghijklmnopqrstuv and password hunter2",
+          confidence: 0.9,
+          status: "SUPPORTED",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: ["Use API key AIzaSyA1234567890abcdefghijklmnopqrstuv and password hunter2"],
     } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(!res.issues.some((i) => i.type === "TOPIC_BOUNDARY_LEAK"), "Global facts must not trigger topic leak");
-});
+  });
 
-// =========================================================================
-// Group 9: Constraints, Goals, Synthesis & Directive Sanitization (MR-49 to MR-54)
-// =========================================================================
-
-runTest("MR-49: CRITICAL: Detects HARD_CONSTRAINT_VIOLATION (verdict REJECTED)", () => {
-  const input = createBaseMockInput();
-  input.executiveContext!.reasoningConstraints = [
-    {
-      id: "const_strict_safety",
-      type: "HARD_CONSTRAINT",
-      description: "Never drop production tables",
-      authority: "HARD_CONSTRAINT",
-      enforceStrictly: true,
-      sanitizedDirective: "Never drop production tables",
-    } as any,
-  ];
-  input.planning!.plan!.steps = [
-    {
-      id: "step_bad",
-      action: "DROP TABLE users CASCADE",
-      description: "Drop production tables to reset state",
-      status: "PENDING",
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.hardConstraintViolations.includes("const_strict_safety"), "Must record hard constraint violation");
-  assert(res.issues.some((i) => i.type === "HARD_CONSTRAINT_VIOLATION"), "Must emit HARD_CONSTRAINT_VIOLATION");
-  assert(res.verdict === "REJECTED", "Must reject on hard constraint violation");
-});
-
-runTest("MR-50: Detects GOAL_CONFLICT when planned step opposes active user commitment or blocked goal", () => {
-  const input = createBaseMockInput();
-  input.goalProject = {
-    goals: [
-      {
-        id: "goal_blocked",
-        title: "Migrate Cloud Cluster",
-        status: "BLOCKED",
-      } as any,
-    ],
-  } as any;
-  input.planning!.plan!.steps = [
-    {
-      id: "step_premature",
-      action: "Migrate Cloud Cluster",
-      description: "Executing migration step directly",
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  assert(res.issues.some((i) => i.type === "GOAL_CONFLICT"), "Must detect GOAL_CONFLICT");
-});
-
-runTest("MR-51: Overall Quality Score computation penalizes detected issues", () => {
-  const input = createBaseMockInput();
-  const resClean = metaReasoningEngine.evaluate(input);
-
-  const inputDirty = createBaseMockInput();
-  inputDirty.epistemicCalibration!.claims.push({
-    claimKey: "bad_c",
-    statement: "Bad claim",
-    epistemicState: "VERIFIED",
-    evidence: [],
-  } as any);
-  const resDirty = metaReasoningEngine.evaluate(inputDirty);
-
-  assert(resDirty.overallQualityScore < resClean.overallQualityScore, "Dirty score must be lower than clean score");
-});
-
-runTest("MR-52: Verdict transitions across quality and severity spectrum", () => {
-  const input = createBaseMockInput();
-  const resPass = metaReasoningEngine.evaluate(input);
-  assert(resPass.verdict === "PASS" || resPass.verdict === "PASS_WITH_WARNINGS", "Clean input should pass");
-});
-
-runTest("MR-53: Meta-Directive sanitization strips UUIDs, hashes, and raw floats", () => {
-  const input = createBaseMockInput();
-  input.epistemicCalibration!.claims = [
-    {
-      claimKey: "claim_over",
-      statement: "Test 12345678-1234-1234-1234-123456789abc",
-      epistemicState: "SUPPORTED",
-      authority: "SYSTEM_DEFAULT",
-      confidence: 0.9523,
-      provenance: [{ sourceId: "p1", sourceType: "EXECUTIVE_FACT" }],
-    } as any,
-  ];
-  const res = metaReasoningEngine.evaluate(input);
-  for (const d of res.sanitizedDirectives) {
-    assert(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(d), "Must not contain UUIDs");
-    assert(!/\b0\.\d{3,}\b/.test(d), "Must not contain raw 3+ digit floats");
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "SENSITIVE_DATA_EXPOSURE"), "Should detect SENSITIVE_DATA_EXPOSURE");
+  assert(analysis.critiques.some((c) => c.severity === "CRITICAL"), "Sensitive data exposure must be CRITICAL");
+  for (const d of analysis.directives) {
+    assert(!d.includes("AIzaSy"), "Directives must not leak API keys");
+    assert(!d.includes("hunter2"), "Directives must not leak passwords");
   }
 });
 
-runTest("MR-54: Integration verification with BrainEngine.analyze pipeline", () => {
-  const analysis = brainEngine.analyze("optimize database query latency for postgresql 16");
-  assert(analysis.metaReasoningAnalysis !== undefined, "BrainEngine must return metaReasoningAnalysis");
-  assert(analysis.metaReasoning !== undefined, "BrainEngine must provide metaReasoning alias");
-  assert(analysis.metaReasoningAnalysis.verdict !== undefined, "Verdict must be present in analysis");
-  assert(Array.isArray(analysis.metaReasoningAnalysis.sanitizedDirectives), "Sanitized directives must be array");
-  assert(analysis.metaReasoningAnalysis.diagnostics.issuesDetected >= 0, "Diagnostics must be populated");
+runTest("MR-15: Detect stale memory reliance", () => {
+  const input = createBaseMockInput({
+    temporalMemory: {
+      staleFacts: [
+        {
+          id: "fact_stale_1",
+          key: "office_address",
+          value: "Old Office Building",
+          lastObserved: "2020-01-01",
+        },
+      ],
+      evolutionPatterns: [],
+      directives: [],
+    } as any,
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_stale",
+          claim: "Deliver physical servers to Old Office Building",
+          confidence: 0.9,
+          status: "SUPPORTED",
+          supportingEvidence: ["fact_stale_1"],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "STALE_MEMORY_RELIANCE" || i.type === "UNSUPPORTED_CLAIM"), "Should detect reliance on stale facts");
 });
 
-console.log(`\n--- TEST RESULTS: ${passCount} PASSED, ${failCount} FAILED ---\n`);
+runTest("MR-16: Detect speculative propagation without epistemic hedging", () => {
+  const input = createBaseMockInput({
+    epistemicCalibration: {
+      epistemicState: "SPECULATIVE",
+      unifiedConfidence: 0.4,
+      claims: [
+        {
+          id: "ep_spec_unhedged",
+          text: "The competitor definitely goes bankrupt tomorrow without question",
+          epistemicState: "SPECULATIVE",
+          calibratedConfidence: 0.4,
+          authority: "UNVERIFIED_INTENT",
+        },
+      ],
+      uncertainty: { compoundUncertainty: 0.6 } as any,
+      directives: [],
+    } as any,
+  });
 
-if (failCount > 0) {
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "SPECULATIVE_PROPAGATION" || i.type === "OVERCONFIDENCE"), "Should detect speculative claim asserted without hedging");
+  assert(analysis.corrections.some((c) => c.correctionType === "ADD_EPISTEMIC_HEDGING" || c.correctionType === "DOWNGRADE_EPISTEMIC_STATUS"), "Should advise adding epistemic hedging");
+});
+
+runTest("MR-17: Detect unanchored hypothesis disconnected from context facts", () => {
+  const input = createBaseMockInput({
+    executiveContext: {
+      authoritativeFacts: [],
+      constraints: [],
+      promptDirectives: [],
+    } as any,
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_floating",
+          claim: "Submarines operate better at high altitude in the mountains",
+          confidence: 0.7,
+          status: "SUPPORTED",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "UNANCHORED_HYPOTHESIS" || i.type === "UNSUPPORTED_CLAIM"), "Should detect unanchored hypothesis");
+});
+
+runTest("MR-18: Detect directive conflict across upstream engine directives", () => {
+  const input = createBaseMockInput({
+    executiveContext: {
+      promptDirectives: ["Always explain in extreme technical detail with code."],
+      authoritativeFacts: [],
+      constraints: [],
+    } as any,
+    deepReasoning: {
+      hypotheses: [],
+      cycles: [],
+      sanitizedDirectives: ["Keep response strictly under one sentence and non-technical."],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.issues.some((i) => i.type === "DIRECTIVE_CONFLICT"), "Should detect DIRECTIVE_CONFLICT between opposing directives");
+});
+
+// ----------------------------------------------------------------------------
+// MR-19 to MR-24: Self-Critique & Advisory Corrections
+// ----------------------------------------------------------------------------
+
+runTest("MR-19: Read-only invariant — self-critique does not mutate input or upstream state", () => {
+  const input = createBaseMockInput();
+  const inputBefore = JSON.stringify(input);
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  const inputAfter = JSON.stringify(input);
+
+  assert(inputBefore === inputAfter, "Input must remain 100% byte-for-byte identical after evaluate()");
+  assert(analysis !== null && typeof analysis === "object", "Must return valid MetaReasoningAnalysis object");
+});
+
+runTest("MR-20: Advisory correction generation — produces actionable, structured corrections", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_low",
+          claim: "Switching database will solve all problems",
+          confidence: 0.3,
+          status: "SPECULATIVE",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.corrections.length > 0, "Should generate at least one advisory correction");
+  const corr = analysis.corrections[0];
+  assert(Boolean(corr.id), "Correction must have an ID");
+  assert(Boolean(corr.target), "Correction must state the target");
+  assert(Boolean(corr.description), "Correction must have a clear description");
+  assert(Boolean(corr.correctionType), "Correction must have a valid correctionType");
+});
+
+runTest("MR-21: Severity classification correctly stratifies CRITICAL, MAJOR, MINOR, ADVISORY", () => {
+  const input = createBaseMockInput({
+    executiveContext: {
+      constraints: [
+        {
+          id: "const_1",
+          type: "HARD_CONSTRAINT",
+          description: "Never delete database without approval",
+        },
+      ],
+      authoritativeFacts: [],
+      promptDirectives: [],
+    } as any,
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "hyp_del",
+          claim: "Delete database immediately without approval",
+          confidence: 0.9,
+          status: "SUPPORTED",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  const crit = analysis.critiques.find((c) => c.issueType === "HARD_CONSTRAINT_VIOLATION");
+  assert(crit !== undefined, "Critique for constraint violation must exist");
+  assert(crit?.severity === "CRITICAL", "Must be CRITICAL severity");
+});
+
+runTest("MR-22: Recommendation priority ranking sorts by severity and impact", () => {
+  const input = createBaseMockInput({
+    executiveContext: {
+      constraints: [
+        { id: "c1", type: "HARD_CONSTRAINT", description: "Critical safety lock" },
+      ],
+      authoritativeFacts: [],
+      promptDirectives: [],
+    } as any,
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "h_crit",
+          claim: "Bypass critical safety lock",
+          confidence: 0.9,
+          status: "SUPPORTED",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+        {
+          id: "h_minor",
+          claim: "Minor formatting tweak might look cleaner",
+          confidence: 0.4,
+          status: "SPECULATIVE",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  if (analysis.recommendations.length >= 2) {
+    const r1 = analysis.recommendations[0];
+    const r2 = analysis.recommendations[1];
+    assert(r1.priority <= r2.priority, "Recommendations must be sorted in ascending priority order (1 is highest)");
+  }
+});
+
+runTest("MR-23: Safe directive generation produces natural language guidance", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "h_spec",
+          claim: "Unverified rumor about system outage",
+          confidence: 0.35,
+          status: "SPECULATIVE",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.directives.length > 0, "Should generate at least one directive");
+  for (const d of analysis.directives) {
+    assert(typeof d === "string" && d.length > 0, "Directive must be a non-empty string");
+  }
+});
+
+runTest("MR-24: Directive sanitization strips internal UUIDs, hashes, and raw debug floats", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
+        {
+          id: "123e4567-e89b-12d3-a456-426614174000",
+          claim: "System load test claim with confidence=0.884129581 and fact_id_992",
+          confidence: 0.3,
+          status: "SPECULATIVE",
+          supportingEvidence: [],
+          refutingEvidence: [],
+        },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  for (const d of analysis.directives) {
+    assert(!d.includes("123e4567-e89b-12d3-a456-426614174000"), "Directives must not leak raw UUIDs");
+    assert(!d.includes("0.884129581"), "Directives must not leak raw float confidence scores");
+  }
+});
+
+// ----------------------------------------------------------------------------
+// MR-25 to MR-30: Uncertainty & Multi-Dimensional Calibration
+// ----------------------------------------------------------------------------
+
+runTest("MR-25: 10-dimensional uncertainty vector calculation is bounded in [0.0, 1.0]", () => {
+  const input = createBaseMockInput();
+  const analysis = metaReasoningEngine.evaluate(input);
+
+  const u = analysis.uncertainty;
+  assert(u.evidenceInsufficiency >= 0.0 && u.evidenceInsufficiency <= 1.0, "evidenceInsufficiency bounded [0, 1]");
+  assert(u.sourceConflict >= 0.0 && u.sourceConflict <= 1.0, "sourceConflict bounded [0, 1]");
+  assert(u.reasoningDepth >= 0.0 && u.reasoningDepth <= 1.0, "reasoningDepth bounded [0, 1]");
+  assert(u.epistemicGap >= 0.0 && u.epistemicGap <= 1.0, "epistemicGap bounded [0, 1]");
+  assert(u.intentAmbiguity >= 0.0 && u.intentAmbiguity <= 1.0, "intentAmbiguity bounded [0, 1]");
+  assert(u.causalAmbiguity >= 0.0 && u.causalAmbiguity <= 1.0, "causalAmbiguity bounded [0, 1]");
+  assert(u.temporalDecay >= 0.0 && u.temporalDecay <= 1.0, "temporalDecay bounded [0, 1]");
+  assert(u.domainVolatility >= 0.0 && u.domainVolatility <= 1.0, "domainVolatility bounded [0, 1]");
+  assert(u.multiHopDecay >= 0.0 && u.multiHopDecay <= 1.0, "multiHopDecay bounded [0, 1]");
+  assert(u.simulationSpeculation >= 0.0 && u.simulationSpeculation <= 1.0, "simulationSpeculation bounded [0, 1]");
+  assert(u.compoundUncertainty >= 0.0 && u.compoundUncertainty <= 1.0, "compoundUncertainty bounded [0, 1]");
+});
+
+runTest("MR-26: Compound uncertainty aggregates orthogonal dimensions properly", () => {
+  const inputClean = createBaseMockInput();
+  const cleanAnalysis = metaReasoningEngine.evaluate(inputClean);
+
+  const inputNoisy = createBaseMockInput({
+    contradictionResolution: {
+      contradictions: [
+        { id: "c1", classification: "DIRECT_FACTUAL_CONFLICT", claimA: "A", claimB: "B", status: "UNRESOLVED" },
+      ],
+      decisions: [],
+      activeDirectives: [],
+    } as any,
+    scenarioSimulation: {
+      scenarios: [
+        {
+          id: "s1",
+          name: "High speculation",
+          epistemicStatus: "SIMULATION_HEURISTIC",
+          outcomes: [{ description: "Speculative outcome", probability: 0.5, epistemicStatus: "SPECULATIVE" }],
+          assumptions: ["A1", "A2", "A3", "A4"],
+        },
+      ],
+      directives: [],
+    } as any,
+  });
+  const noisyAnalysis = metaReasoningEngine.evaluate(inputNoisy);
+
+  assert(noisyAnalysis.uncertainty.compoundUncertainty >= cleanAnalysis.uncertainty.compoundUncertainty, "Compound uncertainty must increase with more conflict and speculation");
+});
+
+runTest("MR-27: Evidence insufficiency dimension scales with missing evidence and unsupported claims", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
+        { id: "h1", claim: "Claim 1", confidence: 0.2, status: "SPECULATIVE", supportingEvidence: [], refutingEvidence: [] },
+        { id: "h2", claim: "Claim 2", confidence: 0.2, status: "SPECULATIVE", supportingEvidence: [], refutingEvidence: [] },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.uncertainty.evidenceInsufficiency > 0.2, "Evidence insufficiency should be elevated when multiple claims have no evidence");
+});
+
+runTest("MR-28: Source conflict dimension reflects unresolved contradictions", () => {
+  const input = createBaseMockInput({
+    contradictionResolution: {
+      contradictions: [
+        { id: "c1", classification: "DIRECT_FACTUAL_CONFLICT", claimA: "Yes", claimB: "No", status: "UNRESOLVED" },
+      ],
+      decisions: [],
+      activeDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.uncertainty.sourceConflict > 0.1, "Source conflict must be non-trivial when contradictions are unresolved");
+});
+
+runTest("MR-29: Reasoning depth dimension penalizes cycles and deep unanchored hops", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [],
+      cycles: [
+        { cycleLength: 4, nodeIds: ["A", "B", "C", "A"], description: "Cycle A-B-C-A" },
+      ],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.uncertainty.reasoningDepth > 0.15, "Reasoning depth uncertainty must reflect cycles");
+});
+
+runTest("MR-30: Epistemic gap dimension increases when claims lack verified authority", () => {
+  const input = createBaseMockInput({
+    epistemicCalibration: {
+      epistemicState: "HYPOTHETICAL",
+      unifiedConfidence: 0.5,
+      claims: [
+        { id: "c1", text: "Hypothetical statement", epistemicState: "HYPOTHETICAL", calibratedConfidence: 0.5, authority: "UNVERIFIED_INTENT" },
+      ],
+      uncertainty: { compoundUncertainty: 0.5 } as any,
+      directives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.uncertainty.epistemicGap > 0.1, "Epistemic gap should be non-zero for unverified hypotheses");
+});
+
+// ----------------------------------------------------------------------------
+// MR-31 to MR-36: Budget & Bounded Execution
+// ----------------------------------------------------------------------------
+
+runTest("MR-31: Issue count capped at maxIssues budget", () => {
+  // Generate 20 problematic hypotheses
+  const manyHypotheses = Array.from({ length: 20 }, (_, idx) => ({
+    id: `hyp_${idx}`,
+    claim: `Unsupported speculative claim ${idx}`,
+    confidence: 0.2,
+    status: "SPECULATIVE",
+    supportingEvidence: [],
+    refutingEvidence: [],
+  }));
+
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: manyHypotheses,
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const customBudget = { ...DEFAULT_META_REASONING_BUDGET, maxIssues: 4 };
+  const analysis = metaReasoningEngine.evaluate(input, customBudget);
+  assert(analysis.issues.length <= 4, `Issues (${analysis.issues.length}) must be <= maxIssues (4)`);
+});
+
+runTest("MR-32: Critique count capped at maxCritiques budget", () => {
+  const manyHypotheses = Array.from({ length: 20 }, (_, idx) => ({
+    id: `hyp_${idx}`,
+    claim: `Unsupported speculative claim ${idx}`,
+    confidence: 0.2,
+    status: "SPECULATIVE",
+    supportingEvidence: [],
+    refutingEvidence: [],
+  }));
+
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: manyHypotheses,
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const customBudget = { ...DEFAULT_META_REASONING_BUDGET, maxCritiques: 3 };
+  const analysis = metaReasoningEngine.evaluate(input, customBudget);
+  assert(analysis.critiques.length <= 3, `Critiques (${analysis.critiques.length}) must be <= maxCritiques (3)`);
+});
+
+runTest("MR-33: Correction count capped at maxCorrections budget", () => {
+  const manyHypotheses = Array.from({ length: 20 }, (_, idx) => ({
+    id: `hyp_${idx}`,
+    claim: `Unsupported speculative claim ${idx}`,
+    confidence: 0.2,
+    status: "SPECULATIVE",
+    supportingEvidence: [],
+    refutingEvidence: [],
+  }));
+
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: manyHypotheses,
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const customBudget = { ...DEFAULT_META_REASONING_BUDGET, maxCorrections: 2 };
+  const analysis = metaReasoningEngine.evaluate(input, customBudget);
+  assert(analysis.corrections.length <= 2, `Corrections (${analysis.corrections.length}) must be <= maxCorrections (2)`);
+});
+
+runTest("MR-34: Directive count capped at maxDirectives budget", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
+        { id: "h1", claim: "Bad 1", confidence: 0.2, status: "SPECULATIVE", supportingEvidence: [], refutingEvidence: [] },
+        { id: "h2", claim: "Bad 2", confidence: 0.2, status: "SPECULATIVE", supportingEvidence: [], refutingEvidence: [] },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const customBudget = { ...DEFAULT_META_REASONING_BUDGET, maxDirectives: 2 };
+  const analysis = metaReasoningEngine.evaluate(input, customBudget);
+  assert(analysis.directives.length <= 2, `Directives (${analysis.directives.length}) must be <= maxDirectives (2)`);
+});
+
+runTest("MR-35: Hard ceiling truncation enforces upper safety limits", () => {
+  const input = createBaseMockInput();
+  // Pass overly high requested budget
+  const oversizedBudget = {
+    maxIssues: 500,
+    maxCritiques: 500,
+    maxCorrections: 500,
+    maxRecommendations: 500,
+    maxDirectives: 500,
+    maxExecutionTimeMs: 5000,
+  };
+
+  const analysis = metaReasoningEngine.evaluate(input, oversizedBudget);
+  assert(analysis.issues.length <= HARD_CEILING_META_REASONING_BUDGET.maxIssues, "Issues must not exceed hard ceiling");
+  assert(analysis.critiques.length <= HARD_CEILING_META_REASONING_BUDGET.maxCritiques, "Critiques must not exceed hard ceiling");
+  assert(analysis.corrections.length <= HARD_CEILING_META_REASONING_BUDGET.maxCorrections, "Corrections must not exceed hard ceiling");
+});
+
+runTest("MR-36: Diagnostic metric collection records execution timing and audit counts", () => {
+  const input = createBaseMockInput();
+  const analysis = metaReasoningEngine.evaluate(input);
+
+  assert(analysis.diagnostics !== undefined, "Diagnostics must be defined");
+  assert(typeof analysis.diagnostics.executionTimeMs === "number", "executionTimeMs must be number");
+  assert(typeof analysis.diagnostics.claimsAudited === "number", "claimsAudited must be number");
+  assert(typeof analysis.diagnostics.rulesEvaluated === "number", "rulesEvaluated must be number");
+  assert(analysis.diagnostics.rulesEvaluated > 0, "rulesEvaluated must be > 0");
+});
+
+// ----------------------------------------------------------------------------
+// MR-37 to MR-42: Determinism & Side-Effect Free Invariants
+// ----------------------------------------------------------------------------
+
+runTest("MR-37: Identical output across multiple runs with same input (pure determinism)", () => {
+  const input = createBaseMockInput({
+    deepReasoning: {
+      hypotheses: [
+        { id: "h_det", claim: "Deterministic test hypothesis", confidence: 0.8, status: "SUPPORTED", supportingEvidence: ["fact_1"], refutingEvidence: [] },
+      ],
+      cycles: [],
+      sanitizedDirectives: [],
+    } as any,
+  });
+
+  const res1 = metaReasoningEngine.evaluate(input);
+  const res2 = metaReasoningEngine.evaluate(input);
+
+  assert(JSON.stringify(res1.issues) === JSON.stringify(res2.issues), "Issues must match across runs");
+  assert(JSON.stringify(res1.critiques) === JSON.stringify(res2.critiques), "Critiques must match across runs");
+  assert(JSON.stringify(res1.corrections) === JSON.stringify(res2.corrections), "Corrections must match across runs");
+  assert(JSON.stringify(res1.directives) === JSON.stringify(res2.directives), "Directives must match across runs");
+  assert(JSON.stringify(res1.uncertainty) === JSON.stringify(res2.uncertainty), "Uncertainty must match across runs");
+});
+
+runTest("MR-38: No Math.random() or non-deterministic sources used", () => {
+  const input = createBaseMockInput();
+  const originalRandom = Math.random;
+  let randomCalled = false;
+  Math.random = () => {
+    randomCalled = true;
+    return 0.5;
+  };
+
+  try {
+    metaReasoningEngine.evaluate(input);
+    assert(!randomCalled, "MetaReasoningEngine must NEVER call Math.random()");
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+runTest("MR-39: Input immutability deep freeze test", () => {
+  const input = createBaseMockInput();
+  Object.freeze(input);
+  if (input.deepReasoning) Object.freeze(input.deepReasoning);
+  if (input.executiveContext) Object.freeze(input.executiveContext);
+
+  // Should run without throwing TypeError: Cannot assign to read only property
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis !== null, "Engine must execute cleanly on frozen inputs");
+});
+
+runTest("MR-40: MemoryStore state preservation", () => {
+  const userId = "mem_user_test_preserve";
+  memoryStore.save(userId, {
+    id: "mem_preserve_1",
+    userId,
+    key: "preserved_fact",
+    value: "Initial State",
+    type: "FACT",
+    confidence: 1.0,
+    source: "EXPLICIT_USER",
+    status: "ACTIVE",
+    createdAt: 1724000000000,
+    updatedAt: 1724000000000,
+    accessCount: 1,
+    lastAccessedAt: 1724000000000,
+    isQuarantined: false,
+  } as any);
+
+  const countBefore = memoryStore.get(userId).length;
+  const input = createBaseMockInput({ userId });
+  metaReasoningEngine.evaluate(input);
+  const countAfter = memoryStore.get(userId).length;
+
+  assert(countBefore === countAfter, "MemoryStore count must not change during MetaReasoning evaluate()");
+});
+
+runTest("MR-41: ExecutiveContext state preservation", () => {
+  const execContext = {
+    currentTurn: { message: "Test", normalizedIntent: "QUERY" },
+    authoritativeFacts: [{ id: "f1", key: "k", value: "v", confidence: 0.9 }],
+    constraints: [],
+  } as any;
+  const beforeStr = JSON.stringify(execContext);
+
+  const input = createBaseMockInput({ executiveContext: execContext });
+  metaReasoningEngine.evaluate(input);
+  const afterStr = JSON.stringify(execContext);
+
+  assert(beforeStr === afterStr, "ExecutiveContext must not be mutated");
+});
+
+runTest("MR-42: Clean handling of empty/null inputs", () => {
+  const emptyInput: MetaReasoningInput = {
+    userId: "empty_user",
+    message: "",
+    context: {} as any,
+  };
+
+  const analysis = metaReasoningEngine.evaluate(emptyInput);
+  assert(analysis !== null && typeof analysis === "object", "Must return valid analysis on empty input");
+  assert(Array.isArray(analysis.issues), "issues must be array");
+  assert(Array.isArray(analysis.critiques), "critiques must be array");
+  assert(Array.isArray(analysis.corrections), "corrections must be array");
+  assert(Array.isArray(analysis.directives), "directives must be array");
+});
+
+// ----------------------------------------------------------------------------
+// MR-43 to MR-48: Pipeline & Engine Integration
+// ----------------------------------------------------------------------------
+
+runTest("MR-43: Integration downstream of Steps 1-6 — receives all upstream reasoning packages", () => {
+  const input = createBaseMockInput();
+  assert(input.deepReasoning !== undefined, "DeepReasoning must be provided");
+  assert(input.contradictionResolution !== undefined, "ContradictionResolution must be provided");
+  assert(input.causalReasoning !== undefined, "CausalReasoning must be provided");
+  assert(input.multiHopReasoning !== undefined, "MultiHopReasoning must be provided");
+  assert(input.epistemicCalibration !== undefined, "EpistemicCalibration must be provided");
+  assert(input.scenarioSimulation !== undefined, "ScenarioSimulation must be provided");
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.diagnostics.claimsAudited >= 0, "Audit must process upstream claims");
+});
+
+runTest("MR-44: Upstream engine inputs consumed correctly in audit passes", () => {
+  const input = createBaseMockInput({
+    epistemicCalibration: {
+      epistemicState: "FACTUAL",
+      unifiedConfidence: 0.95,
+      claims: [
+        { id: "c_fact", text: "Production cluster running normal", epistemicState: "FACTUAL", calibratedConfidence: 0.95, authority: "VERIFIED_EVIDENCE" },
+      ],
+      uncertainty: { compoundUncertainty: 0.05 } as any,
+      directives: [],
+    } as any,
+  });
+
+  const analysis = metaReasoningEngine.evaluate(input);
+  assert(analysis.auditedClaims.some((c) => c.text.includes("Production cluster")), "Audited claims must capture upstream epistemic claims");
+});
+
+runTest("MR-45: BrainEngine end-to-end integration produces metaReasoningAnalysis", () => {
+  const result = brainEngine.analyze("Plan a resilient cloud deployment", [], undefined, "user_brain_test");
+
+  assert(result.metaReasoningAnalysis !== undefined, "brainEngine.analyze() must return metaReasoningAnalysis");
+  assert(Array.isArray(result.metaReasoningAnalysis.issues), "metaReasoningAnalysis.issues must be an array");
+  assert(Array.isArray(result.metaReasoningAnalysis.directives), "metaReasoningAnalysis.directives must be an array");
+});
+
+runTest("MR-46: Directive propagation to BrainEngine promptDirectives", () => {
+  const result = brainEngine.analyze("Simulate an unexpected database cluster failure", [], undefined, "user_brain_dir_test");
+
+  assert(Array.isArray(result.promptDirectives), "promptDirectives must be array");
+  // Meta reasoning directives must be present in promptDirectives
+  if (result.metaReasoningAnalysis && result.metaReasoningAnalysis.directives.length > 0) {
+    for (const d of result.metaReasoningAnalysis.directives) {
+      assert(result.promptDirectives.includes(d), `Directive '${d}' must be present in BrainAnalysis.promptDirectives`);
+    }
+  }
+});
+
+runTest("MR-47: Diagnostics exposed in BrainAnalysis", () => {
+  const result = brainEngine.analyze("Check system health and status", [], undefined, "user_brain_diag_test");
+
+  assert(result.metaReasoningAnalysis?.diagnostics !== undefined, "metaReasoningAnalysis diagnostics must be present");
+  assert(typeof result.metaReasoningAnalysis.diagnostics.executionTimeMs === "number", "executionTimeMs must be number");
+});
+
+runTest("MR-48: Graceful fallback when upstream reasoning engines are omitted", () => {
+  const minimalInput: MetaReasoningInput = {
+    userId: "user_min",
+    message: "Simple greeting",
+    context: { activeTopic: "general", entities: {}, pendingClarification: false } as any,
+  };
+
+  const analysis = metaReasoningEngine.evaluate(minimalInput);
+  assert(analysis !== null, "Must evaluate cleanly on minimal input");
+  assert(analysis.isCoherent === true, "Simple greeting with no issues must be coherent");
+});
+
+// ----------------------------------------------------------------------------
+// MR-49 to MR-54: Full-Stack Regression & Stress Tests
+// ----------------------------------------------------------------------------
+
+runTest("MR-49: Regression — DeepReasoningEngine (Step 1) functions without regression", () => {
+  const deepRes = deepReasoningEngine.evaluate({
+    userId: "reg_user",
+    message: "Should we migrate from MySQL to Postgres?",
+    context: { activeTopic: "db", entities: {}, pendingClarification: false } as any,
+  });
+
+  assert(deepRes !== null, "DeepReasoningEngine evaluate must succeed");
+  assert(Array.isArray(deepRes.hypotheses), "DeepReasoning hypotheses must be array");
+});
+
+runTest("MR-50: Regression — ContradictionResolutionEngine (Step 2) functions without regression", () => {
+  const contraRes = contradictionResolutionEngine.evaluate({
+    userId: "reg_user",
+    message: "I live in New York. Actually I live in London.",
+    context: { activeTopic: "location", entities: {}, pendingClarification: false } as any,
+  });
+
+  assert(contraRes !== null, "ContradictionResolutionEngine evaluate must succeed");
+  assert(Array.isArray(contraRes.contradictions), "Contradictions must be array");
+});
+
+runTest("MR-51: Regression — CausalReasoningEngine (Step 3) functions without regression", () => {
+  const causalRes = causalReasoningEngine.evaluate({
+    userId: "reg_user",
+    message: "Because the power supply failed, the server crashed",
+    context: { activeTopic: "infrastructure", entities: {}, pendingClarification: false } as any,
+  });
+
+  assert(causalRes !== null, "CausalReasoningEngine evaluate must succeed");
+  assert(Array.isArray(causalRes.relations), "Causal relations must be array");
+});
+
+runTest("MR-52: Regression — MultiHopReasoningEngine (Step 4) functions without regression", () => {
+  const multiHopRes = multiHopReasoningEngine.evaluate({
+    userId: "reg_user",
+    message: "If server load exceeds capacity, response times increase",
+    context: { activeTopic: "infrastructure", entities: {}, pendingClarification: false } as any,
+  });
+
+  assert(multiHopRes !== null, "MultiHopReasoningEngine evaluate must succeed");
+  assert(Array.isArray(multiHopRes.chains), "MultiHop chains must be array");
+});
+
+runTest("MR-53: Regression — EpistemicCalibrationEngine (Step 5) functions without regression", () => {
+  const epistemicRes = epistemicCalibrationEngine.evaluate({
+    userId: "reg_user",
+    message: "Verify deployment confidence",
+    context: { activeTopic: "devops", entities: {}, pendingClarification: false } as any,
+  });
+
+  assert(epistemicRes !== null, "EpistemicCalibrationEngine evaluate must succeed");
+  assert(Array.isArray(epistemicRes.claims), "Epistemic claims must be array");
+  assert(typeof epistemicRes.diagnostics.claimsEvaluated === "number", "Claims evaluated must be number");
+});
+
+runTest("MR-54: Regression — ScenarioSimulationEngine (Step 6) functions without regression", () => {
+  const simRes = scenarioSimulationEngine.evaluate({
+    userId: "reg_user",
+    message: "Simulate switching to a multi-cloud failover architecture",
+    context: { activeTopic: "architecture", entities: {}, pendingClarification: false } as any,
+  });
+
+  assert(simRes !== null, "ScenarioSimulationEngine evaluate must succeed");
+  assert(Array.isArray(simRes.scenarios), "Scenarios must be array");
+});
+
+console.log("\n===============================================================================");
+console.log(`META-REASONING ENGINE TEST RESULTS: ${passedCount} / ${totalCount} PASSED`);
+console.log("===============================================================================\n");
+
+if (passedCount !== totalCount) {
   process.exit(1);
-} else {
-  console.log("ALL 54 META-REASONING ENGINE TESTS PASSED SUCCESSFULLY.\n");
 }

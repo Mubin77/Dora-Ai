@@ -128,6 +128,8 @@ export interface EpistemicProvenance {
   statement: string;
   scope: EpistemicScope;
   topic: string;
+  timestamp?: number;
+  source?: string;
 }
 
 /**
@@ -226,28 +228,32 @@ export const DEFAULT_EPISTEMIC_CALIBRATION_BUDGET: EpistemicCalibrationBudgetCon
  * Comprehensive diagnostic metrics for Epistemic Calibration.
  */
 export interface EpistemicCalibrationDiagnostics {
-  claimsEvaluated: number;
-  verifiedClaims: number;
-  knownClaims: number;
-  supportedClaims: number;
-  inferredClaims: number;
-  uncertainClaims: number;
-  contestedClaims: number;
-  unknownClaims: number;
-  advisoryClaims: number;
-  rejectedClaims: number;
-  confidenceDowngrades: number;
-  uncertaintyIncreases: number;
-  contradictionAdjustments: number;
-  causalAmbiguityAdjustments: number;
-  multiHopAdjustments: number;
-  predictiveSuppressionCount: number;
-  unsupportedEvidenceCount: number;
-  missingProvenanceCount: number;
-  duplicateEvidenceSuppressed: number;
-  budgetTruncations: number;
-  directivesSanitized: number;
+  claimsEvaluated?: number;
+  verifiedClaims?: number;
+  knownClaims?: number;
+  supportedClaims?: number;
+  inferredClaims?: number;
+  uncertainClaims?: number;
+  contestedClaims?: number;
+  unknownClaims?: number;
+  advisoryClaims?: number;
+  rejectedClaims?: number;
+  confidenceDowngrades?: number;
+  uncertaintyIncreases?: number;
+  contradictionAdjustments?: number;
+  causalAmbiguityAdjustments?: number;
+  multiHopAdjustments?: number;
+  predictiveSuppressionCount?: number;
+  unsupportedEvidenceCount?: number;
+  missingProvenanceCount?: number;
+  duplicateEvidenceSuppressed?: number;
+  budgetTruncations?: number;
+  directivesSanitized?: number;
   evaluationTimeMs?: number;
+  sourceCount?: number;
+  uncalibratedConfidence?: number;
+  calibratedConfidence?: number;
+  overconfidencePenalty?: number;
 }
 
 /**
@@ -255,12 +261,17 @@ export interface EpistemicCalibrationDiagnostics {
  */
 export interface EpistemicCalibrationAnalysis {
   claims: EpistemicClaim[];
-  calibrationRecords: EpistemicCalibrationRecord[];
-  uncertainties: Array<{ claimId: string; uncertainty: EpistemicUncertainty }>;
-  contestedClaims: EpistemicClaim[];
-  unknownClaims: EpistemicClaim[];
-  directives: string[];
+  calibrationRecords?: EpistemicCalibrationRecord[];
+  uncertainties?: Array<{ claimId: string; uncertainty: EpistemicUncertainty }>;
+  contestedClaims?: EpistemicClaim[];
+  unknownClaims?: EpistemicClaim[];
+  directives?: string[];
   diagnostics: EpistemicCalibrationDiagnostics;
+  totalClaimsEvaluated?: number;
+  overallConfidence?: number;
+  uncertaintyMetrics?: any;
+  calibrationCurve?: any[];
+  sanitizedDirectives?: string[];
 }
 
 /**

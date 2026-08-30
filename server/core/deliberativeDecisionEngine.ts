@@ -39,7 +39,7 @@ import {
   DecisionEngineInput,
 } from "./deliberativeDecisionTypes";
 import { EpistemicAuthority, EpistemicState, EpistemicScope } from "./epistemicCalibrationTypes";
-import { CritiqueSeverity } from "./metaReasoningTypes";
+import { MetaCritiqueSeverity } from "./metaReasoningTypes";
 
 /**
  * Authority Precedence Weight Table
@@ -219,8 +219,12 @@ export class DeliberativeDecisionEngine {
 
     // Extract Meta-Reasoning Findings
     const metaIssues = input.metaReasoning?.issues || [];
-    const realityConfusions = new Set(input.metaReasoning?.simulationRealityConfusions || []);
-    const metaConstraintViolations = new Set(input.metaReasoning?.hardConstraintViolations || []);
+    const realityConfusions = new Set(
+      metaIssues.filter((i) => i.type === "SIMULATION_REALITY_CONFUSION").map((i) => (i as any).targetIdentifier || i.targetStatement)
+    );
+    const metaConstraintViolations = new Set(
+      metaIssues.filter((i) => i.type === "HARD_CONSTRAINT_VIOLATION" || i.type === "CONSTRAINT_VIOLATION").map((i) => (i as any).targetIdentifier || i.targetStatement)
+    );
 
     const evaluatedCandidates: DecisionCandidate[] = [];
     const evaluations: DecisionEvaluation[] = [];
@@ -236,7 +240,7 @@ export class DeliberativeDecisionEngine {
       const warningReasons: string[] = [];
       const risks: DecisionRisk[] = [...(raw.risks || [])];
       for (const r of risks) {
-        if (r.severity === "CRITICAL" || r.severity === "MAJOR" || r.severity === "MODERATE") {
+        if (r.severity === "CRITICAL" || r.severity === "HIGH" || r.severity === "MEDIUM") {
           warningReasons.push(`Risk: ${r.description}`);
         }
       }
@@ -251,7 +255,7 @@ export class DeliberativeDecisionEngine {
       for (const hc of hardConstraints) {
         const isViolated = this.checkConstraintViolation(raw, hc) ||
           metaConstraintViolations.has(hc.id) ||
-          metaIssues.some((iss) => iss.type === "HARD_CONSTRAINT_VIOLATION" && iss.targetIdentifier === hc.id);
+          metaIssues.some((iss) => iss.type === "HARD_CONSTRAINT_VIOLATION" && ((iss as any).targetIdentifier === hc.id || iss.targetStatement.includes(hc.id)));
 
         if (isViolated) {
           hardConstraintPassed = false;
@@ -289,7 +293,7 @@ export class DeliberativeDecisionEngine {
       if (
         realityConfusions.has(raw.id) ||
         realityConfusions.has(candidateKey) ||
-        metaIssues.some((iss) => iss.type === "SIMULATION_REALITY_CONFUSION" && (iss.targetIdentifier === raw.id || iss.targetIdentifier === candidateKey))
+        metaIssues.some((iss) => iss.type === "SIMULATION_REALITY_CONFUSION" && ((iss as any).targetIdentifier === raw.id || (iss as any).targetIdentifier === candidateKey || iss.targetStatement.includes(raw.id) || iss.targetStatement.includes(candidateKey)))
       ) {
         realityBoundaryPassed = false;
         blockedReasons.push("Violates reality boundary: simulated outcome asserted as verified fact");
@@ -392,7 +396,7 @@ export class DeliberativeDecisionEngine {
             risks.push({
               id: `risk_${this.hashString(`${candidateId}_causal_${relId}`)}`,
               category: "CAUSAL_RISK",
-              severity: "MODERATE",
+              severity: "MEDIUM",
               description: `Causal link to outcome '${effectName}' lacks verified mechanism.`,
               isBlocking: false,
             });
@@ -410,7 +414,7 @@ export class DeliberativeDecisionEngine {
           risks.push({
             id: `risk_${this.hashString(`${candidateId}_hop_${chainId}`)}`,
             category: "EVIDENCE_RISK",
-            severity: "MAJOR",
+            severity: "HIGH",
             description: `Broken multi-hop reasoning chain supporting candidate.`,
             isBlocking: false,
           });
@@ -442,7 +446,7 @@ export class DeliberativeDecisionEngine {
             risks.push({
               id: `risk_${this.hashString(`${candidateId}_temp_${recKey}`)}`,
               category: "TEMPORAL_RISK",
-              severity: "MODERATE",
+              severity: "MEDIUM",
               description: `Depends on past state that has been superseded.`,
               isBlocking: false,
             });

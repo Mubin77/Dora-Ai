@@ -106,6 +106,8 @@ import { deliberativeDecisionEngine } from "./deliberativeDecisionEngine";
 import { DecisionAnalysis } from "./deliberativeDecisionTypes";
 import { adaptiveExecutiveControlEngine } from "./adaptiveExecutiveControlEngine";
 import { ExecutiveControlAnalysis } from "./adaptiveExecutiveControlTypes";
+import { cognitiveExecutiveSynthesisEngine } from "./cognitiveExecutiveSynthesisEngine";
+import { CognitiveExecutiveSynthesis } from "./cognitiveExecutiveSynthesisTypes";
 import { conversationalBehaviorEngine } from "./conversationalBehaviorEngine";
 import { ConversationalBehaviorDecision } from "./conversationalBehaviorTypes";
 import { sharedExperienceEngine } from "./sharedExperienceEngine";
@@ -134,9 +136,6 @@ export * from "./responseAdaptationTypes";
 export * from "./deepReasoningTypes";
 export * from "./causalReasoningTypes";
 export * from "./scenarioSimulationTypes";
-export * from "./metaReasoningTypes";
-export * from "./deliberativeDecisionTypes";
-export * from "./adaptiveExecutiveControlTypes";
 export * from "./conversationalBehaviorTypes";
 export * from "./sharedExperienceTypes";
 export type {
@@ -244,57 +243,32 @@ export {
 export { scenarioSimulationEngine } from "./scenarioSimulationEngine";
 export type {
   MetaReasoningIssueType,
-  CritiqueSeverity,
-  CritiqueCategory,
-  CritiqueVerdict,
-  CritiqueIssue,
-  AuditSectionResult,
-  EpistemicAdjustment,
-  MetaReasoningBudgetConfig,
+  MetaCritiqueSeverity,
+  MetaCorrectionType,
+  MetaReasoningUncertainty,
+  AuditedClaim,
+  MetaReasoningIssue,
+  MetaReasoningCritique,
+  MetaReasoningCorrection,
+  MetaReasoningRecommendation,
   MetaReasoningDiagnostics,
-  MetaReasoningAnalysis,
+  MetaReasoningBudgetConfig,
   MetaReasoningOptions,
   MetaReasoningInput,
+  MetaReasoningAnalysis,
 } from "./metaReasoningTypes";
 export {
   DEFAULT_META_REASONING_BUDGET,
   HARD_CEILING_META_REASONING_BUDGET,
+  META_SEVERITY_RANKS,
 } from "./metaReasoningTypes";
 export { metaReasoningEngine } from "./metaReasoningEngine";
-export type {
-  DecisionState,
-  DecisionRecommendationType,
-  DecisionCandidateSource,
-  DecisionReversibility,
-  DecisionCriterionType,
-  DecisionCriterionStatus,
-  DecisionRiskCategory,
-  DecisionTradeoffState,
-  DecisionRisk,
-  DecisionTradeoff,
-  GoalAlignmentEvaluation,
-  DecisionEvidenceRef,
-  DecisionConstraintRef,
-  DecisionUncertainty,
-  DecisionCandidate,
-  DecisionCriterionScore,
-  DecisionEvaluation,
-  DecisionRanking,
-  DecisionStep,
-  DecisionPlan,
-  DecisionRecommendation,
-  DecisionProvenance,
-  DecisionBudgetConfig,
-  DecisionDiagnostics,
-  DecisionAnalysis,
-  DecisionEngineOptions,
-  DecisionEngineInput,
-} from "./deliberativeDecisionTypes";
-export {
-  DEFAULT_DECISION_BUDGET,
-  HARD_CEILING_DECISION_BUDGET,
-} from "./deliberativeDecisionTypes";
+export * from "./deliberativeDecisionTypes";
 export { deliberativeDecisionEngine } from "./deliberativeDecisionEngine";
+export * from "./adaptiveExecutiveControlTypes";
+export { adaptiveExecutiveControlEngine } from "./adaptiveExecutiveControlEngine";
+export * from "./cognitiveExecutiveSynthesisTypes";
+export { cognitiveExecutiveSynthesisEngine } from "./cognitiveExecutiveSynthesisEngine";
 export * from "./memoryStore";
 export { intentEngine } from "./intentEngine";
 export { reasoningEngine } from "./reasoningEngine";
@@ -370,8 +344,10 @@ export interface BrainAnalysis {
   metaReasoning?: MetaReasoningAnalysis;
   decisionAnalysis?: DecisionAnalysis;
   decision?: DecisionAnalysis;
-  adaptiveExecutiveControlAnalysis?: ExecutiveControlAnalysis;
-  adaptiveExecutiveControl?: ExecutiveControlAnalysis;
+  executiveControlAnalysis?: ExecutiveControlAnalysis;
+  executiveControl?: ExecutiveControlAnalysis;
+  cognitiveExecutiveSynthesis?: CognitiveExecutiveSynthesis;
+  synthesis?: CognitiveExecutiveSynthesis;
   conversationalBehavior?: ConversationalBehaviorDecision;
   sharedExperience?: SharedExperienceContext;
   languageStyle?: {
@@ -1061,7 +1037,6 @@ export class BrainEngine {
     });
 
     // Step 14.9 / Phase 3 Step 7: Meta-Reasoning & Self-Critique Engine (Deterministic, Bounded, Non-LLM)
-    // Downstream of Steps 1-6 — audits grounding, epistemic calibration, causal chains, multi-hop chains, simulation reality boundaries & constraints
     const metaReasoningAnalysis = metaReasoningEngine.evaluate({
       userId,
       message: trimmed,
@@ -1093,7 +1068,6 @@ export class BrainEngine {
     });
 
     // Step 14.10 / Phase 3 Step 8: Deliberative Decision & Action Planning Engine (Deterministic, Bounded, Non-LLM)
-    // Downstream of Steps 1-7 — evaluates candidate options, constraints, goal alignment, evidence, risks, tradeoffs & action plan
     const decisionAnalysis = deliberativeDecisionEngine.evaluate({
       userId,
       message: trimmed,
@@ -1126,8 +1100,7 @@ export class BrainEngine {
     });
 
     // Step 14.11 / Phase 3 Step 9: Adaptive Executive Control & Cognitive Prioritization Engine (Deterministic, Bounded, Non-LLM)
-    // Downstream of Step 8 — determines cognitive attention, priority classes, suppression, escalation, focus, response mode & sanitized directives
-    const adaptiveExecutiveControlAnalysis = adaptiveExecutiveControlEngine.evaluate({
+    const executiveControlAnalysis = adaptiveExecutiveControlEngine.evaluate({
       userId,
       message: trimmed,
       context: contextResult.context,
@@ -1144,6 +1117,40 @@ export class BrainEngine {
       scenarioSimulation: scenarioSimulationAnalysis,
       metaReasoning: metaReasoningAnalysis,
       decision: decisionAnalysis,
+      memoryGovernance: memoryGovernanceAnalysis,
+      temporalMemory: temporalMemoryAnalysis,
+      userModel: longTermUserModelAnalysis,
+      goalProject: goalProjectAnalysis,
+      contextContinuity: contextContinuityAnalysis,
+      predictiveContext: predictiveContextAnalysis,
+      history: recentHistory,
+      options: {
+        userId,
+        currentTime,
+        strictTopicIsolation: contextResult.isTopicSwitch || memoryGovernanceAnalysis.topicIsolationApplied,
+        activeTopic: contextResult.context.activeTopic,
+      },
+    });
+
+    // Step 14.12 / Phase 3 Step 10: Cognitive Executive Synthesis & Final Response Governance Engine (Deterministic, Bounded, Non-LLM)
+    const cognitiveExecutiveSynthesis = cognitiveExecutiveSynthesisEngine.evaluate({
+      userId,
+      message: trimmed,
+      context: contextResult.context,
+      intent: structuredIntent,
+      reasoning: reasoningAnalysis,
+      planning: planningAnalysis,
+      verification: verificationAnalysis,
+      executiveContext,
+      deepReasoning: deepReasoningAnalysis,
+      contradictionResolution: contradictionResolutionAnalysis,
+      causalReasoning: causalReasoningAnalysis,
+      multiHopReasoning: multiHopReasoningAnalysis,
+      epistemicCalibration: epistemicCalibrationAnalysis,
+      scenarioSimulation: scenarioSimulationAnalysis,
+      metaReasoning: metaReasoningAnalysis,
+      decision: decisionAnalysis,
+      executiveControl: executiveControlAnalysis,
       memoryGovernance: memoryGovernanceAnalysis,
       temporalMemory: temporalMemoryAnalysis,
       userModel: longTermUserModelAnalysis,
@@ -1208,7 +1215,7 @@ export class BrainEngine {
     }
 
     // Add sanitized meta-reasoning directives to promptDirectives
-    for (const d of metaReasoningAnalysis.sanitizedDirectives) {
+    for (const d of metaReasoningAnalysis.directives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -1222,7 +1229,14 @@ export class BrainEngine {
     }
 
     // Add sanitized executive control directives to promptDirectives
-    for (const d of adaptiveExecutiveControlAnalysis.sanitizedDirectives) {
+    for (const d of executiveControlAnalysis.sanitizedDirectives) {
+      if (!promptDirectives.includes(d)) {
+        promptDirectives.push(d);
+      }
+    }
+
+    // Add sanitized cognitive executive synthesis directives to promptDirectives
+    for (const d of cognitiveExecutiveSynthesis.sanitizedDirectives) {
       if (!promptDirectives.includes(d)) {
         promptDirectives.push(d);
       }
@@ -1297,8 +1311,10 @@ export class BrainEngine {
       metaReasoning: metaReasoningAnalysis,
       decisionAnalysis,
       decision: decisionAnalysis,
-      adaptiveExecutiveControlAnalysis,
-      adaptiveExecutiveControl: adaptiveExecutiveControlAnalysis,
+      executiveControlAnalysis,
+      executiveControl: executiveControlAnalysis,
+      cognitiveExecutiveSynthesis,
+      synthesis: cognitiveExecutiveSynthesis,
       conversationalBehavior,
       sharedExperience,
       languageStyle: {

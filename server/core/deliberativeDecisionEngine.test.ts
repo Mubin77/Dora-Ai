@@ -383,7 +383,7 @@ runTest("DD-11: Meta-reasoning reality confusion causes candidate REJECTION", ()
           description: "Hypothetical simulated API treated as existing fact.",
           remediationRecommendation: "Reject claim.",
           scorePenalty: 0.5,
-        },
+        } as any,
       ],
       sectionResults: [],
       sanitizedDirectives: ["Reject simulated reality confusion."],

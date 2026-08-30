@@ -172,6 +172,7 @@ export class AdaptiveExecutiveControlEngine {
       responseMode,
       focus,
       attentionSet: activeAttentionSet,
+      attentionItems: activeAttentionSet,
       suppressedItems,
       unresolvedIssues,
       escalations,
@@ -221,13 +222,21 @@ export class AdaptiveExecutiveControlEngine {
   /**
    * Deterministic 32-bit FNV-1a Hash for strings
    */
-  private hashString(str: string): number {
+  public hashString(str: string): number {
     let hash = 2166136261;
     for (let i = 0; i < str.length; i++) {
       hash ^= str.charCodeAt(i);
       hash = Math.imul(hash, 16777619);
     }
     return hash >>> 0;
+  }
+
+  public deterministicHash(str: string): number {
+    return this.hashString(str);
+  }
+
+  public sanitizeDirective(str: string): string {
+    return this.sanitizeSentence(str);
   }
 
   /**
@@ -393,6 +402,7 @@ export class AdaptiveExecutiveControlEngine {
         statement: this.sanitizeSentence(item.rawContent),
         scope: item.scope,
         topic: item.topic || "general",
+        timestamp: currentTime,
       });
     };
 
@@ -421,7 +431,7 @@ export class AdaptiveExecutiveControlEngine {
       });
     }
 
-    // B. Hard Constraints (Executive Context & Constraints)
+    // B. Hard Constraints (Executive Context & Context Constraints)
     const constraints = input.executiveContext?.reasoningConstraints || [];
     for (const c of constraints) {
       const isHard = c.type === "HARD_CONSTRAINT" || c.type === "SAFETY" || c.enforceStrictly;
@@ -434,6 +444,20 @@ export class AdaptiveExecutiveControlEngine {
         rawContent: c.description || c.sanitizedDirective,
         recommendedHandling: isHard ? "Enforce strictly; cannot be overridden by score or benefits" : "Respect governance constraint",
         isBlocking: isHard,
+      });
+    }
+
+    const contextConstraints = input.context?.constraints || [];
+    for (const c of contextConstraints) {
+      addCandidate({
+        type: "HARD_CONSTRAINT",
+        reason: "HARD_SAFETY_CONSTRAINT",
+        sourceEngine: "ContextStore",
+        authority: "HARD_CONSTRAINT",
+        scope: "GLOBAL",
+        rawContent: c.rawText || `${c.key}: ${c.value}`,
+        recommendedHandling: "Enforce strictly; cannot be overridden by score or benefits",
+        isBlocking: true,
       });
     }
 
@@ -703,6 +727,25 @@ export class AdaptiveExecutiveControlEngine {
       }
     }
 
+    // M. Deep Reasoning Evidence
+    if (input.deepReasoning?.evidence) {
+      for (const ev of input.deepReasoning.evidence) {
+        const evScope: EpistemicScope = (ev.scope as any) === "TOPIC_SPECIFIC" ? "TOPIC" : ((ev.scope as any) || "GLOBAL");
+        addCandidate({
+          type: "GENERAL_COGNITIVE",
+          reason: "EXPLICIT_USER_DIRECTIVE",
+          sourceEngine: "DeepReasoningEngine",
+          authority: (ev.authority as any) || "VERIFIED_EVIDENCE",
+          scope: evScope,
+          rawContent: ev.statement,
+          recommendedHandling: "Utilize verified evidence in cognitive prioritization",
+          topic: ev.topic,
+          isStale: (ev as any).isSuperseded,
+          isRejected: (ev as any).epistemicState === "REJECTED",
+        });
+      }
+    }
+
     return candidates;
   }
 
@@ -717,7 +760,8 @@ export class AdaptiveExecutiveControlEngine {
     const deduplicated: ExecutiveAttentionItem[] = [];
 
     for (const c of candidates) {
-      const normalizedContent = c.rawContent.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const rawText = c.rawContent || c.recommendedHandling || c.id || "";
+      const normalizedContent = rawText.toLowerCase().replace(/[^a-z0-9]/g, "");
       const semanticKey = `${c.type}:${c.scope}:${normalizedContent}`;
 
       if (seenKeys.has(semanticKey)) {
@@ -783,11 +827,13 @@ export class AdaptiveExecutiveControlEngine {
 
       // Priority Class Assignment
       let priorityClass: ExecutivePriorityClass = "PRIORITY_NORMAL";
-      if (hardSafetyStatus > 0 || (contradictionSeverity === 1.0) || (item.isBlocking)) {
+      if (hardSafetyStatus > 0 || contradictionSeverity === 1.0 || item.isBlocking) {
         priorityClass = "PRIORITY_CRITICAL";
-      } else if (currentTurnRelevance >= 0.9 || item.type === "USER_REQUEST" || item.type === "REQUIRED_CLARIFICATION" || item.type === "ACTION_PREREQUISITE" || goalAlignment === 1.0) {
+      } else if (item.authority === "PREDICTIVE_CONTEXT" || item.authority === "SYSTEM_DEFAULT") {
+        priorityClass = "PRIORITY_LOW";
+      } else if (currentTurnRelevance >= 0.9 || item.type === "USER_REQUEST" || item.type === "REQUIRED_CLARIFICATION" || item.type === "ACTION_PREREQUISITE" || goalAlignment === 1.0 || item.type === "ADVISORY_PLAN") {
         priorityClass = "PRIORITY_HIGH";
-      } else if (priorityScore < 0.35 || item.authority === "PREDICTIVE_CONTEXT" || item.authority === "SYSTEM_DEFAULT") {
+      } else if (priorityScore < 0.25) {
         priorityClass = "PRIORITY_LOW";
       }
 
@@ -996,17 +1042,17 @@ export class AdaptiveExecutiveControlEngine {
       }
     }
 
-    // 6. Meta-reasoning critical issues
+    // 6. Meta-reasoning critical and high severity issues
     if (input.metaReasoning?.issues) {
       for (const issue of input.metaReasoning.issues) {
-        if (issue.severity === "CRITICAL") {
+        if (issue.severity === "CRITICAL" || issue.severity === "HIGH") {
           addIssue({
             issueType: issue.type === "SIMULATION_REALITY_CONFUSION" ? "SIMULATION_RISK" : "CONSTRAINT_CONFLICT",
             scope: "CURRENT_TURN",
-            severity: "CRITICAL",
+            severity: issue.severity === "CRITICAL" ? "CRITICAL" : "HIGH",
             sourceProvenance: ["MetaReasoningEngine"],
-            isBlocking: true,
-            resolutionRequirement: "Correct invalid epistemic inference",
+            isBlocking: issue.severity === "CRITICAL",
+            resolutionRequirement: "Correct invalid epistemic inference or mitigate cognitive risk",
             description: issue.description,
           });
         }
@@ -1278,6 +1324,9 @@ export class AdaptiveExecutiveControlEngine {
   ): { rawDirectives: string[]; sanitizedDirectives: string[]; sanitizationCount: number } {
     const rawDirectives: string[] = [];
 
+    // 0. Primary Mode
+    rawDirectives.push(`Mode: ${responseMode}`);
+
     // 1. Safety & Escalation Directives
     if (escalationState === "SAFETY_BLOCKED") {
       rawDirectives.push("A mandatory safety constraint prevents this action. Refuse execution politely and explain the constraint.");
@@ -1287,7 +1336,7 @@ export class AdaptiveExecutiveControlEngine {
       if (focus.requiredClarifications.length > 0) {
         rawDirectives.push(`Request clarification on: ${focus.requiredClarifications[0]}`);
       } else {
-        rawDirectives.push("Ask targeted clarifying questions to resolve the information deficit before proceeding.");
+        rawDirectives.push("Ask targeted clarification questions to resolve the information deficit before proceeding.");
       }
     } else if (escalationState === "DECISION_DEFERRED") {
       rawDirectives.push("State that recommendations are conditional on assumptions, and seek confirmation before proceeding.");

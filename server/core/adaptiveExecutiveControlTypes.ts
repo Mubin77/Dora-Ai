@@ -296,6 +296,7 @@ export interface ExecutiveControlAnalysis {
   responseMode: ExecutiveResponseMode;
   focus: ExecutiveFocus;
   attentionSet: ExecutiveAttentionItem[];
+  attentionItems?: ExecutiveAttentionItem[];
   suppressedItems: ExecutiveSuppressionRecord[];
   unresolvedIssues: ExecutiveUnresolvedIssue[];
   escalations: ExecutiveEscalationRecord[];
