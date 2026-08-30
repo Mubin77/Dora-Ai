@@ -67,6 +67,7 @@ export class DeviceControlService {
       const errorResult: DeviceActionResult = {
         requestId,
         success: false,
+        status: "ACTION_FAILED",
         device: deviceType,
         action,
         message: validation.errorMessage || "Action validation failed",
@@ -95,6 +96,7 @@ export class DeviceControlService {
         result = {
           requestId,
           success: false,
+          status: "ACTION_FAILED",
           device: "android",
           action,
           message: `Action '${action}' is not implemented in Milestone 1.`,
@@ -120,6 +122,7 @@ export class DeviceControlService {
     const unsupportedResult: DeviceActionResult = {
       requestId,
       success: false,
+      status: "DEVICE_NOT_CONNECTED",
       device: deviceType,
       action,
       message: `Device platform '${deviceType}' is not supported yet.`,

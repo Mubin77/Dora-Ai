@@ -23,6 +23,13 @@ export type DeviceAction =
 
 export type DeviceSafetyLevel = "SAFE" | "CONFIRMATION_REQUIRED" | "HIGH_RISK";
 
+export type DeviceActionExecutionStatus =
+  | "ACTION_REQUESTED"
+  | "ACTION_EXECUTED"
+  | "ACTION_FAILED"
+  | "DEVICE_NOT_CONNECTED"
+  | "BRIDGE_UNAVAILABLE";
+
 export type DeviceErrorCode =
   | "ANDROID_NOT_AVAILABLE"
   | "APP_NOT_FOUND"
@@ -59,6 +66,7 @@ export interface DeviceActionRequest<T = Record<string, any>> {
 export interface DeviceActionResult<T = any> {
   requestId: string;
   success: boolean;
+  status: DeviceActionExecutionStatus;
   device: DeviceType;
   action: DeviceAction;
   message: string;

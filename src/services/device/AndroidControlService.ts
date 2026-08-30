@@ -26,6 +26,7 @@ export interface NativeBridgeInterface {
 
 export class AndroidControlService {
   private static instance: AndroidControlService;
+  private testBridge: NativeBridgeInterface | null = null;
 
   private constructor() {}
 
@@ -37,9 +38,20 @@ export class AndroidControlService {
   }
 
   /**
+   * Injects a native bridge implementation for automated test suites
+   */
+  public setNativeBridgeForTesting(bridge: NativeBridgeInterface | null): void {
+    this.testBridge = bridge;
+  }
+
+  /**
    * Retrieves the native Android bridge interface if present in the runtime window
    */
   public getNativeBridge(): NativeBridgeInterface | null {
+    if (this.testBridge) {
+      return this.testBridge;
+    }
+
     if (typeof window === "undefined") {
       return null;
     }
@@ -119,7 +131,7 @@ export class AndroidControlService {
     const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const bridge = this.getNativeBridge();
 
-    // 1. If bridge is not present, route directly to Mock service
+    // 1. If bridge is not present, route directly to Mock service (returns success: false, status: BRIDGE_UNAVAILABLE)
     if (!bridge) {
       return mockAndroidControlService.openApplication(params);
     }
@@ -130,6 +142,7 @@ export class AndroidControlService {
       return {
         requestId,
         success: false,
+        status: "ACTION_FAILED",
         device: "android",
         action: "open_application",
         message: `Could not find an installed application matching "${params.appName}".`,
@@ -153,6 +166,7 @@ export class AndroidControlService {
         return {
           requestId,
           success: true,
+          status: "ACTION_EXECUTED",
           device: "android",
           action: "open_application",
           message: nativeResult.message || `Successfully opened ${resolution.appName}.`,
@@ -168,6 +182,7 @@ export class AndroidControlService {
         return {
           requestId,
           success: false,
+          status: "ACTION_FAILED",
           device: "android",
           action: "open_application",
           message: nativeResult?.error || `Failed to launch ${resolution.appName}.`,
@@ -187,6 +202,7 @@ export class AndroidControlService {
       return {
         requestId,
         success: false,
+        status: "BRIDGE_UNAVAILABLE",
         device: "android",
         action: "open_application",
         message: `Failed to communicate with Android bridge: ${bridgeError?.message || "Unknown error"}`,
@@ -248,6 +264,7 @@ export class AndroidControlService {
     return {
       requestId: `req_${Date.now()}_not_impl`,
       success: false,
+      status: "ACTION_FAILED",
       device: "android",
       action,
       message: `Action '${action}' is not implemented in Milestone 1.`,

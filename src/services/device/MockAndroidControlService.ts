@@ -16,9 +16,6 @@ import { applicationResolver } from "./ApplicationResolver";
 export class MockAndroidControlService {
   private static instance: MockAndroidControlService;
 
-  // Optional test simulation flag for test harness execution
-  private simulatedSuccessForTesting: boolean = false;
-
   private constructor() {}
 
   public static getInstance(): MockAndroidControlService {
@@ -26,13 +23,6 @@ export class MockAndroidControlService {
       MockAndroidControlService.instance = new MockAndroidControlService();
     }
     return MockAndroidControlService.instance;
-  }
-
-  /**
-   * Enables or disables test simulation mode (only for automated unit test suites)
-   */
-  public setSimulatedSuccessForTesting(enabled: boolean): void {
-    this.simulatedSuccessForTesting = enabled;
   }
 
   public async isBridgeAvailable(): Promise<boolean> {
@@ -52,28 +42,11 @@ export class MockAndroidControlService {
     const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const resolution = applicationResolver.resolveApplication(params.appName);
 
-    // If simulating success for unit tests
-    if (this.simulatedSuccessForTesting) {
-      return {
-        requestId,
-        success: true,
-        device: "android",
-        action: "open_application",
-        message: `[Simulated Test] Opened ${resolution.appName} (${resolution.packageName || "unknown package"})`,
-        data: {
-          appName: resolution.appName,
-          packageName: resolution.packageName,
-          resolutionSource: resolution.resolutionSource,
-        },
-        error: null,
-        timestamp: Date.now(),
-      };
-    }
-
     // Standard Mock Mode: Honestly reports that native Android bridge is unavailable
     return {
       requestId,
       success: false,
+      status: "BRIDGE_UNAVAILABLE",
       device: "android",
       action: "open_application",
       message: `Cannot open ${params.appName}: Android native bridge is not available in this web environment.`,
@@ -85,7 +58,7 @@ export class MockAndroidControlService {
       },
       error: {
         code: "BRIDGE_UNAVAILABLE",
-        details: "Android native bridge is not available in this environment. Install the Dora Android companion APK to control a real device.",
+        details: "Android native bridge is not available in this environment. Connect the Dora Android companion APK to control a real device.",
       },
       timestamp: Date.now(),
     };
@@ -98,6 +71,7 @@ export class MockAndroidControlService {
     return {
       requestId: `req_${Date.now()}_placeholder`,
       success: false,
+      status: "ACTION_FAILED",
       device: "android",
       action,
       message: `Action '${action}' is not implemented in Milestone 1.`,

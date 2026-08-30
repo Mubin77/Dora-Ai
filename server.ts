@@ -13,6 +13,7 @@ import { brainEngine, conversationalBehaviorEngine, sharedExperienceEngine, lang
 import { runAllLanguageStyleAdapterTests } from "./server/core/languageStyleAdapter.test";
 import { proactiveCompanionCore } from "./server/core/proactiveCompanionEngine";
 import { runAllProactiveEngineTests } from "./server/core/proactiveCompanionEngine.test";
+import { runAllDeviceControlTests } from "./server/core/deviceControl.test";
 import { validateAndRankSearchResults } from "./server/core/searchFreshness";
 import { AIMessage, AIRequest, SearchRequest } from "./server/providers/types";
 import { deviceControlService } from "./src/services/device/DeviceControlService";
@@ -121,6 +122,21 @@ async function startServer() {
       res.json({
         status: "ok",
         message: "All Proactive Companion Engine and Language Style Adapter tests passed successfully.",
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: "error", error: err?.message || String(err) });
+    }
+  });
+
+  // Diagnostic endpoint to run Device Control test suite (Case A, B, C, D, E, F, G)
+  app.get("/api/test-device-control", async (_req, res) => {
+    try {
+      const result = await runAllDeviceControlTests();
+      res.json({
+        status: "ok",
+        message: "All Dora Android Phone Control tests passed successfully.",
+        result,
         timestamp: Date.now(),
       });
     } catch (err: any) {
@@ -249,24 +265,50 @@ async function startServer() {
             `[DeviceActionExecution]\ndevice=${detected.deviceAction.device}\naction=${detected.deviceAction.action}\nappName=${detected.deviceAction.appName}\nsuccess=${deviceActionResult.success}\nstatus=${deviceActionResult.status}`
           );
 
-          deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION]
-User Command: "${message}"
-Detected Intent: ${detected.deviceAction.action}
+          if (!deviceActionResult.success) {
+            deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION EXECUTION RESULT]
+Command: "${message}"
+Requested Action: ${detected.deviceAction.action}
 Target Application: ${detected.deviceAction.appName}
-Execution Result:
-- Status: ${deviceActionResult.status}
-- Success: ${deviceActionResult.success}
-- Message: ${deviceActionResult.message}
-${deviceActionResult.error ? `- Error Details: ${deviceActionResult.error.message} (Code: ${deviceActionResult.error.code})` : ""}
+EXECUTION STATUS: ${deviceActionResult.status} (FAILED / NOT EXECUTED)
+SUCCESS: false
+Error Code: ${deviceActionResult.error?.code || "DEVICE_NOT_CONNECTED"}
+Reason: ${deviceActionResult.error?.details || deviceActionResult.message}
 
-CRITICAL INSTRUCTIONS FOR DORA'S RESPONSE:
-1. Speak in your authentic, warm conversational voice (natural Banglish/English as appropriate).
-2. If success is true: Confirm warmly that you are opening ${detected.deviceAction.appName} on their device now (e.g., "Haan, YouTube open kore dicchi!" or "Sure, opening YouTube for you right now!").
-3. If success is false because bridge is not connected (BRIDGE_UNAVAILABLE): Explain warmly and casually that the Android companion device bridge isn't active in this session yet, but you're all set once paired (e.g. "I got you, but the Android companion bridge isn't connected right now.").
-4. NEVER output raw JSON, stack traces, or technical error codes.`;
+CRITICAL RULES FOR DORA:
+1. THE APP DID NOT OPEN. NO REAL ANDROID COMPANION IS CONNECTED.
+2. YOU ARE STRICTLY FORBIDDEN FROM SAYING "Opening YouTube", "YouTube open kore dicchi", "YouTube khule dicchi", "Sure, opening", or claiming in any way that the app opened or is opening.
+3. Warmly and naturally tell the user in your conversational voice that their Android phone / companion isn't connected yet, so you couldn't open ${detected.deviceAction.appName}.
+   Example Banglish: "Tor Android phone-ta ekhono connect kora nai, tai YouTube open korte parlam na." (or in Tumi: "Tomar Android phone-ta connect kora nei, tai YouTube open korte parlam na.").
+   Example English: "Your Android phone isn't connected yet, so I couldn't open ${detected.deviceAction.appName}."
+4. NEVER output raw technical error codes or stack traces to the user.`;
+          } else {
+            deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION EXECUTION RESULT]
+Command: "${message}"
+Requested Action: ${detected.deviceAction.action}
+Target Application: ${detected.deviceAction.appName}
+EXECUTION STATUS: ACTION_EXECUTED
+SUCCESS: true
+Message: ${deviceActionResult.message}
+
+INSTRUCTIONS FOR DORA:
+1. The Android companion confirmed that ${detected.deviceAction.appName} was successfully launched.
+2. Confirm warmly to the user that ${detected.deviceAction.appName} is open / opening now on their phone (e.g., "YouTube open kore dilam!" or "YouTube is open!").`;
+          }
         } catch (err: any) {
           console.warn("[Device Action Execution Error]:", err?.message);
-          deviceActionContext = `\n\n[DEVICE ACTION NOTICE: Attempted to trigger ${detected.deviceAction.action} for ${detected.deviceAction.appName}, but could not complete the operation.]`;
+          deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION EXECUTION RESULT]
+Command: "${message}"
+Requested Action: ${detected.deviceAction.action}
+Target Application: ${detected.deviceAction.appName}
+EXECUTION STATUS: ACTION_FAILED
+SUCCESS: false
+Reason: Exception occurred during device action dispatch.
+
+CRITICAL RULES FOR DORA:
+1. THE APP DID NOT OPEN.
+2. YOU MUST NOT CLAIM THAT THE APP OPENED.
+3. Warmly explain that you couldn't complete the action on their phone right now.`;
         }
       }
 
