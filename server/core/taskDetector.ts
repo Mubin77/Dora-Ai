@@ -1,7 +1,7 @@
 import { FreshnessIntent } from "./searchFreshness";
 import { temporalEngine, TemporalResolution } from "./temporalEngine";
 
-export type DetectedTask = "web_search" | "realtime_temporal" | "chat" | "reasoning" | "vision";
+export type DetectedTask = "web_search" | "realtime_temporal" | "chat" | "reasoning" | "vision" | "device_action";
 
 export interface TaskDetectionResult {
   task: DetectedTask;
@@ -11,7 +11,13 @@ export interface TaskDetectionResult {
   isNewsQuery?: boolean;
   freshness?: FreshnessIntent;
   temporal?: TemporalResolution;
+  deviceAction?: {
+    device: "android" | "pc";
+    action: "open_application";
+    appName: string;
+  };
 }
+
 
 /**
  * Natural language task, temporal awareness, and search intent detector for Dora.
@@ -75,7 +81,19 @@ export class TaskDetector {
       };
     }
 
-    // 2. Guard against false-positives for programming/academic terms (e.g. "binary search", "search tree", "breadth first search")
+    // 2. High-Priority Device Control Action Detection (e.g., "Open YouTube", "YouTube open koro")
+    const deviceAction = this.detectDeviceAction(trimmed);
+    if (deviceAction) {
+      return {
+        task: "device_action",
+        confidence: 0.96,
+        reason: `Device control intent: ${deviceAction.action} (${deviceAction.appName})`,
+        deviceAction,
+      };
+    }
+
+    // 3. Guard against false-positives for programming/academic terms (e.g. "binary search", "search tree", "breadth first search")
+
     const isProgrammingSearch =
       /\b(?:binary|linear|depth\s*first|breadth\s*first|tree|graph|a\*|ternary)\s+search\b/i.test(lower) ||
       /\bsearch\s+(?:algorithm|complexity|space|method\s+in\s+python|function)\b/i.test(lower);
@@ -141,8 +159,50 @@ export class TaskDetector {
   }
 
   /**
+   * Detects device control commands such as "open YouTube", "YouTube open koro", etc.
+   */
+  public detectDeviceAction(rawText: string): { device: "android" | "pc"; action: "open_application"; appName: string } | null {
+    const trimmed = rawText.trim();
+    const lower = trimmed.toLowerCase();
+
+    // 1. English patterns: "open <app>", "launch <app>", "start <app>", "open the <app> app"
+    const englishMatch = lower.match(
+      /^(?:hey\s+dora[,\s]*|dora[,\s]*|please\s+|can\s+you\s+(?:please\s+)?|could\s+you\s+(?:please\s+)?)?(?:open|launch|start)\s+(?:the\s+)?([a-z0-9\s._\-]+?)(?:\s+app|\s+application)?$/i
+    );
+    if (englishMatch && englishMatch[1]) {
+      const appName = englishMatch[1].trim();
+      // Filter out non-app generic phrases like "the door", "your eyes"
+      if (!/^(?:door|window|eyes|mouth|link|website|file|tab|browser|settings\s+modal)$/i.test(appName)) {
+        return {
+          device: "android",
+          action: "open_application",
+          appName: appName.charAt(0).toUpperCase() + appName.slice(1),
+        };
+      }
+    }
+
+    // 2. Bangla / Banglish patterns: "<app> open koro", "<app> kholo", "<app> chalau", "<app> app ta open koro"
+    const banglaMatch = lower.match(
+      /^(?:hey\s+dora[,\s]*|dora[,\s]*)?([a-z0-9\u0980-\u09FF\s._\-]+?)\s*(?:app\s*ta\s*|app\s*)?(?:open\s*koro|open\s*kor|kholo|khule\s*dao|chalu\s*koro|chalau)$/i
+    );
+    if (banglaMatch && banglaMatch[1]) {
+      const appName = banglaMatch[1].trim();
+      if (appName.length > 0 && !/^(?:dorja|janala|chokh)$/i.test(appName)) {
+        return {
+          device: "android",
+          action: "open_application",
+          appName: appName.charAt(0).toUpperCase() + appName.slice(1),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Cleans conversational wrapper phrases from user prompt to produce a focused search query
    */
+
   public extractSearchQuery(rawText: string): string {
     let clean = rawText.trim();
 

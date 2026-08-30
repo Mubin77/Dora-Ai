@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Dora Companion</string>
+    <string name="dora_accessibility_service_label">Dora Device Assistant</string>
+    <string name="dora_accessibility_service_description">Enables Dora to interact with your Android device on your behalf, opening requested applications and assisting with navigation upon voice or text command.</string>
+</resources>

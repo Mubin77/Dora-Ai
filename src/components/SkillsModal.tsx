@@ -1,5 +1,5 @@
 import React from "react";
-import { X, Mic, Brain, Zap, Globe, MessageSquareHeart, ShieldCheck } from "lucide-react";
+import { X, Mic, Brain, Zap, Globe, MessageSquareHeart, ShieldCheck, Smartphone } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { DoraSparkle } from "./DoraSparkle";
 
@@ -10,11 +10,18 @@ interface SkillsModalProps {
 
 const SKILLS = [
   {
+    icon: Smartphone,
+    title: "Android Phone Control (Phase 1)",
+    desc: "Autonomous application launching via safe allowlisted action registry and native companion bridge.",
+    protocol: "Device Control",
+  },
+  {
     icon: Mic,
     title: "Natural Female Voice Engine",
     desc: "Low-latency streaming audio with human-like breathing, cadence, and interruption detection.",
     protocol: "Gemini Live",
   },
+
   {
     icon: Brain,
     title: "Continuous Autonomous Memory",

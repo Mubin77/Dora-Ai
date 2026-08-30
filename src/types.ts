@@ -104,3 +104,6 @@ export interface UserProfile {
   avatarUrl?: string;
   isAuthenticated: boolean;
 }
+
+export * from "./types/device";
+

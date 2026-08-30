@@ -15,6 +15,8 @@ import { proactiveCompanionCore } from "./server/core/proactiveCompanionEngine";
 import { runAllProactiveEngineTests } from "./server/core/proactiveCompanionEngine.test";
 import { validateAndRankSearchResults } from "./server/core/searchFreshness";
 import { AIMessage, AIRequest, SearchRequest } from "./server/providers/types";
+import { deviceControlService } from "./src/services/device/DeviceControlService";
+import { deviceActionRegistry } from "./src/services/device/DeviceActionRegistry";
 
 dotenv.config();
 
@@ -70,6 +72,45 @@ async function startServer() {
   // Sanitized Central Provider diagnostics endpoint (Safe, no credentials exposed)
   app.get("/api/providers/status", (_req, res) => {
     res.json(providerManager.getStatusSummary());
+  });
+
+  // Android & Companion Device Control Status endpoint
+  app.get("/api/device/status", async (_req, res) => {
+    try {
+      const status = await deviceControlService.getStatus();
+      res.json({
+        status: "ok",
+        deviceStatus: status,
+        supportedActions: deviceActionRegistry.getAllowlistedActions(),
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to query device status", details: err?.message });
+    }
+  });
+
+  // Direct Device Action Execution endpoint (Allowlist-enforced)
+  app.post("/api/device/action", async (req, res) => {
+    try {
+      const { device = "android", action, parameters } = req.body;
+      if (!action) {
+        return res.status(400).json({ error: "action is required" });
+      }
+
+      const result = await deviceControlService.executeAction({
+        device,
+        action,
+        parameters: parameters || {},
+      });
+
+      res.json({
+        status: "ok",
+        result,
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Device action execution failed", details: err?.message });
+    }
   });
 
   // Diagnostic endpoint to run Proactive Engine test suite
@@ -187,10 +228,47 @@ async function startServer() {
       let searchPromptContext = "";
       let isWebSearch = detected.task === "web_search";
       let isTemporal = detected.task === "realtime_temporal";
+      let isDeviceAction = detected.task === "device_action";
       let searchProviderUsed = "";
       let searchResultsCount = 0;
       let freshResultsCount = 0;
       let validatedUrlsCount = 0;
+
+      let deviceActionResult: any = null;
+      let deviceActionContext = "";
+
+      if (isDeviceAction && detected.deviceAction) {
+        try {
+          deviceActionResult = await deviceControlService.executeAction({
+            device: detected.deviceAction.device,
+            action: detected.deviceAction.action,
+            parameters: { appName: detected.deviceAction.appName },
+          });
+
+          console.log(
+            `[DeviceActionExecution]\ndevice=${detected.deviceAction.device}\naction=${detected.deviceAction.action}\nappName=${detected.deviceAction.appName}\nsuccess=${deviceActionResult.success}\nstatus=${deviceActionResult.status}`
+          );
+
+          deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION]
+User Command: "${message}"
+Detected Intent: ${detected.deviceAction.action}
+Target Application: ${detected.deviceAction.appName}
+Execution Result:
+- Status: ${deviceActionResult.status}
+- Success: ${deviceActionResult.success}
+- Message: ${deviceActionResult.message}
+${deviceActionResult.error ? `- Error Details: ${deviceActionResult.error.message} (Code: ${deviceActionResult.error.code})` : ""}
+
+CRITICAL INSTRUCTIONS FOR DORA'S RESPONSE:
+1. Speak in your authentic, warm conversational voice (natural Banglish/English as appropriate).
+2. If success is true: Confirm warmly that you are opening ${detected.deviceAction.appName} on their device now (e.g., "Haan, YouTube open kore dicchi!" or "Sure, opening YouTube for you right now!").
+3. If success is false because bridge is not connected (BRIDGE_UNAVAILABLE): Explain warmly and casually that the Android companion device bridge isn't active in this session yet, but you're all set once paired (e.g. "I got you, but the Android companion bridge isn't connected right now.").
+4. NEVER output raw JSON, stack traces, or technical error codes.`;
+        } catch (err: any) {
+          console.warn("[Device Action Execution Error]:", err?.message);
+          deviceActionContext = `\n\n[DEVICE ACTION NOTICE: Attempted to trigger ${detected.deviceAction.action} for ${detected.deviceAction.appName}, but could not complete the operation.]`;
+        }
+      }
 
       if (isTemporal && detected.temporal) {
         const t = detected.temporal;
@@ -381,6 +459,7 @@ Then organize key headlines with:
         deepThinkPrompt,
         brainPromptContext,
         searchPromptContext,
+        deviceActionContext,
       ]
         .filter(Boolean)
         .join("\n");
@@ -472,6 +551,8 @@ Then organize key headlines with:
         provider: providerUsed,
         model: modelUsed,
         context: brainAnalysis.activeContext,
+        deviceAction: detected.deviceAction || null,
+        deviceActionResult: deviceActionResult || null,
         timestamp: Date.now(),
       });
     } catch (error: any) {

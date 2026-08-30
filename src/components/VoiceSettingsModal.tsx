@@ -26,11 +26,13 @@ import {
   Bug,
   LogOut,
   AlertTriangle,
+  Smartphone,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { VoiceSettings, UserProfile } from "../types";
 import { DoraSparkle } from "./DoraSparkle";
 import { memoryManager } from "../memory/MemoryManager";
+import { AndroidControlStatus } from "./device/AndroidControlStatus";
 
 interface VoiceSettingsModalProps {
   isOpen: boolean;
@@ -55,6 +57,7 @@ export type SettingsSection =
   | "notifications"
   | "safety"
   | "security"
+  | "devicecontrol"
   | "storage"
   | "datacontrols"
   | "about";
@@ -503,10 +506,31 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
             <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
           </button>
 
+          {/* Android Device Control */}
+          <button
+            type="button"
+            onClick={() => setActiveSection("devicecontrol")}
+            className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
+          >
+            <div className="flex items-center gap-3.5">
+              <Smartphone className="w-5 h-5 text-white/70 group-hover:text-[#38BDF8] transition-colors" />
+              <div>
+                <span className="text-sm font-medium text-white block">Device Control</span>
+                <span className="text-xs text-white/45 block">Android Phone Bridge & Actions</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1D72FE]/20 text-[#38BDF8] font-mono">
+                Phase 1
+              </span>
+              <ChevronRight className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-colors" />
+            </div>
+          </button>
+
           {/* Remote control */}
           <button
             type="button"
-            onClick={() => setActiveSection("general")}
+            onClick={() => setActiveSection("devicecontrol")}
             className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/[0.04] active:bg-white/[0.08] transition-colors text-left group"
           >
             <div className="flex items-center gap-3.5">
@@ -1034,6 +1058,29 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     </div>
   );
 
+  // =========================================================================
+  // SUB-VIEW: DEVICE CONTROL & ANDROID PHONE BRIDGE
+  // =========================================================================
+  const renderDeviceControlContent = () => (
+    <div className="space-y-6 animate-fade-in text-[#E3E3E3]">
+      <div>
+        <h3 className="text-base font-semibold text-white mb-1">Android Phone Control</h3>
+        <p className="text-xs text-white/50 leading-relaxed">
+          Allows Dora to autonomously launch applications and interact with your Android companion device.
+        </p>
+      </div>
+
+      <AndroidControlStatus />
+
+      <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] p-4 text-xs text-white/60 space-y-2">
+        <h4 className="text-xs font-semibold text-white">Security & Allowlisting</h4>
+        <p className="leading-relaxed text-white/50">
+          All actions are validated through an allowlisted registry with strictly safe boundaries. Dora does not execute arbitrary shell commands or unsanctioned system scripts.
+        </p>
+      </div>
+    </div>
+  );
+
   // Dispatch current subview
   const renderSubView = () => {
     switch (activeSection) {
@@ -1053,6 +1100,8 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         return renderSafetyContent();
       case "security":
         return renderSafetyContent();
+      case "devicecontrol":
+        return renderDeviceControlContent();
       case "storage":
       case "datacontrols":
         return renderStorageContent();
