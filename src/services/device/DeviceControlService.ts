@@ -85,33 +85,105 @@ export class DeviceControlService {
     if (deviceType === "android") {
       let result: DeviceActionResult;
 
-      if (action === "open_application") {
-        const params: OpenApplicationParams = {
-          appName: request.parameters?.appName || "",
-          packageName: request.parameters?.packageName,
-          fallbackUrl: request.parameters?.fallbackUrl,
-        };
-        result = await androidControlService.openApplication(params);
-      } else {
-        result = {
-          requestId,
-          success: false,
-          status: "ACTION_FAILED",
-          device: "android",
-          action,
-          message: `Action '${action}' is not implemented in Milestone 1.`,
-          error: {
-            code: "ACTION_NOT_IMPLEMENTED",
-            details: `Action '${action}' is declared in the registry for future phases.`,
-          },
-          timestamp: Date.now(),
-        };
+      switch (action) {
+        case "open_application":
+          result = await androidControlService.openApplication({
+            appName: request.parameters?.appName || "",
+            packageName: request.parameters?.packageName,
+            fallbackUrl: request.parameters?.fallbackUrl,
+          });
+          break;
+
+        case "tap":
+          result = await androidControlService.tap({
+            elementId: request.parameters?.elementId,
+            x: request.parameters?.x !== undefined ? Number(request.parameters.x) : undefined,
+            y: request.parameters?.y !== undefined ? Number(request.parameters.y) : undefined,
+            longPress: Boolean(request.parameters?.longPress),
+          });
+          break;
+
+        case "type_text":
+          result = await androidControlService.typeText({
+            elementId: request.parameters?.elementId,
+            text: String(request.parameters?.text ?? ""),
+            clearFirst: Boolean(request.parameters?.clearFirst),
+            pressEnter: Boolean(request.parameters?.pressEnter),
+          });
+          break;
+
+        case "swipe":
+          result = await androidControlService.swipe({
+            direction: request.parameters?.direction || "up",
+            durationMs: request.parameters?.durationMs ? Number(request.parameters.durationMs) : undefined,
+            startX: request.parameters?.startX ? Number(request.parameters.startX) : undefined,
+            startY: request.parameters?.startY ? Number(request.parameters.startY) : undefined,
+            endX: request.parameters?.endX ? Number(request.parameters.endX) : undefined,
+            endY: request.parameters?.endY ? Number(request.parameters.endY) : undefined,
+          });
+          break;
+
+        case "scroll":
+          result = await androidControlService.scroll({
+            direction: request.parameters?.direction || "down",
+            elementId: request.parameters?.elementId,
+          });
+          break;
+
+        case "press_back":
+          result = await androidControlService.pressBack();
+          break;
+
+        case "press_home":
+          result = await androidControlService.pressHome();
+          break;
+
+        case "take_screenshot":
+          result = await androidControlService.takeScreenshot({
+            quality: request.parameters?.quality ? Number(request.parameters.quality) : undefined,
+          });
+          break;
+
+        case "read_screen":
+          result = await androidControlService.readScreen({
+            includeNonClickable: request.parameters?.includeNonClickable !== undefined ? Boolean(request.parameters.includeNonClickable) : true,
+          });
+          break;
+
+        case "find_ui_element":
+          result = await androidControlService.findUiElement({
+            text: request.parameters?.text,
+            contentDescription: request.parameters?.contentDescription,
+            resourceId: request.parameters?.resourceId,
+            className: request.parameters?.className,
+            matchCase: Boolean(request.parameters?.matchCase),
+          });
+          break;
+
+        case "open_url":
+          result = await androidControlService.openUrl(String(request.parameters?.url || ""));
+          break;
+
+        default:
+          result = {
+            requestId,
+            success: false,
+            status: "ACTION_FAILED",
+            device: "android",
+            action,
+            message: `Action '${action}' is not handled.`,
+            error: {
+              code: "ACTION_NOT_IMPLEMENTED",
+              details: `Action '${action}' is declared but not handled by Android control dispatcher.`,
+            },
+            timestamp: Date.now(),
+          };
       }
 
       this.emitMemoryEvent(
         deviceType,
         action,
-        request.parameters?.appName || action,
+        request.parameters?.appName || request.parameters?.elementId || request.parameters?.text || action,
         result.success,
         result.message
       );

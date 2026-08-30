@@ -115,4 +115,224 @@ class DoraAndroidBridgePlugin(private val context: Context) {
 
         return result.toString()
     }
+
+    // =========================================================================
+    // Phase 2: Native UI Interaction Methods
+    // =========================================================================
+
+    /**
+     * Reads active screen accessibility tree
+     */
+    fun readScreen(optionsJson: String?): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active in memory. Enable in Android Settings.")
+            return result.toString()
+        }
+
+        try {
+            val includeNonClickable = if (optionsJson != null) {
+                JSONObject(optionsJson).optBoolean("includeNonClickable", true)
+            } else true
+
+            val screen = service.dumpScreenHierarchy(includeNonClickable)
+            result.put("success", true)
+            result.put("screen", screen)
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to inspect accessibility tree")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Taps a UI node or screen coordinate
+     */
+    fun tapNode(optionsJson: String): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active.")
+            return result.toString()
+        }
+
+        try {
+            val opts = JSONObject(optionsJson)
+            val resId = opts.optString("resourceId").takeIf { it.isNotBlank() }
+            val text = opts.optString("text").takeIf { it.isNotBlank() }
+            val desc = opts.optString("contentDescription").takeIf { it.isNotBlank() }
+            val x = if (opts.has("x")) opts.getDouble("x").toFloat() else null
+            val y = if (opts.has("y")) opts.getDouble("y").toFloat() else null
+
+            var isDone = false
+            service.tapNodeOrCoords(resId, text, desc, x, y) { success, msg ->
+                result.put("success", success)
+                if (msg != null) {
+                    if (success) result.put("message", msg) else result.put("error", msg)
+                }
+                isDone = true
+            }
+
+            // Short wait for callback if gesture
+            var attempts = 0
+            while (!isDone && attempts < 20) {
+                Thread.sleep(25)
+                attempts++
+            }
+
+            if (!result.has("success")) {
+                result.put("success", false)
+                result.put("error", "Tap operation timed out.")
+            }
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Tap exception")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Types text into editable field
+     */
+    fun typeTextOnNode(optionsJson: String): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active.")
+            return result.toString()
+        }
+
+        try {
+            val opts = JSONObject(optionsJson)
+            val text = opts.optString("text", "")
+            val resId = opts.optString("resourceId").takeIf { it.isNotBlank() }
+            val clearFirst = opts.optBoolean("clearFirst", false)
+
+            val success = service.typeTextIntoActiveField(text, resId, clearFirst)
+            result.put("success", success)
+            if (success) {
+                result.put("message", "Typed ${text.length} characters successfully.")
+            } else {
+                result.put("error", "Failed to set text on active editable node.")
+            }
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Type text exception")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Performs directional swipe
+     */
+    fun swipeGesture(optionsJson: String): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active.")
+            return result.toString()
+        }
+
+        try {
+            val opts = JSONObject(optionsJson)
+            val direction = opts.optString("direction", "up")
+            val durationMs = opts.optLong("durationMs", 300L)
+
+            var isDone = false
+            val dispatched = service.performSwipe(direction, durationMs) { success ->
+                result.put("success", success)
+                if (!success) result.put("error", "Swipe gesture cancelled")
+                isDone = true
+            }
+
+            if (!dispatched) {
+                result.put("success", false)
+                result.put("error", "Failed to dispatch swipe gesture.")
+                return result.toString()
+            }
+
+            var attempts = 0
+            while (!isDone && attempts < 25) {
+                Thread.sleep(25)
+                attempts++
+            }
+
+            if (!result.has("success")) {
+                result.put("success", true)
+                result.put("message", "Swiped $direction")
+            }
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Swipe exception")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Performs scrolling
+     */
+    fun scrollWindow(optionsJson: String): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active.")
+            return result.toString()
+        }
+
+        try {
+            val opts = JSONObject(optionsJson)
+            val direction = opts.optString("direction", "down")
+            val success = service.performScroll(direction)
+            result.put("success", success)
+            if (success) {
+                result.put("message", "Scrolled $direction successfully.")
+            } else {
+                result.put("error", "Scroll action was not handled by active node.")
+            }
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Scroll exception")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Navigates back
+     */
+    fun pressBack(): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active.")
+            return result.toString()
+        }
+        val success = service.performBack()
+        result.put("success", success)
+        if (success) result.put("message", "Navigated back") else result.put("error", "Back action failed")
+        return result.toString()
+    }
+
+    /**
+     * Navigates home
+     */
+    fun pressHome(): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active.")
+            return result.toString()
+        }
+        val success = service.performHome()
+        result.put("success", success)
+        if (success) result.put("message", "Navigated home") else result.put("error", "Home action failed")
+        return result.toString()
+    }
 }

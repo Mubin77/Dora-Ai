@@ -15,8 +15,10 @@ import { androidControlService } from "../../src/services/device/AndroidControlS
 import { mockAndroidControlService } from "../../src/services/device/MockAndroidControlService";
 import { applicationResolver } from "../../src/services/device/ApplicationResolver";
 import { deviceSafety } from "../../src/services/device/DeviceSafety";
+import { screenObservationManager } from "../../src/services/device/ScreenObservationManager";
+import { deviceActionVerifier } from "../../src/services/device/DeviceActionVerifier";
 import { taskDetector } from "./taskDetector";
-import { DeviceActionResult } from "../../src/types/device";
+import { DeviceActionResult, ScreenObservation } from "../../src/types/device";
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -27,7 +29,7 @@ function assert(condition: boolean, message: string) {
 
 export async function runAllDeviceControlTests() {
   console.log("\n========================================================");
-  console.log("RUNNING DORA DEVICE CONTROL TEST SUITE (PHASE 1)");
+  console.log("RUNNING DORA DEVICE CONTROL TEST SUITE (PHASE 1 & PHASE 2)");
   console.log("========================================================\n");
 
   // -------------------------------------------------------------
@@ -63,7 +65,7 @@ export async function runAllDeviceControlTests() {
   // TEST 2 (Case B): Mock Successful Android Native Bridge
   // Action returns success=true, status=ACTION_EXECUTED
   // -------------------------------------------------------------
-  console.log("\nTEST 2 (Case B) — Successful Android Native Bridge:");
+  console.log("\nTEST 2 (Case B) — Successful Android Native Bridge (App Launch):");
   {
     let nativeOpenAppCalled = false;
     let launchedPackage = "";
@@ -179,9 +181,210 @@ export async function runAllDeviceControlTests() {
   }
 
   // -------------------------------------------------------------
-  // TEST 7 (Case G): Bilingual Task Detection Coverage
+  // TEST 7 (Phase 2): Screen Observation Manager & Element Matching
   // -------------------------------------------------------------
-  console.log("\nTEST 7 (Case G) — TaskDetector Bilingual App Launch Phrases:");
+  console.log("\nTEST 7 (Phase 2) — Screen Observation & Element ID Management:");
+  {
+    const sampleObs = screenObservationManager.createObservation({
+      packageName: "com.google.android.youtube",
+      activityName: "com.google.android.youtube.MainActivity",
+      windowTitle: "YouTube Home",
+      elements: [
+        {
+          className: "android.widget.Button",
+          text: "Search",
+          contentDescription: "Search YouTube",
+          resourceId: "com.google.android.youtube:id/search_button",
+          clickable: true,
+          editable: false,
+          bounds: { left: 800, top: 100, right: 950, bottom: 200 },
+        },
+        {
+          className: "android.widget.EditText",
+          text: "",
+          contentDescription: "Search query input",
+          resourceId: "com.google.android.youtube:id/search_query",
+          clickable: true,
+          editable: true,
+          bounds: { left: 100, top: 100, right: 780, bottom: 200 },
+        },
+      ],
+    });
+
+    assert(sampleObs.elements.length === 2, "Screen observation contains 2 elements");
+    const searchBtn = sampleObs.elements[0];
+    assert(searchBtn.elementId.startsWith("el_"), "Element has observation-scoped unique ID");
+
+    // Lookup element by ID
+    const lookup = screenObservationManager.getElement(searchBtn.elementId);
+    assert(!lookup.isStale && lookup.element !== null, "Element found in observation manager");
+    assert(lookup.element?.text === "Search", "Matched correct search button element");
+
+    // Query element by text
+    const matched = screenObservationManager.findMatchingElement({ text: "Search" }, sampleObs);
+    assert(matched?.elementId === searchBtn.elementId, "findMatchingElement found search button by text");
+  }
+
+  // -------------------------------------------------------------
+  // TEST 8 (Phase 2): Stale Element Rejection
+  // -------------------------------------------------------------
+  console.log("\nTEST 8 (Phase 2) — Stale Element Protection:");
+  {
+    const freshObs = screenObservationManager.createObservation({
+      packageName: "com.whatsapp",
+      elements: [
+        {
+          className: "android.widget.TextView",
+          text: "Chat with Dora",
+          clickable: true,
+          bounds: { left: 50, top: 100, right: 400, bottom: 180 },
+        },
+      ],
+    });
+
+    const elId = freshObs.elements[0].elementId;
+
+    // Invalidate observation (e.g. following another navigation action)
+    screenObservationManager.invalidateObservations("User navigated away");
+
+    const staleLookup = screenObservationManager.getElement(elId);
+    assert(staleLookup.isStale === true, "Lookup identifies invalidated element as stale");
+
+    // Attempting tap on stale element via AndroidControlService with mock bridge
+    androidControlService.setNativeBridgeForTesting({
+      checkAccessibility: async () => ({ enabled: true }),
+      openApp: async () => ({ success: true }),
+      tapNode: async () => ({ success: true }),
+    });
+
+    const tapResult = await androidControlService.tap({ elementId: elId });
+    assert(tapResult.success === false, "Tap on stale element is rejected");
+    assert(tapResult.error?.code === "STALE_ELEMENT", "Error code is STALE_ELEMENT");
+
+    androidControlService.setNativeBridgeForTesting(null);
+  }
+
+  // -------------------------------------------------------------
+  // TEST 9 (Phase 2): Sensitive Field Typing Protection
+  // -------------------------------------------------------------
+  console.log("\nTEST 9 (Phase 2) — Sensitive Password Field Protection:");
+  {
+    const authObs = screenObservationManager.createObservation({
+      packageName: "com.example.bank",
+      elements: [
+        {
+          className: "android.widget.EditText",
+          text: "",
+          contentDescription: "Enter Account Password",
+          resourceId: "com.example.bank:id/password_input",
+          isPassword: true,
+          clickable: true,
+          editable: true,
+          bounds: { left: 100, top: 300, right: 800, bottom: 400 },
+        },
+      ],
+    });
+
+    const pwElId = authObs.elements[0].elementId;
+
+    androidControlService.setNativeBridgeForTesting({
+      checkAccessibility: async () => ({ enabled: true }),
+      openApp: async () => ({ success: true }),
+      typeTextOnNode: async () => ({ success: true }),
+    });
+
+    const typeResult = await androidControlService.typeText({
+      elementId: pwElId,
+      text: "SecretPassword123",
+    });
+
+    assert(typeResult.success === false, "Automated typing into password field is BLOCKED");
+    assert(typeResult.error?.code === "SENSITIVE_FIELD_BLOCKED", "Error code is SENSITIVE_FIELD_BLOCKED");
+
+    androidControlService.setNativeBridgeForTesting(null);
+  }
+
+  // -------------------------------------------------------------
+  // TEST 10 (Phase 2): UI Gestures & Native Bridge Integration
+  // -------------------------------------------------------------
+  console.log("\nTEST 10 (Phase 2) — Native Bridge Phase 2 UI Actions:");
+  {
+    let tapDispatched = false;
+    let swipeDirection = "";
+    let scrollDirection = "";
+    let backPressed = false;
+    let homePressed = false;
+
+    androidControlService.setNativeBridgeForTesting({
+      checkAccessibility: async () => ({ enabled: true }),
+      openApp: async () => ({ success: true }),
+      tapNode: async () => {
+        tapDispatched = true;
+        return { success: true, message: "Tapped node" };
+      },
+      swipeGesture: async (opts) => {
+        swipeDirection = opts.direction;
+        return { success: true, message: `Swiped ${opts.direction}` };
+      },
+      scrollWindow: async (opts) => {
+        scrollDirection = opts.direction;
+        return { success: true, message: `Scrolled ${opts.direction}` };
+      },
+      pressBack: async () => {
+        backPressed = true;
+        return { success: true, message: "Back" };
+      },
+      pressHome: async () => {
+        homePressed = true;
+        return { success: true, message: "Home" };
+      },
+    });
+
+    // 1. Test Tap
+    const tapRes = await deviceControlService.executeAction({
+      device: "android",
+      action: "tap",
+      parameters: { x: 500, y: 800 },
+    });
+    assert(tapRes.success === true && tapDispatched, "Tap action dispatched to native bridge");
+
+    // 2. Test Swipe
+    const swipeRes = await deviceControlService.executeAction({
+      device: "android",
+      action: "swipe",
+      parameters: { direction: "up" },
+    });
+    assert(swipeRes.success === true && swipeDirection === "up", "Swipe 'up' dispatched to native bridge");
+
+    // 3. Test Scroll
+    const scrollRes = await deviceControlService.executeAction({
+      device: "android",
+      action: "scroll",
+      parameters: { direction: "down" },
+    });
+    assert(scrollRes.success === true && scrollDirection === "down", "Scroll 'down' dispatched to native bridge");
+
+    // 4. Test Back
+    const backRes = await deviceControlService.executeAction({
+      device: "android",
+      action: "press_back",
+    });
+    assert(backRes.success === true && backPressed, "Press back dispatched to native bridge");
+
+    // 5. Test Home
+    const homeRes = await deviceControlService.executeAction({
+      device: "android",
+      action: "press_home",
+    });
+    assert(homeRes.success === true && homePressed, "Press home dispatched to native bridge");
+
+    androidControlService.setNativeBridgeForTesting(null);
+  }
+
+  // -------------------------------------------------------------
+  // TEST 11: TaskDetector Bilingual App Launch Phrases
+  // -------------------------------------------------------------
+  console.log("\nTEST 11 — TaskDetector Bilingual App Launch Phrases:");
   {
     const phrases = [
       { text: "YouTube open koro", app: "YouTube" },
@@ -200,8 +403,9 @@ export async function runAllDeviceControlTests() {
   }
 
   console.log("\n========================================================");
-  console.log("✅ ALL DORA DEVICE CONTROL TESTS PASSED SUCCESSFULLY");
+  console.log("✅ ALL DORA DEVICE CONTROL TESTS (PHASE 1 & 2) PASSED");
   console.log("========================================================\n");
 
   return { success: true, timestamp: Date.now() };
 }
+

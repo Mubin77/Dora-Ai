@@ -32,7 +32,7 @@ export class DeviceActionRegistry {
   }
 
   private registerInitialActions(): void {
-    // 1. open_application (Implemented in Milestone 1)
+    // 1. open_application (Phase 1)
     this.registerAction({
       action: "open_application",
       description: "Launches an installed Android application by name or package identifier.",
@@ -46,28 +46,135 @@ export class DeviceActionRegistry {
       },
     });
 
-    // 2. Future Placeholder Actions (Registered but flagged as not implemented)
-    const futureActions: Array<{ action: DeviceAction; desc: string; params: string[] }> = [
-      { action: "tap", desc: "Taps at screen coordinate or UI element", params: ["x", "y"] },
-      { action: "type_text", desc: "Types text into active input field", params: ["text"] },
-      { action: "swipe", desc: "Performs directional swipe gesture", params: ["direction"] },
-      { action: "scroll", desc: "Scrolls viewport", params: ["direction"] },
-      { action: "press_back", desc: "Sends hardware/virtual back button event", params: [] },
-      { action: "press_home", desc: "Sends home button event", params: [] },
-      { action: "read_screen", desc: "Inspects accessibility node hierarchy", params: [] },
-      { action: "take_screenshot", desc: "Captures current display frame", params: [] },
-      { action: "open_url", desc: "Opens web URL in browser", params: ["url"] },
-    ];
+    // 2. tap (Phase 2)
+    this.registerAction({
+      action: "tap",
+      description: "Taps a visible UI element by observation elementId or validated screen coordinates.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: (params) => {
+        const hasElement = typeof params?.elementId === "string" && params.elementId.trim().length > 0;
+        const hasCoords = params?.x !== undefined && params?.y !== undefined && !isNaN(Number(params.x)) && !isNaN(Number(params.y));
+        if (!hasElement && !hasCoords) {
+          return { isValid: false, error: "Tap requires either a valid 'elementId' or ('x', 'y') coordinates." };
+        }
+        return { isValid: true };
+      },
+    });
 
-    for (const fa of futureActions) {
-      this.registerAction({
-        action: fa.action,
-        description: fa.desc,
-        isImplemented: false,
-        requiredParameters: fa.params,
-        validateParameters: () => ({ isValid: true }),
-      });
-    }
+    // 3. type_text (Phase 2)
+    this.registerAction({
+      action: "type_text",
+      description: "Inputs text into the focused or target editable UI element.",
+      isImplemented: true,
+      requiredParameters: ["text"],
+      validateParameters: (params) => {
+        if (params?.text === undefined || params?.text === null || typeof params.text !== "string") {
+          return { isValid: false, error: "Missing or invalid required parameter: text" };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 4. swipe (Phase 2)
+    this.registerAction({
+      action: "swipe",
+      description: "Executes a directional swipe gesture (up, down, left, right).",
+      isImplemented: true,
+      requiredParameters: ["direction"],
+      validateParameters: (params) => {
+        const dir = params?.direction;
+        if (!dir || !["up", "down", "left", "right"].includes(dir)) {
+          return { isValid: false, error: "Swipe requires direction to be 'up', 'down', 'left', or 'right'." };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 5. scroll (Phase 2)
+    this.registerAction({
+      action: "scroll",
+      description: "Scrolls the active window forward or backward.",
+      isImplemented: true,
+      requiredParameters: ["direction"],
+      validateParameters: (params) => {
+        const dir = params?.direction;
+        if (!dir || !["up", "down"].includes(dir)) {
+          return { isValid: false, error: "Scroll requires direction to be 'up' or 'down'." };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 6. press_back (Phase 2)
+    this.registerAction({
+      action: "press_back",
+      description: "Sends the Android system Back navigation action.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: () => ({ isValid: true }),
+    });
+
+    // 7. press_home (Phase 2)
+    this.registerAction({
+      action: "press_home",
+      description: "Sends the Android system Home navigation action.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: () => ({ isValid: true }),
+    });
+
+    // 8. take_screenshot (Phase 2)
+    this.registerAction({
+      action: "take_screenshot",
+      description: "Captures a temporary frame buffer of the current screen for inspection.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: () => ({ isValid: true }),
+    });
+
+    // 9. read_screen (Phase 2)
+    this.registerAction({
+      action: "read_screen",
+      description: "Inspects the active window accessibility tree and returns visible structured UI elements.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: () => ({ isValid: true }),
+    });
+
+    // 10. find_ui_element (Phase 2)
+    this.registerAction({
+      action: "find_ui_element",
+      description: "Queries the active window for a UI element by text, content description, or resource ID.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: (params) => {
+        const hasCriterion =
+          Boolean(params?.text && typeof params.text === "string" && params.text.trim()) ||
+          Boolean(params?.contentDescription && typeof params.contentDescription === "string" && params.contentDescription.trim()) ||
+          Boolean(params?.resourceId && typeof params.resourceId === "string" && params.resourceId.trim()) ||
+          Boolean(params?.className && typeof params.className === "string" && params.className.trim());
+
+        if (!hasCriterion) {
+          return { isValid: false, error: "find_ui_element requires at least one of: text, contentDescription, resourceId, or className." };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 11. open_url (Auxiliary)
+    this.registerAction({
+      action: "open_url",
+      description: "Opens a validated web URL in the default browser.",
+      isImplemented: true,
+      requiredParameters: ["url"],
+      validateParameters: (params) => {
+        if (!params || typeof params.url !== "string" || !/^https?:\/\//i.test(params.url.trim())) {
+          return { isValid: false, error: "Invalid URL parameter: must begin with http:// or https://" };
+        }
+        return { isValid: true };
+      },
+    });
   }
 
   public registerAction(def: RegisteredActionDefinition): void {
