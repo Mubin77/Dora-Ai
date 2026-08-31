@@ -3,26 +3,55 @@ package ai.dora.companion
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.util.Log
+import android.webkit.JavascriptInterface
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Dora Android Companion Bridge Plugin
+ * Dora Android Bridge Plugin
  * 
  * Exposes native Android application management and accessibility capabilities
- * to the Dora React/Web layer via Capacitor / JavaScript interface.
+ * to both the native Android Activity and the Dora React/WebView layer via JavaScript interface.
  */
 class DoraAndroidBridgePlugin(private val context: Context) {
 
     companion object {
         private const val TAG = "DoraAndroidBridge"
+
+        // Common application package map for instant local resolution
+        private val COMMON_PACKAGE_MAP = mapOf(
+            "youtube" to "com.google.android.youtube",
+            "whatsapp" to "com.whatsapp",
+            "chrome" to "com.android.chrome",
+            "browser" to "com.android.chrome",
+            "google maps" to "com.google.android.apps.maps",
+            "maps" to "com.google.android.apps.maps",
+            "settings" to "com.android.settings",
+            "camera" to "com.android.camera",
+            "photos" to "com.google.android.apps.photos",
+            "gallery" to "com.google.android.apps.photos",
+            "spotify" to "com.spotify.music",
+            "gmail" to "com.google.android.gm",
+            "play store" to "com.android.vending",
+            "clock" to "com.google.android.deskclock",
+            "calculator" to "com.google.android.calculator",
+            "contacts" to "com.google.android.contacts",
+            "messages" to "com.google.android.apps.messaging",
+            "telegram" to "org.telegram.messenger",
+            "facebook" to "com.facebook.katana",
+            "instagram" to "com.instagram.android",
+            "twitter" to "com.twitter.android",
+            "x" to "com.twitter.android"
+        )
     }
 
     /**
      * Checks accessibility permission status and device identity
      */
+    @JavascriptInterface
     fun checkAccessibility(): String {
         val isEnabled = DoraAccessibilityService.isAccessibilitySettingsEnabled(context)
         val isRunning = DoraAccessibilityService.isServiceRunning()
@@ -30,30 +59,77 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         val response = JSONObject().apply {
             put("enabled", isEnabled)
             put("running", isRunning)
-            put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
+            put("model", "${Build.MANUFACTURER} ${Build.MODEL}".trim())
             put("version", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         }
         return response.toString()
     }
 
     /**
-     * Launches an installed Android application by package identifier
+     * Resolves app package from name or common package dictionary
      */
+    fun resolvePackage(appName: String): String? {
+        val cleanName = appName.trim().lowercase()
+        
+        // 1. Direct map check
+        COMMON_PACKAGE_MAP[cleanName]?.let { return it }
+
+        // 2. Contains check in common map
+        for ((key, pkg) in COMMON_PACKAGE_MAP) {
+            if (cleanName.contains(key) || key.contains(cleanName)) {
+                return pkg
+            }
+        }
+
+        // 3. Search installed applications
+        try {
+            val pm = context.packageManager
+            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            val list = pm.queryIntentActivities(mainIntent, 0)
+            for (info in list) {
+                val label = info.loadLabel(pm).toString().lowercase()
+                if (label == cleanName || label.contains(cleanName) || cleanName.contains(label)) {
+                    return info.activityInfo.packageName
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Package resolution query exception: ${e.message}")
+        }
+
+        return null
+    }
+
+    /**
+     * Launches an installed Android application by package identifier or natural app name
+     */
+    @JavascriptInterface
     fun openApp(optionsJson: String): String {
         val result = JSONObject()
         try {
             val options = JSONObject(optionsJson)
-            val appName = options.optString("appName", "Application")
-            val packageName = options.optString("packageName", "")
+            val appName = options.optString("appName", "Application").trim()
+            var packageName = options.optString("packageName", "").trim()
 
             if (packageName.isBlank()) {
-                result.put("success", false)
-                result.put("error", "Package name cannot be empty")
-                return result.toString()
+                val resolved = resolvePackage(appName)
+                if (resolved != null) {
+                    packageName = resolved
+                } else {
+                    result.put("success", false)
+                    result.put("error", "Could not resolve package for '$appName'. Ensure the app is installed.")
+                    return result.toString()
+                }
             }
 
             val packageManager = context.packageManager
-            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            var launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+
+            // Fallback for settings or specific intents if standard launch intent is null
+            if (launchIntent == null && packageName == "com.android.settings") {
+                launchIntent = Intent(android.provider.Settings.ACTION_SETTINGS)
+            }
 
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -61,7 +137,7 @@ class DoraAndroidBridgePlugin(private val context: Context) {
                 context.startActivity(launchIntent)
 
                 result.put("success", true)
-                result.put("message", "Successfully launched $appName ($packageName)")
+                result.put("message", "Successfully opened $appName ($packageName)")
                 Log.i(TAG, "Launched application: $packageName")
             } else {
                 result.put("success", false)
@@ -77,8 +153,110 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     }
 
     /**
+     * Executes natural language assistant commands (English + Bengali / Banglish)
+     */
+    fun executeNaturalCommand(rawCommand: String): JSONObject {
+        val command = rawCommand.trim().lowercase()
+        val result = JSONObject()
+
+        // 1. YouTube commands ("youtube kholo", "open youtube", "open youtube app")
+        if (command.contains("youtube") || command.contains("ইউটিউব")) {
+            val openRes = JSONObject(openApp(JSONObject().apply {
+                put("appName", "YouTube")
+                put("packageName", "com.google.android.youtube")
+            }.toString()))
+            return openRes
+        }
+
+        // 2. WhatsApp commands ("whatsapp kholo", "open whatsapp", "হোয়াটসঅ্যাপ")
+        if (command.contains("whatsapp") || command.contains("হোয়াটসঅ্যাপ") || command.contains("watsapp")) {
+            val openRes = JSONObject(openApp(JSONObject().apply {
+                put("appName", "WhatsApp")
+                put("packageName", "com.whatsapp")
+            }.toString()))
+            return openRes
+        }
+
+        // 3. Settings ("settings kholo", "open settings", "সেটিংস")
+        if (command.contains("settings") || command.contains("setting") || command.contains("সেটিংস")) {
+            val openRes = JSONObject(openApp(JSONObject().apply {
+                put("appName", "Settings")
+                put("packageName", "com.android.settings")
+            }.toString()))
+            return openRes
+        }
+
+        // 4. Chrome / Browser ("chrome kholo", "open chrome", "browser kholo")
+        if (command.contains("chrome") || command.contains("browser") || command.contains("ক্রোম")) {
+            val openRes = JSONObject(openApp(JSONObject().apply {
+                put("appName", "Google Chrome")
+                put("packageName", "com.android.chrome")
+            }.toString()))
+            return openRes
+        }
+
+        // 5. Navigation: Home ("go home", "home jao", "home", "হোম")
+        if (command == "home" || command.contains("go home") || command.contains("home jao") || command.contains("হোম")) {
+            val homeRes = JSONObject(pressHome())
+            return homeRes
+        }
+
+        // 6. Navigation: Back ("go back", "back jao", "back", "পিছনে")
+        if (command == "back" || command.contains("go back") || command.contains("back jao") || command.contains("পিছনে")) {
+            val backRes = JSONObject(pressBack())
+            return backRes
+        }
+
+        // 7. Scroll Down ("scroll down", "niche scroll", "নিচে স্ক্রল")
+        if (command.contains("scroll down") || command.contains("niche scroll") || command.contains("down")) {
+            val scrollRes = JSONObject(scrollWindow(JSONObject().apply { put("direction", "down") }.toString()))
+            return scrollRes
+        }
+
+        // 8. Scroll Up ("scroll up", "upore scroll", "উপরে স্ক্রল")
+        if (command.contains("scroll up") || command.contains("upore scroll") || command.contains("up")) {
+            val scrollRes = JSONObject(scrollWindow(JSONObject().apply { put("direction", "up") }.toString()))
+            return scrollRes
+        }
+
+        // 9. Inspect Screen ("read screen", "screen dekho", "স্ক্রিন")
+        if (command.contains("read screen") || command.contains("inspect") || command.contains("screen dekho")) {
+            val readRes = JSONObject(readScreen(null))
+            return readRes
+        }
+
+        // 10. General "open [App]" / "[App] kholo"
+        val openPrefixes = listOf("open ", "launch ", "start ", "kholo ", "chalu koro ")
+        var targetAppName = command
+        for (prefix in openPrefixes) {
+            if (targetAppName.startsWith(prefix)) {
+                targetAppName = targetAppName.removePrefix(prefix).trim()
+                break
+            }
+        }
+        if (targetAppName.endsWith(" kholo")) {
+            targetAppName = targetAppName.removeSuffix(" kholo").trim()
+        } else if (targetAppName.endsWith(" open koro")) {
+            targetAppName = targetAppName.removeSuffix(" open koro").trim()
+        }
+
+        val resolvedPkg = resolvePackage(targetAppName)
+        if (resolvedPkg != null) {
+            return JSONObject(openApp(JSONObject().apply {
+                put("appName", targetAppName.replaceFirstChar { it.uppercase() })
+                put("packageName", resolvedPkg)
+            }.toString()))
+        }
+
+        result.put("success", false)
+        result.put("error", "Could not interpret command: '$rawCommand'. Try 'YouTube kholo', 'Open WhatsApp', 'Go Home', or 'Scroll Down'.")
+        return result
+    }
+
+    /**
      * Enumerates all launchable applications installed on the Android device
      */
+    @JavascriptInterface
     fun getInstalledApplications(): String {
         val result = JSONObject()
         val appList = JSONArray()
@@ -123,12 +301,13 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     /**
      * Reads active screen accessibility tree
      */
+    @JavascriptInterface
     fun readScreen(optionsJson: String?): String {
         val result = JSONObject()
         val service = DoraAccessibilityService.getInstance()
         if (service == null) {
             result.put("success", false)
-            result.put("error", "Dora Accessibility Service is not active in memory. Enable in Android Settings.")
+            result.put("error", "Dora Accessibility Service is not active. Enable in Android Settings.")
             return result.toString()
         }
 
@@ -150,6 +329,7 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     /**
      * Taps a UI node or screen coordinate
      */
+    @JavascriptInterface
     fun tapNode(optionsJson: String): String {
         val result = JSONObject()
         val service = DoraAccessibilityService.getInstance()
@@ -196,6 +376,7 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     /**
      * Types text into editable field
      */
+    @JavascriptInterface
     fun typeTextOnNode(optionsJson: String): String {
         val result = JSONObject()
         val service = DoraAccessibilityService.getInstance()
@@ -228,6 +409,7 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     /**
      * Performs directional swipe
      */
+    @JavascriptInterface
     fun swipeGesture(optionsJson: String): String {
         val result = JSONObject()
         val service = DoraAccessibilityService.getInstance()
@@ -246,7 +428,6 @@ class DoraAndroidBridgePlugin(private val context: Context) {
             val dispatched = service.performSwipe(direction, durationMs) { success ->
                 result.put("success", success)
                 if (!success) result.put("error", "Swipe gesture cancelled")
-                isDoneOk(success)
                 isDone = true
             }
 
@@ -273,11 +454,10 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         return result.toString()
     }
 
-    private fun isDoneOk(s: Boolean) {}
-
     /**
      * Performs scrolling
      */
+    @JavascriptInterface
     fun scrollWindow(optionsJson: String): String {
         val result = JSONObject()
         val service = DoraAccessibilityService.getInstance()
@@ -307,6 +487,7 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     /**
      * Navigates back
      */
+    @JavascriptInterface
     fun pressBack(): String {
         val result = JSONObject()
         val service = DoraAccessibilityService.getInstance()
@@ -324,6 +505,7 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     /**
      * Navigates home
      */
+    @JavascriptInterface
     fun pressHome(): String {
         val result = JSONObject()
         val service = DoraAccessibilityService.getInstance()
@@ -338,3 +520,4 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         return result.toString()
     }
 }
+
