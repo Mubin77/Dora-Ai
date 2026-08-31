@@ -422,6 +422,13 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
                     <span>{copiedCode ? "Copied" : "Copy"}</span>
                   </button>
                 </div>
+
+                <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between text-[11px]">
+                  <span className="text-white/40">Server URL:</span>
+                  <span className="font-mono text-white/70 truncate max-w-[200px]" title={pairingSession.serverUrl}>
+                    {pairingSession.serverUrl}
+                  </span>
+                </div>
               </div>
             )}
 

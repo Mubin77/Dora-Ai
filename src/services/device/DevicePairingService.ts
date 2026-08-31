@@ -63,7 +63,9 @@ export class DevicePairingService {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
 
-    const defaultUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+    const defaultUrl = typeof window !== "undefined"
+      ? window.location.origin
+      : (process.env.DORA_SERVER_URL || process.env.VITE_PUBLIC_BACKEND_URL || "https://ais-dev-4y3cwyeutkb4dkqz62jsrh-130845624199.asia-southeast1.run.app");
     const serverUrl = serverBaseUrl || defaultUrl;
     const now = Date.now();
     const expiresAt = now + 10 * 60 * 1000; // 10 minutes

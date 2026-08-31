@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import http from "http";
 import path from "path";
 import dotenv from "dotenv";
@@ -49,6 +50,16 @@ function getGenAI(): GoogleGenAI {
 
 async function startServer() {
   const app = express();
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (such as mobile companion app OkHttp requests)
+      // as well as web origins
+      callback(null, true);
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Device-Id", "X-Requested-With"],
+    credentials: true,
+  }));
   app.use(express.json({ limit: "15mb" }));
 
   const server = http.createServer(app);

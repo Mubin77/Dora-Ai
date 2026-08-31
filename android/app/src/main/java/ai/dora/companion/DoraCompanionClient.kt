@@ -22,6 +22,9 @@ import java.util.concurrent.TimeUnit
  * 
  * Manages phone-side pairing exchange, authentication tokens, heartbeat loops,
  * and connection lifecycle states for the Dora Android Companion.
+ * 
+ * Enforces secure HTTPS production endpoints, rejects insecure plain HTTP for remote hosts,
+ * and provides pre-pairing health verification.
  */
 class DoraCompanionClient private constructor(private val context: Context) {
 
@@ -33,6 +36,13 @@ class DoraCompanionClient private constructor(private val context: Context) {
         READY,
         ERROR
     }
+
+    data class HealthCheckResult(
+        val reachable: Boolean,
+        val statusCode: Int = 0,
+        val doraStatus: String? = null,
+        val error: String? = null
+    )
 
     data class PairingResult(
         val success: Boolean,
@@ -56,7 +66,8 @@ class DoraCompanionClient private constructor(private val context: Context) {
         private const val KEY_LAST_SYNC_TIME = "last_sync_time"
         private const val KEY_LAST_PAIRED_CODE = "last_paired_code"
         
-        const val DEFAULT_SERVER_URL = "http://10.0.2.2:3000"
+        // Public production Cloud Run HTTPS endpoint for Dora
+        const val DEFAULT_SERVER_URL = "https://ais-dev-4y3cwyeutkb4dkqz62jsrh-130845624199.asia-southeast1.run.app"
         private const val HEARTBEAT_INTERVAL_SECONDS = 15L
 
         @Volatile
@@ -71,9 +82,9 @@ class DoraCompanionClient private constructor(private val context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .writeTimeout(12, TimeUnit.SECONDS)
         .build()
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -136,6 +147,77 @@ class DoraCompanionClient private constructor(private val context: Context) {
     }
 
     /**
+     * Validates that the provided server URL is well-formed and enforces HTTPS for remote hosts
+     */
+    fun validateServerUrl(rawUrl: String): String? {
+        val trimmed = rawUrl.trim().removeSuffix("/")
+        if (trimmed.isBlank()) {
+            return "Server URL cannot be empty."
+        }
+        val lower = trimmed.lowercase()
+        if (!lower.startsWith("https://") && !lower.startsWith("http://")) {
+            return "Server URL must start with https://"
+        }
+        if (lower.startsWith("http://")) {
+            val hostPart = lower.removePrefix("http://").split(":")[0].split("/")[0]
+            val isLocal = hostPart == "localhost" || hostPart == "127.0.0.1"
+            if (!isLocal) {
+                return "Production server must use secure HTTPS (e.g. https://...)."
+            }
+        }
+        return null
+    }
+
+    /**
+     * Checks server reachability via GET /api/health before attempting pairing
+     */
+    fun checkServerHealth(serverUrl: String, callback: (HealthCheckResult) -> Unit) {
+        val cleanUrl = serverUrl.trim().removeSuffix("/")
+        val validationError = validateServerUrl(cleanUrl)
+        if (validationError != null) {
+            mainHandler.post {
+                callback(HealthCheckResult(reachable = false, error = validationError))
+            }
+            return
+        }
+
+        backgroundExecutor.execute {
+            try {
+                val request = Request.Builder()
+                    .url("$cleanUrl/api/health")
+                    .get()
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: ""
+                    if (response.isSuccessful) {
+                        var doraStatus = "online"
+                        try {
+                            val json = JSONObject(body)
+                            doraStatus = json.optString("dora", json.optString("status", "online"))
+                        } catch (_: Exception) {}
+
+                        mainHandler.post {
+                            callback(HealthCheckResult(reachable = true, statusCode = response.code, doraStatus = doraStatus))
+                        }
+                    } else {
+                        val errMsg = "Server returned HTTP ${response.code}"
+                        mainHandler.post {
+                            callback(HealthCheckResult(reachable = false, statusCode = response.code, error = errMsg))
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Health check failed for $cleanUrl: ${e.message}")
+                val errMsg = "Unable to reach Dora server (${e.localizedMessage ?: e.message ?: "Connection timed out"})"
+                mainHandler.post {
+                    callback(HealthCheckResult(reachable = false, error = errMsg))
+                }
+            }
+        }
+    }
+
+    /**
      * Evaluates truthful connection state based on token presence, accessibility status, and heartbeat
      */
     fun evaluateCurrentState(): ConnectionState {
@@ -157,6 +239,7 @@ class DoraCompanionClient private constructor(private val context: Context) {
 
     /**
      * Initiates pairing exchange with backend (/api/device/pairing/pair)
+     * Performs pre-pairing health check to provide clear feedback if server is unreachable
      */
     fun pairDevice(
         serverUrl: String,
@@ -164,88 +247,107 @@ class DoraCompanionClient private constructor(private val context: Context) {
         isAccessibilityEnabled: Boolean,
         callback: (PairingResult) -> Unit
     ) {
-        notifyStateChanged(ConnectionState.CONNECTING)
-        
         val cleanUrl = serverUrl.trim().removeSuffix("/")
         val cleanCode = pairingCode.trim().uppercase()
-        val deviceId = getStoredDeviceId()
-        val deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
-        val androidVersion = "Android ${Build.VERSION.RELEASE}"
 
-        backgroundExecutor.execute {
-            try {
-                val jsonPayload = JSONObject().apply {
-                    put("pairingCode", cleanCode)
-                    put("deviceId", deviceId)
-                    put("deviceModel", deviceModel)
-                    put("androidVersion", androidVersion)
-                    put("accessibilityEnabled", isAccessibilityEnabled)
-                }
+        val validationError = validateServerUrl(cleanUrl)
+        if (validationError != null) {
+            notifyStateChanged(ConnectionState.ERROR, validationError)
+            callback(PairingResult(success = false, token = null, deviceId = null, error = validationError))
+            return
+        }
 
-                val mediaType = "application/json; charset=utf-8".toMediaType()
-                val requestBody = jsonPayload.toString().toRequestBody(mediaType)
-                val request = Request.Builder()
-                    .url("$cleanUrl/api/device/pairing/pair")
-                    .post(requestBody)
-                    .build()
+        notifyStateChanged(ConnectionState.CONNECTING)
 
-                httpClient.newCall(request).execute().use { response ->
-                    val responseBody = response.body?.string() ?: ""
-                    if (!response.isSuccessful) {
-                        var errorMsg = "Pairing failed (HTTP ${response.code})"
-                        try {
-                            val json = JSONObject(responseBody)
-                            if (json.has("error")) {
-                                errorMsg = json.getString("error")
-                            }
-                        } catch (_: Exception) {}
-                        
-                        notifyStateChanged(ConnectionState.ERROR, errorMsg)
-                        mainHandler.post {
-                            callback(PairingResult(success = false, token = null, deviceId = null, error = errorMsg))
-                        }
-                        return@execute
-                    }
-
-                    val json = JSONObject(responseBody)
-                    val tokenObj = json.optJSONObject("token")
-                    val authToken = tokenObj?.optString("token") ?: json.optString("token", "")
-                    val returnedDeviceId = tokenObj?.optString("deviceId") ?: deviceId
-
-                    if (authToken.isBlank()) {
-                        val errorMsg = "Invalid server response: auth token missing"
-                        notifyStateChanged(ConnectionState.ERROR, errorMsg)
-                        mainHandler.post {
-                            callback(PairingResult(success = false, token = null, deviceId = null, error = errorMsg))
-                        }
-                        return@execute
-                    }
-
-                    // Store credentials securely
-                    prefs.edit()
-                        .putString(KEY_AUTH_TOKEN, authToken)
-                        .putString(KEY_DEVICE_ID, returnedDeviceId)
-                        .putString(KEY_SERVER_URL, cleanUrl)
-                        .putString(KEY_LAST_PAIRED_CODE, cleanCode)
-                        .putLong(KEY_LAST_SYNC_TIME, System.currentTimeMillis())
-                        .apply()
-
-                    // Start background heartbeat
-                    startPeriodicHeartbeat()
-
-                    val targetState = if (isAccessibilityEnabled) ConnectionState.CONNECTED else ConnectionState.ACCESSIBILITY_DISABLED
-                    notifyStateChanged(targetState)
-
-                    mainHandler.post {
-                        callback(PairingResult(success = true, token = authToken, deviceId = returnedDeviceId))
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Pairing network exception", e)
-                val errorMsg = "Network error: ${e.localizedMessage ?: "Could not connect to $cleanUrl"}"
+        // Pre-flight health check before pairing request
+        checkServerHealth(cleanUrl) { health ->
+            if (!health.reachable) {
+                val errorMsg = health.error ?: "Unable to reach Dora server"
                 notifyStateChanged(ConnectionState.ERROR, errorMsg)
-                mainHandler.post {
-                    callback(PairingResult(success = false, token = null, deviceId = null, error = errorMsg))
+                callback(PairingResult(success = false, token = null, deviceId = null, error = errorMsg))
+                return@checkServerHealth
+            }
+
+            // Health check succeeded; execute pairing exchange
+            val deviceId = getStoredDeviceId()
+            val deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
+            val androidVersion = "Android ${Build.VERSION.RELEASE}"
+
+            backgroundExecutor.execute {
+                try {
+                    val jsonPayload = JSONObject().apply {
+                        put("pairingCode", cleanCode)
+                        put("deviceId", deviceId)
+                        put("deviceModel", deviceModel)
+                        put("androidVersion", androidVersion)
+                        put("accessibilityEnabled", isAccessibilityEnabled)
+                    }
+
+                    val mediaType = "application/json; charset=utf-8".toMediaType()
+                    val requestBody = jsonPayload.toString().toRequestBody(mediaType)
+                    val request = Request.Builder()
+                        .url("$cleanUrl/api/device/pairing/pair")
+                        .post(requestBody)
+                        .build()
+
+                    httpClient.newCall(request).execute().use { response ->
+                        val responseBody = response.body?.string() ?: ""
+                        if (!response.isSuccessful) {
+                            var errorMsg = "Pairing failed (HTTP ${response.code})"
+                            try {
+                                val json = JSONObject(responseBody)
+                                if (json.has("error")) {
+                                    errorMsg = json.getString("error")
+                                }
+                            } catch (_: Exception) {}
+                            
+                            notifyStateChanged(ConnectionState.ERROR, errorMsg)
+                            mainHandler.post {
+                                callback(PairingResult(success = false, token = null, deviceId = null, error = errorMsg))
+                            }
+                            return@execute
+                        }
+
+                        val json = JSONObject(responseBody)
+                        val tokenObj = json.optJSONObject("token")
+                        val authToken = tokenObj?.optString("token") ?: json.optString("token", "")
+                        val returnedDeviceId = tokenObj?.optString("deviceId") ?: deviceId
+
+                        if (authToken.isBlank()) {
+                            val errorMsg = "Invalid server response: auth token missing"
+                            notifyStateChanged(ConnectionState.ERROR, errorMsg)
+                            mainHandler.post {
+                                callback(PairingResult(success = false, token = null, deviceId = null, error = errorMsg))
+                            }
+                            return@execute
+                        }
+
+                        // Store credentials securely in private shared preferences
+                        prefs.edit()
+                            .putString(KEY_AUTH_TOKEN, authToken)
+                            .putString(KEY_DEVICE_ID, returnedDeviceId)
+                            .putString(KEY_SERVER_URL, cleanUrl)
+                            .putString(KEY_LAST_PAIRED_CODE, cleanCode)
+                            .putLong(KEY_LAST_SYNC_TIME, System.currentTimeMillis())
+                            .apply()
+
+                        // Start periodic background heartbeat
+                        startPeriodicHeartbeat()
+
+                        val targetState = if (isAccessibilityEnabled) ConnectionState.CONNECTED else ConnectionState.ACCESSIBILITY_DISABLED
+                        notifyStateChanged(targetState)
+
+                        mainHandler.post {
+                            callback(PairingResult(success = true, token = authToken, deviceId = returnedDeviceId))
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Pairing network exception", e)
+                    val errorMsg = "Unable to reach Dora server: ${e.localizedMessage ?: "Connection error"}"
+                    notifyStateChanged(ConnectionState.ERROR, errorMsg)
+                    mainHandler.post {
+                        callback(PairingResult(success = false, token = null, deviceId = null, error = errorMsg))
+                    }
                 }
             }
         }
@@ -290,7 +392,7 @@ class DoraCompanionClient private constructor(private val context: Context) {
                 httpClient.newCall(request).execute().use { response ->
                     val responseBody = response.body?.string() ?: ""
                     if (response.code == 401) {
-                        // Token invalid/revoked
+                        // Token invalid or revoked
                         prefs.edit().remove(KEY_AUTH_TOKEN).apply()
                         stopPeriodicHeartbeat()
                         notifyStateChanged(ConnectionState.NOT_CONFIGURED, "Session expired. Please pair again.")

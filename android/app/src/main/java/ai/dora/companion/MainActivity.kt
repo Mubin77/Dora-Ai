@@ -30,7 +30,8 @@ import java.util.Locale
  * Dora Main Android Activity
  * 
  * Provides native UI for phone-side pairing with Dora, entering 6-character pairing codes,
- * managing connection lifecycle states, and configuring Android Accessibility settings.
+ * verifying server reachability via health checks, managing connection lifecycle states,
+ * and configuring Android Accessibility settings for autonomous task execution.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -52,6 +53,8 @@ class MainActivity : AppCompatActivity() {
     // Pairing Form Views
     private lateinit var pairingSectionContainer: LinearLayout
     private lateinit var serverUrlInput: EditText
+    private lateinit var btnTestServerUrl: Button
+    private lateinit var serverUrlFeedbackText: TextView
     private lateinit var pairingCodeInput: EditText
     private lateinit var btnPair: Button
     private lateinit var pairingProgressBar: ProgressBar
@@ -277,7 +280,7 @@ class MainActivity : AppCompatActivity() {
 
         // Server URL Label & Input
         val serverUrlLabel = TextView(this).apply {
-            text = "Dora Server URL"
+            text = "Dora Public Server URL (HTTPS)"
             textSize = 12f
             setTextColor(0xFFCBD5E1.toInt())
             setTypeface(null, Typeface.BOLD)
@@ -287,9 +290,9 @@ class MainActivity : AppCompatActivity() {
 
         serverUrlInput = EditText(this).apply {
             setText(companionClient.getStoredServerUrl())
-            hint = "http://10.0.2.2:3000"
+            hint = DoraCompanionClient.DEFAULT_SERVER_URL
             setHintTextColor(0xFF475569.toInt())
-            textSize = 13f
+            textSize = 12f
             setTextColor(0xFFFFFFFF.toInt())
             background = createInputBackground()
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -298,7 +301,37 @@ class MainActivity : AppCompatActivity() {
         }
         pairingSectionContainer.addView(serverUrlInput)
 
-        addSpacer(dp(12), pairingSectionContainer)
+        addSpacer(dp(6), pairingSectionContainer)
+
+        // Server Test Connection Row
+        val serverTestLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        btnTestServerUrl = Button(this).apply {
+            text = "Test Connection"
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(0xFF38BDF8.toInt()) // Sky 400
+            background = createOutlineButtonBackground(0xFF0284C7.toInt(), dp(8))
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            setOnClickListener {
+                testServerUrlReachability()
+            }
+        }
+        serverTestLayout.addView(btnTestServerUrl)
+
+        serverUrlFeedbackText = TextView(this).apply {
+            textSize = 11f
+            setTextColor(0xFF94A3B8.toInt())
+            setPadding(dp(10), 0, 0, 0)
+            text = ""
+        }
+        serverTestLayout.addView(serverUrlFeedbackText)
+        pairingSectionContainer.addView(serverTestLayout)
+
+        addSpacer(dp(14), pairingSectionContainer)
 
         // Pairing Code Label & Input
         val pairingCodeLabel = TextView(this).apply {
@@ -472,6 +505,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun testServerUrlReachability() {
+        val serverUrl = serverUrlInput.text.toString().trim()
+        if (serverUrl.isBlank()) {
+            serverUrlFeedbackText.text = "Enter a URL first"
+            serverUrlFeedbackText.setTextColor(0xFFF43F5E.toInt())
+            return
+        }
+
+        serverUrlFeedbackText.text = "Testing reachability..."
+        serverUrlFeedbackText.setTextColor(0xFF38BDF8.toInt())
+        btnTestServerUrl.isEnabled = false
+
+        companionClient.checkServerHealth(serverUrl) { result ->
+            btnTestServerUrl.isEnabled = true
+            if (result.reachable) {
+                serverUrlFeedbackText.text = "✓ Online (${result.doraStatus ?: "HTTP 200"})"
+                serverUrlFeedbackText.setTextColor(0xFF10B981.toInt()) // Emerald
+            } else {
+                serverUrlFeedbackText.text = "✗ ${result.error ?: "Unreachable"}"
+                serverUrlFeedbackText.setTextColor(0xFFF43F5E.toInt()) // Rose
+            }
+        }
+    }
+
     private fun refreshUIFromState(state: DoraCompanionClient.ConnectionState, errorMsg: String?) {
         val isAccessibilityEnabled = DoraAccessibilityService.isAccessibilitySettingsEnabled(this)
         updateAccessibilityUI(isAccessibilityEnabled)
@@ -566,6 +623,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val urlError = companionClient.validateServerUrl(serverUrl)
+        if (urlError != null) {
+            Toast.makeText(this, urlError, Toast.LENGTH_LONG).show()
+            errorFeedbackText.text = urlError
+            errorFeedbackText.visibility = View.VISIBLE
+            serverUrlInput.requestFocus()
+            return
+        }
+
         if (code.isBlank()) {
             Toast.makeText(this, "Please enter the 6-character pairing code", Toast.LENGTH_SHORT).show()
             pairingCodeInput.requestFocus()
@@ -586,7 +652,10 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this@MainActivity, "Paired successfully with Dora!", Toast.LENGTH_LONG).show()
                 pairingCodeInput.text.clear()
             } else {
-                Toast.makeText(this@MainActivity, result.error ?: "Pairing failed", Toast.LENGTH_LONG).show()
+                val err = result.error ?: "Pairing failed"
+                Toast.makeText(this@MainActivity, err, Toast.LENGTH_LONG).show()
+                errorFeedbackText.text = err
+                errorFeedbackText.visibility = View.VISIBLE
             }
         }
     }
