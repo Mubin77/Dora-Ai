@@ -148,13 +148,102 @@ export class GoalInterpreter {
       };
     }
 
-    // 4. Simple Open App
-    // Examples: "Open YouTube", "YouTube kholo", "Launch Camera"
+    // 4. Multi-step chained actions (e.g., "YouTube kholo, AI news search koro, first result open koro")
+    const chainedMatch = lower.match(/(?:(?:open|launch|kholo)\s+([a-z0-9\s._\-]+?)|([a-z0-9\u0980-\u09FF\s._\-]+?)\s*(?:kholo|open\s*koro))\s*,\s*(.+)/i);
+    if (chainedMatch) {
+      const app = (chainedMatch[1] || chainedMatch[2] || "").trim();
+      const rest = (chainedMatch[3] || "").trim();
+      const resolution = applicationResolver.resolveApplication(app);
+      
+      const searchSubMatch = rest.match(/(?:(.+?)\s*(?:search\s*koro|search\s*for|find|khujo)|(?:search\s+for|search)\s+(.+))/i);
+      const query = searchSubMatch ? (searchSubMatch[1] || searchSubMatch[2] || rest).trim() : rest;
+
+      return {
+        rawGoal: trimmed,
+        intent: "search",
+        targetApp: resolution.appName || app,
+        resolvedPackage: resolution.packageName,
+        searchQuery: this.cleanQuery(query),
+        isMultiStep: true,
+        subGoals: [
+          `Open ${resolution.appName || app}`,
+          `Find and tap search bar`,
+          `Type "${this.cleanQuery(query)}" and submit`,
+          `Select and open top result`,
+        ],
+        confidence: 0.96,
+      };
+    }
+
+    // 5. Navigation intents (Home, Back, Scroll)
+    if (/^(?:go\s+home|home\s*e\s*jao|home|press\s*home|হোম)$/i.test(lower)) {
+      return {
+        rawGoal: trimmed,
+        intent: "general_task",
+        targetApp: "Android System",
+        isMultiStep: false,
+        subGoals: ["Press Home Button"],
+        confidence: 0.99,
+      };
+    }
+
+    if (/^(?:go\s+back|back\s*jao|back|press\s*back|পিছনে)$/i.test(lower)) {
+      return {
+        rawGoal: trimmed,
+        intent: "general_task",
+        targetApp: "Android System",
+        isMultiStep: false,
+        subGoals: ["Press Back Button"],
+        confidence: 0.99,
+      };
+    }
+
+    if (/^(?:scroll\s*down|niche\s*scroll(?:\s*koro)?|down|নিচে\s*স্ক্রল)$/i.test(lower)) {
+      return {
+        rawGoal: trimmed,
+        intent: "general_task",
+        targetApp: "Android System",
+        isMultiStep: false,
+        subGoals: ["Scroll Down"],
+        confidence: 0.98,
+      };
+    }
+
+    if (/^(?:scroll\s*up|upore\s*scroll(?:\s*koro)?|up|উপরে\s*স্ক্রল)$/i.test(lower)) {
+      return {
+        rawGoal: trimmed,
+        intent: "general_task",
+        targetApp: "Android System",
+        isMultiStep: false,
+        subGoals: ["Scroll Up"],
+        confidence: 0.98,
+      };
+    }
+
+    // 6. Simple Open App (English + Bangla/Banglish)
+    // Examples: "Open YouTube", "YouTube kholo", "Launch Camera", "WhatsApp open koro"
     const openMatch = lower.match(
       /^(?:open|launch|start)\s+(?:the\s+)?([a-z0-9\s._\-]+?)(?:\s+app|\s+application)?$/i
     );
     if (openMatch && openMatch[1]) {
       const app = openMatch[1].trim();
+      const resolution = applicationResolver.resolveApplication(app);
+      return {
+        rawGoal: trimmed,
+        intent: "open_app",
+        targetApp: resolution.appName || app,
+        resolvedPackage: resolution.packageName,
+        isMultiStep: false,
+        subGoals: [`Launch ${resolution.appName || app}`],
+        confidence: 0.96,
+      };
+    }
+
+    const banglaOpenMatch = lower.match(
+      /^([a-z0-9\u0980-\u09FF\s._\-]+?)\s*(?:app\s*ta\s*|app\s*)?(?:open\s*koro|open\s*kor|kholo|khule\s*dao|chalu\s*koro|chalau)$/i
+    );
+    if (banglaOpenMatch && banglaOpenMatch[1]) {
+      const app = banglaOpenMatch[1].trim();
       const resolution = applicationResolver.resolveApplication(app);
       return {
         rawGoal: trimmed,

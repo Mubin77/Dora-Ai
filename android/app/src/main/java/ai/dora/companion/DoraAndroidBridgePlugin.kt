@@ -66,6 +66,26 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     }
 
     /**
+     * Opens Android Accessibility Settings page directly
+     */
+    @JavascriptInterface
+    fun openAccessibilitySettings(): String {
+        val result = JSONObject()
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            result.put("success", true)
+            result.put("message", "Opened Accessibility Settings")
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to open accessibility settings")
+        }
+        return result.toString()
+    }
+
+    /**
      * Resolves app package from name or common package dictionary
      */
     fun resolvePackage(appName: String): String? {

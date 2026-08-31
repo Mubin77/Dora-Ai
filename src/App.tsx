@@ -50,6 +50,9 @@ import { ChatMessageItem } from "./components/ChatMessageItem";
 import { ImagesGalleryModal } from "./components/ImagesGalleryModal";
 import { LibraryModal } from "./components/LibraryModal";
 import { ModeSelector } from "./components/ModeSelector";
+import { androidControlService } from "./services/device/AndroidControlService";
+import { goalInterpreter } from "./services/device/autonomous/GoalInterpreter";
+import { autonomousAgent } from "./services/device/autonomous/AutonomousAgent";
 
 const SESSIONS_STORAGE_KEY = "dora_conversations_v1";
 const ACTIVE_SESSION_KEY = "dora_active_session_id";
@@ -165,6 +168,40 @@ export default function App() {
   // User profile identity (null by default for anonymous/guest session until authentication is added)
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [userName, setUserName] = useState<string>("");
+
+  // Android Device Control Accessibility Status
+  const [androidControlState, setAndroidControlState] = useState<{
+    isBridgeAvailable: boolean;
+    accessibilityEnabled: boolean;
+    dismissed: boolean;
+  }>({
+    isBridgeAvailable: false,
+    accessibilityEnabled: true,
+    dismissed: false,
+  });
+
+  useEffect(() => {
+    const checkStatus = async () => {
+      const isBridge = androidControlService.isBridgeAvailable();
+      if (isBridge) {
+        const status = await androidControlService.getPermissionStatus();
+        setAndroidControlState((prev) => ({
+          ...prev,
+          isBridgeAvailable: true,
+          accessibilityEnabled: Boolean(status.accessibilityEnabled),
+        }));
+      }
+    };
+
+    checkStatus();
+
+    const handleFocus = () => {
+      checkStatus();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, []);
 
   // Settings (Default aligned with authorized youthful reference voice)
   const [settings, setSettings] = useState<VoiceSettings>({
@@ -739,6 +776,128 @@ export default function App() {
             })
             .catch(() => {
               playNaturalBrowserSpeech(memoryCommand.replyText!, {
+                rate: settings.speakingRate,
+                pitch: settings.pitch,
+                voiceName: settings.voiceName,
+                onEnd: () => {
+                  setCurrentSpokenText("");
+                  setState(isCallActiveRef.current ? "listening" : "idle");
+                  isProcessingTurnRef.current = false;
+                  if (isCallActiveRef.current && !isMuted) {
+                    speechRecognizerRef.current?.resumeAfterPlayback();
+                  }
+                },
+              });
+            });
+        } else {
+          isProcessingTurnRef.current = false;
+          setState("idle");
+        }
+        return;
+      }
+
+      // Explicit device control action handler (e.g., "YouTube kholo", "Open WhatsApp", "Home e jao", "YouTube kholo, AI news search koro")
+      const interpretedGoal = goalInterpreter.interpret(cleanText);
+      const isDeviceAction =
+        interpretedGoal.intent === "open_app" ||
+        interpretedGoal.intent === "search" ||
+        interpretedGoal.intent === "play_media" ||
+        interpretedGoal.intent === "send_message" ||
+        (interpretedGoal.intent === "general_task" && !interpretedGoal.rawGoal.includes(" "));
+
+      if (
+        androidControlService.isBridgeAvailable() &&
+        isDeviceAction &&
+        !imageAttachment &&
+        !fileAttachment
+      ) {
+        const doraMsgId = `dora-${Date.now()}`;
+        let replyText = "";
+
+        try {
+          if (interpretedGoal.intent === "open_app") {
+            const res = await androidControlService.openApplication({ appName: interpretedGoal.targetApp });
+            if (res.success) {
+              replyText =
+                settings.language === "bn-en" || /kholo|open\s*koro|chalau/i.test(cleanText)
+                  ? `Done, ${interpretedGoal.targetApp} খুলে দিয়েছি.`
+                  : `Opened ${interpretedGoal.targetApp} on your phone!`;
+            } else {
+              replyText =
+                settings.language === "bn-en" || /kholo|open\s*koro|chalau/i.test(cleanText)
+                  ? `${interpretedGoal.targetApp} open করতে পারিনি: ${res.message || "App not found"}`
+                  : `Could not open ${interpretedGoal.targetApp}: ${res.message || "App not found"}`;
+            }
+          } else if (interpretedGoal.subGoals[0]?.includes("Home")) {
+            await androidControlService.pressHome();
+            replyText = settings.language === "bn-en" || /jao|home/i.test(cleanText) ? `Home screen-e fire gelam.` : `Went to home screen.`;
+          } else if (interpretedGoal.subGoals[0]?.includes("Back")) {
+            await androidControlService.pressBack();
+            replyText = settings.language === "bn-en" || /jao|back/i.test(cleanText) ? `Pechhone fire gelam.` : `Navigated back.`;
+          } else if (interpretedGoal.subGoals[0]?.includes("Scroll Down")) {
+            await androidControlService.scroll({ direction: "down" });
+            replyText = settings.language === "bn-en" ? `Screen niche scroll korlam.` : `Scrolled down.`;
+          } else if (interpretedGoal.subGoals[0]?.includes("Scroll Up")) {
+            await androidControlService.scroll({ direction: "up" });
+            replyText = settings.language === "bn-en" ? `Screen upore scroll korlam.` : `Scrolled up.`;
+          } else {
+            // Multi-step autonomous task (e.g. "YouTube kholo, AI news search koro, first result open koro")
+            const taskResult = await autonomousAgent.startTask(cleanText, { mockMode: false });
+            if (taskResult.success) {
+              replyText =
+                settings.language === "bn-en" || /kholo|search|koro/i.test(cleanText)
+                  ? `হয়েছে, ${taskResult.summary || "কাজটি সম্পন্ন হয়েছে।"}`
+                  : `Done! ${taskResult.summary || "Task completed on your device."}`;
+            } else {
+              replyText =
+                settings.language === "bn-en"
+                  ? `কাজটি সম্পন্ন করা যায়নি: ${taskResult.error?.details || "Failed"}`
+                  : `Could not complete the task: ${taskResult.error?.details || "Failed"}`;
+            }
+          }
+        } catch (err: any) {
+          replyText = `Device action error: ${err?.message || "Could not complete action"}`;
+        }
+
+        const doraMessage: ChatMessage = {
+          id: doraMsgId,
+          sender: "dora",
+          text: replyText,
+          timestamp: Date.now(),
+          emotion: "warm",
+          reaction: "Action",
+          inputMode,
+        };
+
+        setMessages((prev) => [...prev, userMessage, doraMessage]);
+        setCurrentSpokenText(replyText);
+        setEmotion("warm");
+
+        if (shouldSpeakReply) {
+          doraService
+            .generateSpeech(replyText, settings.voiceName, settings.language)
+            .then((audio) => {
+              if (audio && audioEngineRef.current) {
+                audioEngineRef.current.playAudioChunk(audio, 24000);
+                setState("speaking");
+              } else {
+                playNaturalBrowserSpeech(replyText, {
+                  rate: settings.speakingRate,
+                  pitch: settings.pitch,
+                  voiceName: settings.voiceName,
+                  onEnd: () => {
+                    setCurrentSpokenText("");
+                    setState(isCallActiveRef.current ? "listening" : "idle");
+                    isProcessingTurnRef.current = false;
+                    if (isCallActiveRef.current && !isMuted) {
+                      speechRecognizerRef.current?.resumeAfterPlayback();
+                    }
+                  },
+                });
+              }
+            })
+            .catch(() => {
+              playNaturalBrowserSpeech(replyText, {
                 rate: settings.speakingRate,
                 pitch: settings.pitch,
                 voiceName: settings.voiceName,
@@ -1341,6 +1500,33 @@ export default function App() {
 
       {/* Main Content Workspace */}
       <div className="relative z-10 flex-1 flex flex-col h-full overflow-hidden">
+        {/* Android Control Accessibility Setup Banner (Only shown if running on Android device and permission needed) */}
+        {androidControlState.isBridgeAvailable && !androidControlState.accessibilityEnabled && !androidControlState.dismissed && (
+          <div className="relative z-30 bg-gradient-to-r from-sky-950/90 to-indigo-950/90 border-b border-sky-500/30 text-sky-100 px-4 py-2 flex items-center justify-between shadow-lg backdrop-blur-md shrink-0">
+            <div className="flex items-center space-x-2.5 text-xs sm:text-sm">
+              <Sparkles className="w-4 h-4 text-sky-400 shrink-0" />
+              <span><strong>Enable Android Control:</strong> Grant accessibility permission so Dora can operate your apps.</span>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => androidControlService.openAccessibilitySettings()}
+                className="px-3 py-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs rounded-lg transition-colors shadow-sm"
+              >
+                Enable Android Control
+              </button>
+              <button
+                type="button"
+                onClick={() => setAndroidControlState((prev) => ({ ...prev, dismissed: true }))}
+                className="p-1 text-slate-400 hover:text-white"
+                title="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {activeMode === "voice" ? (
           <VoiceModeView
             state={state}

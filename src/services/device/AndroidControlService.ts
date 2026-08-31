@@ -43,11 +43,13 @@ export interface NativeBridgeInterface {
   pressBack?(): Promise<{ success: boolean; message?: string; error?: string }>;
   pressHome?(): Promise<{ success: boolean; message?: string; error?: string }>;
   takeScreenshot?(options?: { quality?: number }): Promise<{ success: boolean; screenshotId?: string; base64?: string; error?: string }>;
+  openAccessibilitySettings?(): Promise<{ success: boolean; message?: string; error?: string }>;
 }
 
 export class AndroidControlService {
   private static instance: AndroidControlService;
   private testBridge: NativeBridgeInterface | null = null;
+  private wrappedNativeBridge: NativeBridgeInterface | null = null;
 
   private constructor() {}
 
@@ -83,10 +85,141 @@ export class AndroidControlService {
       return cap.Plugins.DoraAndroidBridge as NativeBridgeInterface;
     }
 
-    // 2. Check injected Android WebView JavaScript interface
+    // 2. Check injected Android WebView JavaScript interface (window.DoraAndroidBridge)
     const directBridge = (window as any)?.DoraAndroidBridge;
     if (directBridge && typeof directBridge.openApp === "function") {
-      return directBridge as NativeBridgeInterface;
+      if (!this.wrappedNativeBridge) {
+        // Safe adapter wrapping native Android @JavascriptInterface methods that take/return JSON strings
+        const parseJsonSafe = (raw: any) => {
+          if (typeof raw === "string") {
+            try {
+              return JSON.parse(raw);
+            } catch {
+              return { success: false, error: raw };
+            }
+          }
+          return raw || { success: false };
+        };
+
+        this.wrappedNativeBridge = {
+          openApp: async (options) => {
+            try {
+              const res = directBridge.openApp(JSON.stringify(options));
+              return parseJsonSafe(res);
+            } catch (e: any) {
+              return { success: false, error: e?.message || "Failed to open app" };
+            }
+          },
+          checkAccessibility: async () => {
+            try {
+              const res = directBridge.checkAccessibility();
+              return parseJsonSafe(res);
+            } catch (e: any) {
+              return { enabled: false, running: false, error: e?.message };
+            }
+          },
+          getInstalledApplications: async () => {
+            try {
+              if (typeof directBridge.getInstalledApplications === "function") {
+                const res = directBridge.getInstalledApplications();
+                return parseJsonSafe(res);
+              }
+              return { apps: [] };
+            } catch (e: any) {
+              return { apps: [] };
+            }
+          },
+          readScreen: async (options) => {
+            try {
+              if (typeof directBridge.readScreen === "function") {
+                const res = directBridge.readScreen(options ? JSON.stringify(options) : null);
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "readScreen not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          tapNode: async (options) => {
+            try {
+              if (typeof directBridge.tapNode === "function") {
+                const res = directBridge.tapNode(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "tapNode not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          typeTextOnNode: async (options) => {
+            try {
+              if (typeof directBridge.typeTextOnNode === "function") {
+                const res = directBridge.typeTextOnNode(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "typeTextOnNode not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          swipeGesture: async (options) => {
+            try {
+              if (typeof directBridge.swipeGesture === "function") {
+                const res = directBridge.swipeGesture(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "swipeGesture not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          scrollWindow: async (options) => {
+            try {
+              if (typeof directBridge.scrollWindow === "function") {
+                const res = directBridge.scrollWindow(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "scrollWindow not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          pressBack: async () => {
+            try {
+              if (typeof directBridge.pressBack === "function") {
+                const res = directBridge.pressBack();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "pressBack not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          pressHome: async () => {
+            try {
+              if (typeof directBridge.pressHome === "function") {
+                const res = directBridge.pressHome();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "pressHome not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          openAccessibilitySettings: async () => {
+            try {
+              if (typeof directBridge.openAccessibilitySettings === "function") {
+                const res = directBridge.openAccessibilitySettings();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "openAccessibilitySettings not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+        };
+      }
+      return this.wrappedNativeBridge;
     }
 
     return null;
@@ -94,6 +227,22 @@ export class AndroidControlService {
 
   public isBridgeAvailable(): boolean {
     return this.getNativeBridge() !== null;
+  }
+
+  /**
+   * Opens Android Accessibility Settings page directly via bridge
+   */
+  public async openAccessibilitySettings(): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.openAccessibilitySettings === "function") {
+      try {
+        const res = await bridge.openAccessibilitySettings();
+        return Boolean(res?.success);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not open accessibility settings:", e);
+      }
+    }
+    return false;
   }
 
   /**

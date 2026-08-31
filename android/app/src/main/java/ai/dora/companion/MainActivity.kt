@@ -1,7 +1,13 @@
 package ai.dora.companion
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -9,84 +15,81 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.text.InputFilter
-import android.text.InputType
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
-import android.widget.GridLayout
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
-import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 /**
  * Dora Main Android Activity
  * 
- * Functions as the primary standalone Dora Android application and local device-control agent.
- * Operates locally on the phone using DoraAccessibilityService and DoraAndroidBridgePlugin
- * without requiring pairing codes or computer connection.
+ * Primary entry point for the Dora Standalone Android Application.
+ * Hosts the complete Dora frontend in an optimized WebView with native device-control
+ * JavaScript bridge (window.DoraAndroidBridge) and DoraAccessibilityService integration.
  */
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val TAG = "DoraMainActivity"
+        private const val PREFS_NAME = "dora_app_prefs"
+        private const val KEY_SERVER_URL = "custom_server_url"
+        private const val DEFAULT_PRODUCTION_URL = "https://ais-dev-4y3cwyeutkb4dkqz62jsrh-130845624199.asia-southeast1.run.app"
+        private const val PERMISSION_REQUEST_CODE = 1001
+    }
+
+    private lateinit var webView: WebView
     private lateinit var bridgePlugin: DoraAndroidBridgePlugin
-    private lateinit var companionClient: DoraCompanionClient
+    private lateinit var prefs: SharedPreferences
 
-    // UI Elements
-    private lateinit var rootScroll: ScrollView
-    private lateinit var contentLayout: LinearLayout
-    
-    // Status Card Views
-    private lateinit var statusBadgeText: TextView
-    private lateinit var statusDetailText: TextView
-    private lateinit var btnOpenAccessibility: Button
-    
-    // Command Execution Bar
-    private lateinit var commandInput: EditText
-    private lateinit var btnExecuteCommand: Button
-    private lateinit var commandFeedbackText: TextView
-    
-    // Live Activity Console
-    private lateinit var logContainer: LinearLayout
-    private lateinit var logScroll: ScrollView
-    private val logMessages = mutableListOf<String>()
+    // UI overlays
+    private lateinit var rootContainer: FrameLayout
+    private lateinit var loadingOverlay: LinearLayout
+    private lateinit var errorOverlay: LinearLayout
+    private lateinit var errorDetailText: TextView
+    private lateinit var btnRetry: Button
+    private lateinit var btnChangeUrl: Button
 
-    // Optional Remote Link Section (Collapsed by default)
-    private lateinit var remoteSectionHeader: LinearLayout
-    private lateinit var remoteSectionContainer: LinearLayout
-    private lateinit var remoteChevronText: TextView
-    private var isRemoteExpanded = false
-    private lateinit var serverUrlInput: EditText
-    private lateinit var pairingCodeInput: EditText
-    private lateinit var btnPairRemote: Button
-    private lateinit var remoteFeedbackText: TextView
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         bridgePlugin = DoraAndroidBridgePlugin(this)
-        companionClient = DoraCompanionClient.getInstance(this)
 
-        buildUserInterface()
-        updateAccessibilityState()
-        
-        // Start foreground background service to maintain persistent local readiness
-        DoraCompanionService.startService(this)
-        
-        appendLog("Dora initialized in Standalone Local Device Mode.")
-    }
+        requestRuntimePermissions()
+        buildUi()
+        setupWebView()
+        setupBackNavigation()
 
-    override fun onResume() {
-        super.onResume()
-        updateAccessibilityState()
+        // Start foreground companion service for persistent background readiness
+        try {
+            DoraCompanionService.startService(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not start DoraCompanionService: ${e.message}")
+        }
+
+        loadDoraApp()
     }
 
     private fun dp(value: Int): Int {
@@ -97,561 +100,300 @@ class MainActivity : AppCompatActivity() {
         ).toInt()
     }
 
-    private fun buildUserInterface() {
-        rootScroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT
+    private fun requestRuntimePermissions() {
+        val permissions = mutableListOf<String>()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.CAMERA)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        if (permissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissions.toTypedArray(), PERMISSION_REQUEST_CODE)
+        }
+    }
+
+    private fun buildUi() {
+        rootContainer = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
             )
-            setBackgroundColor(0xFF090D16.toInt()) // Deep slate / obsidian
-            isFillViewport = true
+            setBackgroundColor(Color.parseColor("#090D16"))
         }
 
-        contentLayout = LinearLayout(this).apply {
+        // 1. WebView
+        webView = WebView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(Color.parseColor("#090D16"))
+        }
+        rootContainer.addView(webView)
+
+        // 2. Loading Overlay
+        loadingOverlay = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(32))
-        }
-        rootScroll.addView(contentLayout)
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(Color.parseColor("#090D16"))
+            setPadding(dp(24), dp(24), dp(24), dp(24))
 
-        // 1. Header Layout
-        val headerLayout = LinearLayout(this).apply {
+            val brandTitle = TextView(this@MainActivity).apply {
+                text = "D O R A"
+                textSize = 28f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.parseColor("#38BDF8")) // Sky blue
+                gravity = Gravity.CENTER
+            }
+            addView(brandTitle)
+
+            val brandSub = TextView(this@MainActivity).apply {
+                text = "AI Voice & Device Control Assistant"
+                textSize = 14f
+                setTextColor(Color.parseColor("#94A3B8"))
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, dp(24))
+            }
+            addView(brandSub)
+
+            val spinner = ProgressBar(this@MainActivity).apply {
+                isIndeterminate = true
+            }
+            addView(spinner)
+
+            val status = TextView(this@MainActivity).apply {
+                text = "Connecting to Dora..."
+                textSize = 13f
+                setTextColor(Color.parseColor("#64748B"))
+                gravity = Gravity.CENTER
+                setPadding(0, dp(16), 0, 0)
+            }
+            addView(status)
+        }
+        rootContainer.addView(loadingOverlay)
+
+        // 3. Error Overlay (Hidden by default)
+        errorOverlay = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, 0, 0, dp(16))
-        }
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(Color.parseColor("#090D16"))
+            setPadding(dp(32), dp(32), dp(32), dp(32))
+            visibility = View.GONE
 
-        val brandRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val appTitle = TextView(this).apply {
-            text = "Dora"
-            textSize = 28f
-            setTextColor(0xFFFFFFFF.toInt())
-            setTypeface(null, Typeface.BOLD)
-        }
-        brandRow.addView(appTitle)
-
-        val localBadge = TextView(this).apply {
-            text = " LOCAL AGENT "
-            textSize = 10f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(0xFF38BDF8.toInt())
-            background = GradientDrawable().apply {
-                setColor(0x260284C7.toInt())
-                cornerRadius = dp(6).toFloat()
-                setStroke(dp(1), 0xFF0284C7.toInt())
+            val errorTitle = TextView(this@MainActivity).apply {
+                text = "Unable to Connect"
+                textSize = 22f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.parseColor("#F87171"))
+                gravity = Gravity.CENTER
             }
-            setPadding(dp(6), dp(3), dp(6), dp(3))
-            val params = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                leftMargin = dp(10)
+            addView(errorTitle)
+
+            errorDetailText = TextView(this@MainActivity).apply {
+                text = "Could not connect to Dora. Please check your internet connection."
+                textSize = 14f
+                setTextColor(Color.parseColor("#94A3B8"))
+                gravity = Gravity.CENTER
+                setPadding(0, dp(12), 0, dp(24))
             }
-            layoutParams = params
-        }
-        brandRow.addView(localBadge)
-        headerLayout.addView(brandRow)
+            addView(errorDetailText)
 
-        val appSubtitle = TextView(this).apply {
-            text = "Autonomous Android Assistant & Local Device Controller"
-            textSize = 13f
-            setTextColor(0xFF94A3B8.toInt()) // Slate 400
-            setPadding(0, dp(4), 0, 0)
-        }
-        headerLayout.addView(appSubtitle)
-        contentLayout.addView(headerLayout)
+            btnRetry = Button(this@MainActivity).apply {
+                text = "Retry Connection"
+                setTextColor(Color.WHITE)
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#2563EB"))
+                    cornerRadius = dp(12).toFloat()
+                }
+                setPadding(dp(24), dp(12), dp(24), dp(12))
+                setOnClickListener {
+                    errorOverlay.visibility = View.GONE
+                    loadingOverlay.visibility = View.VISIBLE
+                    loadDoraApp()
+                }
+            }
+            addView(btnRetry)
 
-        // 2. Primary Status & Accessibility Card
-        val statusCard = createCardContainer()
-        
-        val statusHeader = TextView(this).apply {
-            text = "LOCAL DEVICE CONTROL"
-            textSize = 11f
-            setTextColor(0xFF64748B.toInt())
-            setTypeface(null, Typeface.BOLD)
-            letterSpacing = 0.08f
-            setPadding(0, 0, 0, dp(6))
+            btnChangeUrl = Button(this@MainActivity).apply {
+                text = "Configure Server URL"
+                setTextColor(Color.parseColor("#94A3B8"))
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#1E293B"))
+                    cornerRadius = dp(12).toFloat()
+                }
+                setPadding(dp(20), dp(10), dp(20), dp(10))
+                val lp = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(12)
+                }
+                layoutParams = lp
+                setOnClickListener {
+                    showServerUrlDialog()
+                }
+            }
+            addView(btnChangeUrl)
         }
-        statusCard.addView(statusHeader)
+        rootContainer.addView(errorOverlay)
 
-        statusBadgeText = TextView(this).apply {
-            text = "Checking status..."
-            textSize = 15f
-            setTypeface(null, Typeface.BOLD)
-            setPadding(0, 0, 0, dp(6))
+        setContentView(rootContainer)
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupWebView() {
+        val settings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.mediaPlaybackRequiresUserGesture = false
+        settings.allowFileAccess = true
+        settings.allowContentAccess = true
+        settings.loadWithOverviewMode = true
+        settings.useWideViewPort = true
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            settings.safeBrowsingEnabled = true
         }
-        statusCard.addView(statusBadgeText)
 
-        statusDetailText = TextView(this).apply {
-            text = "Grant accessibility permission once so Dora can launch apps, tap UI, and assist hands-free."
-            textSize = 12f
-            setTextColor(0xFF94A3B8.toInt())
-            setLineSpacing(dp(2).toFloat(), 1.0f)
-            setPadding(0, 0, 0, dp(12))
-        }
-        statusCard.addView(statusDetailText)
+        // Attach native JavaScript bridge for device control
+        webView.addJavascriptInterface(bridgePlugin, "DoraAndroidBridge")
 
-        btnOpenAccessibility = Button(this).apply {
-            text = "Open Accessibility Settings"
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(0xFFFFFFFF.toInt())
-            background = createButtonBackground(0xFF0284C7.toInt(), dp(10))
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            setOnClickListener {
-                try {
-                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Toast.makeText(this@MainActivity, "Could not open Accessibility Settings", Toast.LENGTH_SHORT).show()
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                loadingOverlay.visibility = View.VISIBLE
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                loadingOverlay.visibility = View.GONE
+                errorOverlay.visibility = View.GONE
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame == true) {
+                    loadingOverlay.visibility = View.GONE
+                    errorOverlay.visibility = View.VISIBLE
+                    errorDetailText.text = "Failed to load Dora: ${error?.description ?: "Network error"}"
                 }
             }
         }
-        statusCard.addView(btnOpenAccessibility)
-        contentLayout.addView(statusCard)
 
-        addSpacer(dp(16))
-
-        // 3. Command Execution Input Bar ("Execute Assistant Command")
-        val commandCard = createCardContainer()
-        
-        val commandHeader = TextView(this).apply {
-            text = "ASSISTANT COMMAND & VOICE INPUT"
-            textSize = 11f
-            setTextColor(0xFF64748B.toInt())
-            setTypeface(null, Typeface.BOLD)
-            letterSpacing = 0.08f
-            setPadding(0, 0, 0, dp(8))
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                request?.let {
+                    val requestedResources = it.resources
+                    val grantedResources = mutableListOf<String>()
+                    for (res in requestedResources) {
+                        if (res == PermissionRequest.RESOURCE_AUDIO_CAPTURE ||
+                            res == PermissionRequest.RESOURCE_VIDEO_CAPTURE
+                        ) {
+                            grantedResources.add(res)
+                        }
+                    }
+                    if (grantedResources.isNotEmpty()) {
+                        it.grant(grantedResources.toTypedArray())
+                    } else {
+                        it.deny()
+                    }
+                }
+            }
         }
-        commandCard.addView(commandHeader)
+    }
 
-        val commandHint = TextView(this).apply {
-            text = "Type any natural voice command in English or Bengali (e.g. \"YouTube kholo\", \"Open WhatsApp\", \"Go Home\", \"Scroll Down\")."
-            textSize = 12f
-            setTextColor(0xFF94A3B8.toInt())
-            setLineSpacing(dp(2).toFloat(), 1.0f)
-            setPadding(0, 0, 0, dp(10))
-        }
-        commandCard.addView(commandHint)
+    private fun setupBackNavigation() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+    }
 
-        commandInput = EditText(this).apply {
-            hint = "e.g. YouTube kholo, Open WhatsApp, Go Home"
-            setHintTextColor(0xFF475569.toInt())
-            textSize = 14f
-            setTextColor(0xFFFFFFFF.toInt())
-            background = createInputBackground()
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            inputType = InputType.TYPE_CLASS_TEXT
-            setSingleLine(true)
-        }
-        commandCard.addView(commandInput)
+    private fun getTargetUrl(): String {
+        return prefs.getString(KEY_SERVER_URL, DEFAULT_PRODUCTION_URL) ?: DEFAULT_PRODUCTION_URL
+    }
 
-        commandFeedbackText = TextView(this).apply {
-            textSize = 12f
-            setPadding(0, dp(8), 0, 0)
-            visibility = View.GONE
-        }
-        commandCard.addView(commandFeedbackText)
+    private fun loadDoraApp() {
+        val targetUrl = getTargetUrl()
+        Log.i(TAG, "Loading Dora app from: $targetUrl")
+        webView.loadUrl(targetUrl)
+    }
 
-        addSpacer(dp(10), commandCard)
-
-        btnExecuteCommand = Button(this).apply {
-            text = "Run Command Locally"
-            textSize = 13f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(0xFFFFFFFF.toInt())
-            background = createButtonBackground(0xFF2563EB.toInt(), dp(10)) // Blue 600
+    private fun showServerUrlDialog() {
+        val currentUrl = getTargetUrl()
+        val input = EditText(this).apply {
+            setText(currentUrl)
+            setSelection(currentUrl.length)
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1E293B"))
             setPadding(dp(16), dp(12), dp(16), dp(12))
-            setOnClickListener {
-                executeUserCommand(commandInput.text.toString())
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Dora Server URL")
+            .setMessage("Configure the public HTTPS server URL for Dora:")
+            .setView(input)
+            .setPositiveButton("Save & Reload") { _, _ ->
+                val newUrl = input.text.toString().trim()
+                if (newUrl.startsWith("http://") || newUrl.startsWith("https://")) {
+                    prefs.edit().putString(KEY_SERVER_URL, newUrl).apply()
+                    Toast.makeText(this, "Saved server URL", Toast.LENGTH_SHORT).show()
+                    errorOverlay.visibility = View.GONE
+                    loadingOverlay.visibility = View.VISIBLE
+                    loadDoraApp()
+                } else {
+                    Toast.makeText(this, "URL must begin with https:// or http://", Toast.LENGTH_LONG).show()
+                }
             }
-        }
-        commandCard.addView(btnExecuteCommand)
-        contentLayout.addView(commandCard)
-
-        addSpacer(dp(16))
-
-        // 4. Quick Action Launchpads Grid
-        val quickActionCard = createCardContainer()
-        
-        val quickHeader = TextView(this).apply {
-            text = "QUICK ACTIONS"
-            textSize = 11f
-            setTextColor(0xFF64748B.toInt())
-            setTypeface(null, Typeface.BOLD)
-            letterSpacing = 0.08f
-            setPadding(0, 0, 0, dp(10))
-        }
-        quickActionCard.addView(quickHeader)
-
-        val gridLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        // Row 1: YouTube & WhatsApp
-        val row1 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            weightSum = 2f
-        }
-        val btnYoutube = createQuickActionButton("YouTube", 0xFFE11D48.toInt()) {
-            executeUserCommand("Open YouTube")
-        }
-        val btnWhatsapp = createQuickActionButton("WhatsApp", 0xFF10B981.toInt()) {
-            executeUserCommand("Open WhatsApp")
-        }
-        row1.addView(btnYoutube, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(6) })
-        row1.addView(btnWhatsapp, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(6) })
-        gridLayout.addView(row1)
-
-        addSpacer(dp(8), gridLayout)
-
-        // Row 2: Chrome & Settings
-        val row2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            weightSum = 2f
-        }
-        val btnChrome = createQuickActionButton("Chrome", 0xFF0284C7.toInt()) {
-            executeUserCommand("Open Chrome")
-        }
-        val btnSettings = createQuickActionButton("Settings", 0xFF64748B.toInt()) {
-            executeUserCommand("Open Settings")
-        }
-        row2.addView(btnChrome, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(6) })
-        row2.addView(btnSettings, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(6) })
-        gridLayout.addView(row2)
-
-        addSpacer(dp(8), gridLayout)
-
-        // Row 3: Home & Back & Scroll
-        val row3 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            weightSum = 3f
-        }
-        val btnHome = createQuickActionButton("Home", 0xFF8B5CF6.toInt()) {
-            executeUserCommand("Go Home")
-        }
-        val btnBack = createQuickActionButton("Back", 0xFFF59E0B.toInt()) {
-            executeUserCommand("Go Back")
-        }
-        val btnScroll = createQuickActionButton("Scroll Down", 0xFF06B6D4.toInt()) {
-            executeUserCommand("Scroll Down")
-        }
-        row3.addView(btnHome, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(4) })
-        row3.addView(btnBack, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(2); rightMargin = dp(2) })
-        row3.addView(btnScroll, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(4) })
-        gridLayout.addView(row3)
-
-        quickActionCard.addView(gridLayout)
-        contentLayout.addView(quickActionCard)
-
-        addSpacer(dp(16))
-
-        // 5. Real-Time Activity Log Console
-        val logCard = createCardContainer()
-        
-        val logHeader = TextView(this).apply {
-            text = "LOCAL EXECUTION LOG"
-            textSize = 11f
-            setTextColor(0xFF64748B.toInt())
-            setTypeface(null, Typeface.BOLD)
-            letterSpacing = 0.08f
-            setPadding(0, 0, 0, dp(8))
-        }
-        logCard.addView(logHeader)
-
-        logScroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(120)
-            )
-            background = GradientDrawable().apply {
-                setColor(0xFF030712.toInt()) // Gray 950
-                cornerRadius = dp(8).toFloat()
-                setStroke(dp(1), 0xFF1F2937.toInt())
+            .setNegativeButton("Reset to Default") { _, _ ->
+                prefs.edit().putString(KEY_SERVER_URL, DEFAULT_PRODUCTION_URL).apply()
+                errorOverlay.visibility = View.GONE
+                loadingOverlay.visibility = View.VISIBLE
+                loadDoraApp()
             }
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-        }
-
-        logContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        logScroll.addView(logContainer)
-        logCard.addView(logScroll)
-        contentLayout.addView(logCard)
-
-        addSpacer(dp(16))
-
-        // 6. Optional Advanced Remote / Cloud Sync (Collapsed by default)
-        val remoteCard = createCardContainer()
-        
-        remoteSectionHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 0)
-            setOnClickListener {
-                toggleRemoteSection()
-            }
-        }
-
-        val remoteTitle = TextView(this).apply {
-            text = "Optional Cloud / Remote Sync"
-            textSize = 12f
-            setTextColor(0xFF94A3B8.toInt())
-            setTypeface(null, Typeface.BOLD)
-            val params = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            layoutParams = params
-        }
-        remoteSectionHeader.addView(remoteTitle)
-
-        remoteChevronText = TextView(this).apply {
-            text = "▼"
-            textSize = 11f
-            setTextColor(0xFF64748B.toInt())
-        }
-        remoteSectionHeader.addView(remoteChevronText)
-        remoteCard.addView(remoteSectionHeader)
-
-        remoteSectionContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-            setPadding(0, dp(12), 0, 0)
-        }
-
-        val remoteDesc = TextView(this).apply {
-            text = "If you wish to control this phone remotely from the Dora Web preview or a PC, you can enter a pairing code below. Otherwise, local device control works standalone without setup."
-            textSize = 11f
-            setTextColor(0xFF64748B.toInt())
-            setLineSpacing(dp(2).toFloat(), 1.0f)
-            setPadding(0, 0, 0, dp(10))
-        }
-        remoteSectionContainer.addView(remoteDesc)
-
-        serverUrlInput = EditText(this).apply {
-            setText(companionClient.getStoredServerUrl())
-            hint = DoraCompanionClient.DEFAULT_SERVER_URL
-            setHintTextColor(0xFF475569.toInt())
-            textSize = 12f
-            setTextColor(0xFFFFFFFF.toInt())
-            background = createInputBackground()
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            inputType = InputType.TYPE_TEXT_VARIATION_URI
-            setSingleLine(true)
-        }
-        remoteSectionContainer.addView(serverUrlInput)
-
-        addSpacer(dp(8), remoteSectionContainer)
-
-        pairingCodeInput = EditText(this).apply {
-            hint = "DORA-XXXX"
-            setHintTextColor(0xFF475569.toInt())
-            textSize = 14f
-            setTextColor(0xFF38BDF8.toInt())
-            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
-            background = createInputBackground()
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            gravity = Gravity.CENTER
-            filters = arrayOf(InputFilter.AllCaps(), InputFilter.LengthFilter(12))
-            setSingleLine(true)
-        }
-        remoteSectionContainer.addView(pairingCodeInput)
-
-        remoteFeedbackText = TextView(this).apply {
-            textSize = 11f
-            setTextColor(0xFFF43F5E.toInt())
-            setPadding(0, dp(6), 0, 0)
-            visibility = View.GONE
-        }
-        remoteSectionContainer.addView(remoteFeedbackText)
-
-        addSpacer(dp(10), remoteSectionContainer)
-
-        btnPairRemote = Button(this).apply {
-            text = "Link with Dora Web"
-            textSize = 12f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(0xFFFFFFFF.toInt())
-            background = createButtonBackground(0xFF0F766E.toInt(), dp(8)) // Teal 700
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            setOnClickListener {
-                initiateRemotePairing()
-            }
-        }
-        remoteSectionContainer.addView(btnPairRemote)
-
-        remoteCard.addView(remoteSectionContainer)
-        contentLayout.addView(remoteCard)
-
-        setContentView(rootScroll)
+            .setNeutralButton("Cancel", null)
+            .show()
     }
 
-    private fun addSpacer(heightDp: Int, parent: LinearLayout = contentLayout) {
-        val spacer = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                heightDp
-            )
-        }
-        parent.addView(spacer)
+    override fun onResume() {
+        super.onResume()
+        webView.onResume()
     }
 
-    private fun createCardContainer(): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = GradientDrawable().apply {
-                setColor(0xFF131B2E.toInt()) // Slate 900 tint
-                cornerRadius = dp(14).toFloat()
-                setStroke(dp(1), 0xFF1E293B.toInt()) // Slate 800
-            }
-        }
+    override fun onPause() {
+        super.onPause()
+        webView.onPause()
     }
 
-    private fun createInputBackground(): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(0xFF090D16.toInt())
-            cornerRadius = dp(8).toFloat()
-            setStroke(dp(1), 0xFF334155.toInt()) // Slate 700
-        }
-    }
-
-    private fun createButtonBackground(color: Int, radiusDp: Int): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = radiusDp.toFloat()
-        }
-    }
-
-    private fun createQuickActionButton(label: String, accentColor: Int, onClick: () -> Unit): Button {
-        return Button(this).apply {
-            text = label
-            textSize = 12f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(0xFFE2E8F0.toInt())
-            background = GradientDrawable().apply {
-                setColor(0xFF1E293B.toInt())
-                cornerRadius = dp(8).toFloat()
-                setStroke(dp(1), 0xFF334155.toInt())
-            }
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            setOnClickListener { onClick() }
-        }
-    }
-
-    private fun toggleRemoteSection() {
-        isRemoteExpanded = !isRemoteExpanded
-        if (isRemoteExpanded) {
-            remoteSectionContainer.visibility = View.VISIBLE
-            remoteChevronText.text = "▲"
-        } else {
-            remoteSectionContainer.visibility = View.GONE
-            remoteChevronText.text = "▼"
-        }
-    }
-
-    private fun updateAccessibilityState() {
-        val isEnabled = DoraAccessibilityService.isAccessibilitySettingsEnabled(this)
-        if (isEnabled) {
-            statusBadgeText.text = "● Dora Active & Ready Locally"
-            statusBadgeText.setTextColor(0xFF10B981.toInt()) // Emerald 500
-            statusDetailText.text = "Accessibility service is running. Dora can operate this device directly with zero pairing required."
-            btnOpenAccessibility.text = "Accessibility Active ✓"
-            btnOpenAccessibility.background = createButtonBackground(0xFF0F766E.toInt(), dp(10))
-        } else {
-            statusBadgeText.text = "● Accessibility Permission Required"
-            statusBadgeText.setTextColor(0xFFF59E0B.toInt()) // Amber 500
-            statusDetailText.text = "Enable Dora once in Android Accessibility settings to unlock autonomous app launching and UI actions."
-            btnOpenAccessibility.text = "Open Accessibility Settings"
-            btnOpenAccessibility.background = createButtonBackground(0xFF0284C7.toInt(), dp(10))
-        }
-    }
-
-    private fun executeUserCommand(rawCommand: String) {
-        val command = rawCommand.trim()
-        if (command.isBlank()) {
-            Toast.makeText(this, "Please enter a command", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        commandFeedbackText.text = "Executing: \"$command\"..."
-        commandFeedbackText.setTextColor(0xFF38BDF8.toInt())
-        commandFeedbackText.visibility = View.VISIBLE
-
-        val result: JSONObject = bridgePlugin.executeNaturalCommand(command)
-        val success = result.optBoolean("success", false)
-        val message = result.optString("message", result.optString("error", "Executed"))
-
-        if (success) {
-            commandFeedbackText.text = "✓ $message"
-            commandFeedbackText.setTextColor(0xFF10B981.toInt()) // Emerald
-            appendLog("[SUCCESS] \"$command\" -> $message")
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        } else {
-            commandFeedbackText.text = "✗ $message"
-            commandFeedbackText.setTextColor(0xFFF43F5E.toInt()) // Rose
-            appendLog("[ERROR] \"$command\" -> $message")
-            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun appendLog(msg: String) {
-        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        val entry = "[$time] $msg"
-        logMessages.add(entry)
-        if (logMessages.size > 50) {
-            logMessages.removeAt(0)
-        }
-
-        val logItem = TextView(this).apply {
-            text = entry
-            textSize = 11f
-            setTypeface(Typeface.MONOSPACE)
-            setTextColor(if (msg.contains("[ERROR]")) 0xFFFDA4AF.toInt() else 0xFF94A3B8.toInt())
-            setPadding(0, dp(2), 0, dp(2))
-        }
-        logContainer.addView(logItem)
-        logScroll.post {
-            logScroll.fullScroll(View.FOCUS_DOWN)
-        }
-    }
-
-    private fun initiateRemotePairing() {
-        val serverUrl = serverUrlInput.text.toString().trim()
-        var code = pairingCodeInput.text.toString().trim().uppercase()
-
-        if (serverUrl.isBlank() || code.isBlank()) {
-            remoteFeedbackText.text = "Enter server URL and 6-character code"
-            remoteFeedbackText.visibility = View.VISIBLE
-            return
-        }
-
-        if (!code.startsWith("DORA-") && code.length == 4) {
-            code = "DORA-$code"
-            pairingCodeInput.setText(code)
-        }
-
-        remoteFeedbackText.text = "Linking with Dora Web..."
-        remoteFeedbackText.setTextColor(0xFF38BDF8.toInt())
-        remoteFeedbackText.visibility = View.VISIBLE
-        btnPairRemote.isEnabled = false
-
-        val isAccessibilityEnabled = DoraAccessibilityService.isAccessibilitySettingsEnabled(this)
-        companionClient.pairDevice(serverUrl, code, isAccessibilityEnabled) { result ->
-            btnPairRemote.isEnabled = true
-            if (result.success) {
-                remoteFeedbackText.text = "✓ Remote link active!"
-                remoteFeedbackText.setTextColor(0xFF10B981.toInt())
-                appendLog("[REMOTE] Linked with Dora Web ($serverUrl)")
-                Toast.makeText(this@MainActivity, "Remote link active!", Toast.LENGTH_LONG).show()
-            } else {
-                val err = result.error ?: "Pairing failed"
-                remoteFeedbackText.text = "✗ $err"
-                remoteFeedbackText.setTextColor(0xFFF43F5E.toInt())
-                appendLog("[REMOTE ERROR] $err")
-            }
-        }
+    override fun onDestroy() {
+        webView.destroy()
+        super.onDestroy()
     }
 }
