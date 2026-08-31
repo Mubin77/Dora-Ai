@@ -175,6 +175,20 @@ export class DeviceActionRegistry {
         return { isValid: true };
       },
     });
+
+    // 12. execute_android_task (Phase 3 Autonomous Task Execution)
+    this.registerAction({
+      action: "execute_android_task",
+      description: "Executes an autonomous Android task with observation, planning, acting, and verification.",
+      isImplemented: true,
+      requiredParameters: ["goal"],
+      validateParameters: (params) => {
+        if (!params || typeof params.goal !== "string" || params.goal.trim().length === 0) {
+          return { isValid: false, error: "Missing or empty required parameter: goal" };
+        }
+        return { isValid: true };
+      },
+    });
   }
 
   public registerAction(def: RegisteredActionDefinition): void {

@@ -21,7 +21,8 @@ export type DeviceAction =
   | "take_screenshot"    // Phase 2
   | "read_screen"        // Phase 2
   | "find_ui_element"    // Phase 2
-  | "open_url";          // Allowed auxiliary action
+  | "open_url"           // Allowed auxiliary action
+  | "execute_android_task"; // Phase 3 Autonomous Task Execution
 
 export type DeviceSafetyLevel = "SAFE" | "CONFIRMATION_REQUIRED" | "HIGH_RISK";
 
@@ -169,6 +170,12 @@ export interface FindUiElementParams {
   exactMatch?: boolean;
   matchCase?: boolean;
   observationId?: string;
+}
+
+export interface ExecuteAndroidTaskParams {
+  goal: string;
+  maxSteps?: number;
+  isMockMode?: boolean;
 }
 
 export interface ActionVerificationResult {

@@ -1,22 +1,22 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Smartphone,
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Zap,
   QrCode,
   Copy,
   Check,
-  ShieldCheck,
-  ChevronRight,
+  Zap,
+  Power,
   X,
   ExternalLink,
-  Power,
+  ShieldCheck,
+  Radio,
 } from "lucide-react";
+import { DevicePermissionStatus, DevicePairingSession } from "../../types/device";
 import { deviceControlService } from "../../services/device/DeviceControlService";
 import { devicePairingService } from "../../services/device/DevicePairingService";
-import { DeviceDeploymentStatus, DevicePairingSession, DevicePermissionStatus } from "../../types/device";
 
 interface AndroidControlStatusProps {
   className?: string;
@@ -31,31 +31,50 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
     accessibilityEnabled: false,
     bridgeConnected: false,
     deploymentStatus: "NOT_CONFIGURED",
-    deviceModel: "Checking...",
-    androidVersion: "",
+    deviceModel: "Android Phone",
+    androidVersion: "Android 14",
     isRealDevice: false,
   });
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [showSetupModal, setShowSetupModal] = useState<boolean>(false);
   const [pairingSession, setPairingSession] = useState<DevicePairingSession | null>(null);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const [simulatedPairingCode, setSimulatedPairingCode] = useState<string>("");
+  const [isSimulatingPair, setIsSimulatingPair] = useState<boolean>(false);
+
+  const pollIntervalRef = useRef<any>(null);
 
   const refreshStatus = async () => {
     setIsLoading(true);
     setActionFeedback(null);
     try {
-      // First check local pairing service
-      const localDeployment = devicePairingService.getDeploymentStatus();
-      // Also query device control service for live bridge check
+      // 1. Check server pairing status API
+      let deploymentStatus = devicePairingService.getDeploymentStatus();
+      try {
+        const res = await fetch("/api/device/pairing/status");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.deploymentStatus) {
+            deploymentStatus = data.deploymentStatus;
+          }
+        }
+      } catch {
+        // Fallback to local service
+      }
+
+      // 2. Query device control service for live bridge check
       const summary = await deviceControlService.getStatus();
       
       setStatus({
         ...summary.androidStatus,
-        deploymentStatus: localDeployment.deploymentStatus,
-        isRealDevice: localDeployment.isRealDevice || summary.androidStatus.isRealDevice,
-        deviceModel: localDeployment.deviceModel || summary.androidStatus.deviceModel,
-        androidVersion: localDeployment.androidVersion || summary.androidStatus.androidVersion,
+        deploymentStatus: deploymentStatus.deploymentStatus,
+        isRealDevice: deploymentStatus.isRealDevice || summary.androidStatus.isRealDevice,
+        deviceModel: deploymentStatus.deviceModel || summary.androidStatus.deviceModel,
+        androidVersion: deploymentStatus.androidVersion || summary.androidStatus.androidVersion,
+        pairedDeviceId: deploymentStatus.pairedDeviceId,
+        lastHeartbeat: deploymentStatus.lastHeartbeat,
       });
     } catch (err: any) {
       console.warn("[AndroidControlStatus] Error fetching status:", err);
@@ -68,10 +87,59 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
     refreshStatus();
   }, []);
 
-  const handleStartSetup = () => {
-    const session = devicePairingService.generatePairingSession(window.location.origin);
-    setPairingSession(session);
-    setShowSetupModal(true);
+  // Poll for pairing status when setup modal is active
+  useEffect(() => {
+    if (showSetupModal) {
+      pollIntervalRef.current = setInterval(() => {
+        refreshStatus();
+      }, 2500);
+    } else {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    }
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [showSetupModal]);
+
+  const handleStartSetup = async () => {
+    setIsLoading(true);
+    try {
+      const serverUrl = window.location.origin;
+      let session: DevicePairingSession | null = null;
+      
+      try {
+        const res = await fetch("/api/device/pairing/code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverUrl }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.session) {
+            session = data.session;
+          }
+        }
+      } catch {
+        // Local fallback
+      }
+
+      if (!session) {
+        session = devicePairingService.generatePairingSession(serverUrl);
+      }
+
+      setPairingSession(session);
+      setSimulatedPairingCode(session.pairingCode);
+      setShowSetupModal(true);
+    } catch (err) {
+      console.error("[AndroidControlStatus] Error generating pairing code:", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleCopyCode = () => {
@@ -82,13 +150,67 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
     }
   };
 
-  const handleUnpair = () => {
-    const active = devicePairingService.getActiveDevice();
-    if (active) {
-      devicePairingService.unpairDevice(active.deviceId);
-      refreshStatus();
+  const handleSimulateDevicePair = async () => {
+    if (!simulatedPairingCode) return;
+    setIsSimulatingPair(true);
+    try {
+      const res = await fetch("/api/device/pairing/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pairingCode: simulatedPairingCode,
+          deviceId: `dora_simulated_${Date.now()}`,
+          deviceModel: "Google Pixel 8 Pro",
+          androidVersion: "Android 14",
+          accessibilityEnabled: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === "ok") {
+        setActionFeedback("✓ Companion device successfully paired!");
+        await refreshStatus();
+      } else {
+        setActionFeedback(`Error: ${data.error || "Pairing failed"}`);
+      }
+    } catch (err: any) {
+      // Local fallback simulation
+      const localRes = devicePairingService.verifyAndPairDevice(simulatedPairingCode, {
+        deviceModel: "Google Pixel 8 Pro",
+        androidVersion: "Android 14",
+        accessibilityEnabled: true,
+      });
+      if (localRes.success) {
+        setActionFeedback("✓ Companion device successfully paired locally!");
+        await refreshStatus();
+      } else {
+        setActionFeedback(`Error: ${localRes.error}`);
+      }
+    } finally {
+      setIsSimulatingPair(false);
+    }
+  };
+
+  const handleUnpair = async () => {
+    try {
+      const active = devicePairingService.getActiveDevice();
+      const deviceId = status.pairedDeviceId || active?.deviceId || "default";
+      
+      try {
+        await fetch("/api/device/pairing/unpair", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deviceId }),
+        });
+      } catch {
+        // Local fallback
+      }
+
+      devicePairingService.unpairDevice(deviceId);
+      await refreshStatus();
       setShowSetupModal(false);
       setActionFeedback("Device unpaired successfully.");
+    } catch (err) {
+      console.error("[AndroidControlStatus] Error unpairing:", err);
     }
   };
 
@@ -263,7 +385,7 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
       {/* Setup / Manage Connection Modal */}
       {showSetupModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-2xl bg-[#0F172A] border border-white/15 p-5 text-white shadow-2xl space-y-4">
+          <div className="w-full max-w-md rounded-2xl bg-[#0F172A] border border-white/15 p-5 text-white shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-white/10">
               <div className="flex items-center gap-2">
                 <Smartphone className="w-5 h-5 text-[#38BDF8]" />
@@ -281,7 +403,12 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
             {/* Pairing Code Card */}
             {pairingSession && (
               <div className="p-4 rounded-xl bg-white/[0.04] border border-white/10 space-y-3">
-                <div className="text-xs text-white/60">Pairing Code (valid for 10 min):</div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-white/60">Pairing Code (valid for 10 min):</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 font-mono">
+                    Single-Use
+                  </span>
+                </div>
                 <div className="flex items-center justify-between gap-2 p-3 rounded-lg bg-black/50 border border-white/10">
                   <span className="font-mono text-xl font-bold tracking-widest text-[#38BDF8]">
                     {pairingSession.pairingCode}
@@ -304,22 +431,51 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
               <div className="flex items-start gap-2.5 p-2 rounded-lg bg-white/[0.02]">
                 <span className="w-5 h-5 rounded-full bg-[#0284C7]/20 text-[#38BDF8] flex items-center justify-center font-bold shrink-0">1</span>
                 <div>
-                  <strong className="text-white">Install & Open Dora APK</strong> on your Android phone (built via GitHub Actions or cloud build).
+                  <strong className="text-white">Open Dora Companion App</strong> on your Android phone.
                 </div>
               </div>
 
               <div className="flex items-start gap-2.5 p-2 rounded-lg bg-white/[0.02]">
                 <span className="w-5 h-5 rounded-full bg-[#0284C7]/20 text-[#38BDF8] flex items-center justify-center font-bold shrink-0">2</span>
                 <div>
-                  <strong className="text-white">Enable Accessibility:</strong> Tap <em>"Open Accessibility Settings"</em> inside Dora and switch <strong>Dora</strong> ON.
+                  <strong className="text-white">Enable Accessibility:</strong> Tap <em>"Open Accessibility Settings"</em> and enable <strong>Dora</strong>.
                 </div>
               </div>
 
               <div className="flex items-start gap-2.5 p-2 rounded-lg bg-white/[0.02]">
                 <span className="w-5 h-5 rounded-full bg-[#0284C7]/20 text-[#38BDF8] flex items-center justify-center font-bold shrink-0">3</span>
                 <div>
-                  <strong className="text-white">Enter Pairing Code:</strong> Enter the code above in your Dora phone app to connect securely.
+                  <strong className="text-white">Enter Pairing Code:</strong> Type <span className="font-mono text-[#38BDF8]">{pairingSession?.pairingCode || "DORA-XXXX"}</span> into the companion app and tap <em>"Pair Device"</em>.
                 </div>
+              </div>
+            </div>
+
+            {/* In-Browser Testing / Simulator Box */}
+            <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-white/70">Simulate Companion Link (In-Browser Test)</span>
+                <span className="text-[10px] text-white/40">Dev Test</span>
+              </div>
+              <p className="text-[11px] text-white/50 leading-relaxed">
+                Test pairing without a separate physical phone by linking the companion simulation immediately.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={simulatedPairingCode}
+                  onChange={(e) => setSimulatedPairingCode(e.target.value.toUpperCase())}
+                  placeholder="DORA-XXXX"
+                  className="flex-1 px-3 py-1.5 rounded-lg bg-black/40 border border-white/10 font-mono text-xs text-[#38BDF8] uppercase focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleSimulateDevicePair}
+                  disabled={isSimulatingPair || !simulatedPairingCode}
+                  className="px-3 py-1.5 rounded-lg bg-[#0284C7] hover:bg-[#0369A1] text-white text-xs font-medium transition-colors disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+                >
+                  <Radio className="w-3.5 h-3.5" />
+                  <span>{isSimulatingPair ? "Pairing…" : "Pair Simulator"}</span>
+                </button>
               </div>
             </div>
 

@@ -6,3 +6,4 @@ export * from "./AndroidControlService";
 export * from "./MockAndroidControlService";
 export * from "./DeviceRegistry";
 export * from "./DeviceControlService";
+export * from "./autonomy";

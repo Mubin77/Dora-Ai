@@ -16,7 +16,7 @@ import androidx.core.app.NotificationCompat
  * Dora Companion Background Service
  * 
  * Maintains a persistent, battery-efficient connection between the Android device
- * and Dora, receiving real-time action requests when running as an active assistant.
+ * and Dora, managing periodic heartbeats and receiving real-time actions.
  */
 class DoraCompanionService : Service() {
 
@@ -44,12 +44,21 @@ class DoraCompanionService : Service() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
-        Log.i(TAG, "Dora Companion Foreground Service created.")
+        
+        // Ensure heartbeat loop is running
+        DoraCompanionClient.getInstance(this).startPeriodicHeartbeat()
+        Log.i(TAG, "Dora Companion Foreground Service created and heartbeat active.")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "Dora Companion Service active and listening.")
+        DoraCompanionClient.getInstance(this).startPeriodicHeartbeat()
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.i(TAG, "Dora Companion Service stopped.")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -80,7 +89,7 @@ class DoraCompanionService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Dora")
-            .setContentText("Device Assistant is active")
+            .setContentText("Device Assistant Link Active")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
