@@ -35,8 +35,8 @@ class DoraCompanionService : Service() {
         }
 
         fun stopService(context: Context) {
-            val intent拼 = Intent(context, DoraCompanionService::class.java)
-            context.stopService(intent拼)
+            val intent = Intent(context, DoraCompanionService::class.java)
+            context.stopService(intent)
         }
     }
 

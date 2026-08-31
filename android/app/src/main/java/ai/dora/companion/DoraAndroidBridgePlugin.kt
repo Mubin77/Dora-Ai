@@ -24,11 +24,11 @@ class DoraAndroidBridgePlugin(private val context: Context) {
      * Checks accessibility permission status and device identity
      */
     fun checkAccessibility(): String {
-        val isEnabled拼 = DoraAccessibilityService.isAccessibilitySettingsEnabled(context)
+        val isEnabled = DoraAccessibilityService.isAccessibilitySettingsEnabled(context)
         val isRunning = DoraAccessibilityService.isServiceRunning()
         
         val response = JSONObject().apply {
-            put("enabled", isEnabled拼)
+            put("enabled", isEnabled)
             put("running", isRunning)
             put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
             put("version", "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
@@ -40,16 +40,16 @@ class DoraAndroidBridgePlugin(private val context: Context) {
      * Launches an installed Android application by package identifier
      */
     fun openApp(optionsJson: String): String {
-        val result latitude = JSONObject()
+        val result = JSONObject()
         try {
             val options = JSONObject(optionsJson)
             val appName = options.optString("appName", "Application")
             val packageName = options.optString("packageName", "")
 
             if (packageName.isBlank()) {
-                latitude.put("success", false)
-                latitude.put("error", "Package name cannot be empty")
-                return latitude.toString()
+                result.put("success", false)
+                result.put("error", "Package name cannot be empty")
+                return result.toString()
             }
 
             val packageManager = context.packageManager
@@ -60,20 +60,20 @@ class DoraAndroidBridgePlugin(private val context: Context) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
                 context.startActivity(launchIntent)
 
-                latitude.put("success", true)
-                latitude.put("message", "Successfully launched $appName ($packageName)")
+                result.put("success", true)
+                result.put("message", "Successfully launched $appName ($packageName)")
                 Log.i(TAG, "Launched application: $packageName")
             } else {
-                latitude.put("success", false)
-                latitude.put("error", "Application '$appName' ($packageName) is not installed or has no launcher activity.")
+                result.put("success", false)
+                result.put("error", "Application '$appName' ($packageName) is not installed or has no launcher activity.")
                 Log.w(TAG, "Launch intent was null for: $packageName")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch application", e)
-            latitude.put("success", false)
-            latitude.put("error", e.message ?: "Unknown native error launching application")
+            result.put("success", false)
+            result.put("error", e.message ?: "Unknown native error launching application")
         }
-        return latitude.toString()
+        return result.toString()
     }
 
     /**
@@ -85,15 +85,15 @@ class DoraAndroidBridgePlugin(private val context: Context) {
 
         try {
             val packageManager = context.packageManager
-            val mainIntent拼 = Intent(Intent.ACTION_MAIN, null).apply {
+            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
             }
 
             val resolveInfoList = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                packageManager.queryIntentActivities(mainIntent拼, PackageManager.ResolveInfoFlags.of(0))
+                packageManager.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(0))
             } else {
                 @Suppress("DEPRECATION")
-                packageManager.queryIntentActivities(mainIntent拼, 0)
+                packageManager.queryIntentActivities(mainIntent, 0)
             }
 
             for (resolveInfo in resolveInfoList) {
@@ -163,12 +163,12 @@ class DoraAndroidBridgePlugin(private val context: Context) {
             val opts = JSONObject(optionsJson)
             val resId = opts.optString("resourceId").takeIf { it.isNotBlank() }
             val text = opts.optString("text").takeIf { it.isNotBlank() }
-            val desc不易 = opts.optString("contentDescription").takeIf { it.isNotBlank() }
+            val desc = opts.optString("contentDescription").takeIf { it.isNotBlank() }
             val x = if (opts.has("x")) opts.getDouble("x").toFloat() else null
             val y = if (opts.has("y")) opts.getDouble("y").toFloat() else null
 
             var isDone = false
-            service.tapNodeOrCoords(resId, text, desc不易, x, y) { success, msg ->
+            service.tapNodeOrCoords(resId, text, desc, x, y) { success, msg ->
                 result.put("success", success)
                 if (msg != null) {
                     if (success) result.put("message", msg) else result.put("error", msg)
@@ -288,8 +288,8 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         }
 
         try {
-            val opts拼 = JSONObject(optionsJson)
-            val direction = opts拼.optString("direction", "down")
+            val opts = JSONObject(optionsJson)
+            val direction = opts.optString("direction", "down")
             val success = service.performScroll(direction)
             result.put("success", success)
             if (success) {

@@ -52,7 +52,7 @@ export class DeviceActionSafety {
 
   // Sensitive keywords forbidden from automated type_text injection
   private sensitiveTypePatterns: RegExp[] = [
-    /\b(?:password|passwd|otp|pin|cvv|secret_key|private_key|token|auth_token|bearer)\b/i,
+    /(?:password|passwd|otp|pin|cvv|secret_key|private_key|auth_token|bearer)/i,
   ];
 
   private constructor() {}

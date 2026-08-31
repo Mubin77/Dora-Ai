@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
 
         val statusText = TextView(this).apply {
             val isEnabled = DoraAccessibilityService.isAccessibilitySettingsEnabled(this@MainActivity)
-            text = if (isEnabled) "✓ Accessibility Access: Enabled" else "⚠ Accessibility Access: Disabled"
+            text = if (isEnabled) "[Enabled] Accessibility Service Active" else "[Action Required] Accessibility Service Disabled"
             textSize = 15f
             setTextColor(if (isEnabled) 0xFF34D399.toInt() else 0xFFFBBF24.toInt())
             setPadding(0, 16, 0, 24)

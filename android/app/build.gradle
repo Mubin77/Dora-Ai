@@ -26,16 +26,6 @@ android {
         }
     }
 
-    applicationVariants.all { variant ->
-        variant.outputs.all { output ->
-            if (variant.buildType.name == "debug") {
-                outputFileName = "Dora-debug.apk"
-            } else {
-                outputFileName = "Dora-${variant.versionName}.apk"
-            }
-        }
-    }
-
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
