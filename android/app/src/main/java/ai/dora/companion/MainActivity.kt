@@ -53,7 +53,11 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS_NAME = "dora_app_prefs"
         private const val KEY_SERVER_URL = "custom_server_url"
         private const val DEFAULT_PRODUCTION_URL = "https://ais-dev-4y3cwyeutkb4dkqz62jsrh-130845624199.asia-southeast1.run.app"
-        private const val PERMISSION_REQUEST_CODE = 1001
+        const val REQUEST_CODE_AUDIO = 2001
+        const val REQUEST_CODE_CAMERA = 2002
+        const val REQUEST_CODE_AUDIO_AND_CAMERA = 2003
+        const val PREF_KEY_REQUESTED_MIC = "has_requested_mic_permission"
+        const val PREF_KEY_REQUESTED_CAMERA = "has_requested_camera_permission"
     }
 
     private lateinit var webView: WebView
@@ -69,6 +73,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnChangeUrl: Button
 
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingPermissionRequest: PermissionRequest? = null
+    private var pendingAudioCallback: ((Boolean) -> Unit)? = null
+    private var pendingCameraCallback: ((Boolean) -> Unit)? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,7 +84,6 @@ class MainActivity : AppCompatActivity() {
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         bridgePlugin = DoraAndroidBridgePlugin(this)
 
-        requestRuntimePermissions()
         buildUi()
         setupWebView()
         setupBackNavigation()
@@ -100,22 +106,140 @@ class MainActivity : AppCompatActivity() {
         ).toInt()
     }
 
-    private fun requestRuntimePermissions() {
-        val permissions = mutableListOf<String>()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            permissions.add(Manifest.permission.RECORD_AUDIO)
+    /**
+     * Inspects current Android OS microphone permission state truthfully
+     */
+    fun checkAudioPermissionState(): String {
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (granted) return "GRANTED"
+
+        val hasRequested = prefs.getBoolean(PREF_KEY_REQUESTED_MIC, false)
+        val shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)
+        
+        return if (!hasRequested) {
+            "NOT_REQUESTED"
+        } else if (!shouldShowRationale) {
+            // User permanently denied or selected "Don't ask again"
+            "PERMANENTLY_DENIED"
+        } else {
+            "DENIED"
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            permissions.add(Manifest.permission.CAMERA)
+    }
+
+    /**
+     * Inspects current Android OS camera permission state truthfully
+     */
+    fun checkCameraPermissionState(): String {
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        if (granted) return "GRANTED"
+
+        val hasRequested = prefs.getBoolean(PREF_KEY_REQUESTED_CAMERA, false)
+        val shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)
+        
+        return if (!hasRequested) {
+            "NOT_REQUESTED"
+        } else if (!shouldShowRationale) {
+            "PERMANENTLY_DENIED"
+        } else {
+            "DENIED"
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    /**
+     * Contextual runtime permission request for Microphone
+     */
+    fun requestAudioPermission(callback: ((Boolean) -> Unit)? = null) {
+        prefs.edit().putBoolean(PREF_KEY_REQUESTED_MIC, true).apply()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            callback?.invoke(true)
+            notifyPermissionChange("microphone", true)
+            return
+        }
+        pendingAudioCallback = callback
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_CODE_AUDIO)
+    }
+
+    /**
+     * Contextual runtime permission request for Camera
+     */
+    fun requestCameraPermission(callback: ((Boolean) -> Unit)? = null) {
+        prefs.edit().putBoolean(PREF_KEY_REQUESTED_CAMERA, true).apply()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            callback?.invoke(true)
+            notifyPermissionChange("camera", true)
+            return
+        }
+        pendingCameraCallback = callback
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), REQUEST_CODE_CAMERA)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        
+        when (requestCode) {
+            REQUEST_CODE_AUDIO -> {
+                val isGranted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                Log.i(TAG, "Audio permission result: granted=$isGranted")
+                pendingAudioCallback?.invoke(isGranted)
+                pendingAudioCallback = null
+
+                pendingPermissionRequest?.let { req ->
+                    if (isGranted) {
+                        req.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+                    } else {
+                        req.deny()
+                    }
+                    pendingPermissionRequest = null
+                }
+                notifyPermissionChange("microphone", isGranted)
+            }
+            REQUEST_CODE_CAMERA -> {
+                val isGranted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                Log.i(TAG, "Camera permission result: granted=$isGranted")
+                pendingCameraCallback?.invoke(isGranted)
+                pendingCameraCallback = null
+
+                pendingPermissionRequest?.let { req ->
+                    if (isGranted) {
+                        req.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
+                    } else {
+                        req.deny()
+                    }
+                    pendingPermissionRequest = null
+                }
+                notifyPermissionChange("camera", isGranted)
+            }
+            REQUEST_CODE_AUDIO_AND_CAMERA -> {
+                val audioGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                val cameraGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                Log.i(TAG, "Audio+Camera permission result: audio=$audioGranted, camera=$cameraGranted")
+
+                val grantedResources = mutableListOf<String>()
+                if (audioGranted) grantedResources.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                if (cameraGranted) grantedResources.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+
+                pendingPermissionRequest?.let { req ->
+                    if (grantedResources.isNotEmpty()) {
+                        req.grant(grantedResources.toTypedArray())
+                    } else {
+                        req.deny()
+                    }
+                    pendingPermissionRequest = null
+                }
+                notifyPermissionChange("microphone", audioGranted)
+                notifyPermissionChange("camera", cameraGranted)
             }
         }
+    }
 
-        if (permissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, permissions.toTypedArray(), PERMISSION_REQUEST_CODE)
+    private fun notifyPermissionChange(permissionType: String, isGranted: Boolean) {
+        webView.post {
+            val js = "window.dispatchEvent(new CustomEvent('doraPermissionChanged', { detail: { type: '$permissionType', granted: $isGranted } }));"
+            webView.evaluateJavascript(js, null)
         }
     }
 
@@ -303,20 +427,63 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
-                request?.let {
-                    val requestedResources = it.resources
+                if (request == null) return
+                val requestedResources = request.resources
+                val needsAudio = requestedResources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                val needsVideo = requestedResources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+
+                val audioGranted = ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+
+                val videoGranted = ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+
+                Log.i(TAG, "WebView permission request: needsAudio=$needsAudio(granted=$audioGranted), needsVideo=$needsVideo(granted=$videoGranted)")
+
+                if (needsAudio && !audioGranted && needsVideo && !videoGranted) {
+                    pendingPermissionRequest = request
+                    prefs.edit()
+                        .putBoolean(PREF_KEY_REQUESTED_MIC, true)
+                        .putBoolean(PREF_KEY_REQUESTED_CAMERA, true)
+                        .apply()
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
+                        REQUEST_CODE_AUDIO_AND_CAMERA
+                    )
+                } else if (needsAudio && !audioGranted) {
+                    pendingPermissionRequest = request
+                    prefs.edit().putBoolean(PREF_KEY_REQUESTED_MIC, true).apply()
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        arrayOf(Manifest.permission.RECORD_AUDIO),
+                        REQUEST_CODE_AUDIO
+                    )
+                } else if (needsVideo && !videoGranted) {
+                    pendingPermissionRequest = request
+                    prefs.edit().putBoolean(PREF_KEY_REQUESTED_CAMERA, true).apply()
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        arrayOf(Manifest.permission.CAMERA),
+                        REQUEST_CODE_CAMERA
+                    )
+                } else {
+                    // All requested permissions are already granted at OS level
                     val grantedResources = mutableListOf<String>()
-                    for (res in requestedResources) {
-                        if (res == PermissionRequest.RESOURCE_AUDIO_CAPTURE ||
-                            res == PermissionRequest.RESOURCE_VIDEO_CAPTURE
-                        ) {
-                            grantedResources.add(res)
-                        }
+                    if (needsAudio && audioGranted) {
+                        grantedResources.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                    }
+                    if (needsVideo && videoGranted) {
+                        grantedResources.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
                     }
                     if (grantedResources.isNotEmpty()) {
-                        it.grant(grantedResources.toTypedArray())
+                        request.grant(grantedResources.toTypedArray())
                     } else {
-                        it.deny()
+                        request.deny()
                     }
                 }
             }

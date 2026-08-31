@@ -31,6 +31,19 @@ import { mockAndroidControlService } from "./MockAndroidControlService";
 import { screenObservationManager } from "./ScreenObservationManager";
 import { deviceActionVerifier } from "./DeviceActionVerifier";
 
+export type MicrophonePermissionState =
+  | "MICROPHONE_NOT_GRANTED"
+  | "MICROPHONE_REQUESTING"
+  | "MICROPHONE_GRANTED"
+  | "MICROPHONE_DENIED"
+  | "MICROPHONE_PERMANENTLY_DENIED";
+
+export interface MicrophonePermissionResult {
+  status: MicrophonePermissionState;
+  granted: boolean;
+  canRequest: boolean;
+}
+
 export interface NativeBridgeInterface {
   openApp(options: { appName: string; packageName: string }): Promise<{ success: boolean; message?: string; error?: string }>;
   checkAccessibility(): Promise<{ enabled: boolean; running?: boolean; model?: string; version?: string }>;
@@ -44,6 +57,11 @@ export interface NativeBridgeInterface {
   pressHome?(): Promise<{ success: boolean; message?: string; error?: string }>;
   takeScreenshot?(options?: { quality?: number }): Promise<{ success: boolean; screenshotId?: string; base64?: string; error?: string }>;
   openAccessibilitySettings?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  checkMicrophonePermission?(): Promise<{ status: string; granted: boolean; canRequest: boolean }>;
+  requestMicrophonePermission?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  checkCameraPermission?(): Promise<{ status: string; granted: boolean; canRequest: boolean }>;
+  requestCameraPermission?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  openAppSettings?(): Promise<{ success: boolean; message?: string; error?: string }>;
 }
 
 export class AndroidControlService {
@@ -217,6 +235,61 @@ export class AndroidControlService {
               return { success: false, error: e?.message };
             }
           },
+          checkMicrophonePermission: async () => {
+            try {
+              if (typeof directBridge.checkMicrophonePermission === "function") {
+                const res = directBridge.checkMicrophonePermission();
+                return parseJsonSafe(res);
+              }
+              return { status: "GRANTED", granted: true, canRequest: true };
+            } catch (e: any) {
+              return { status: "MICROPHONE_NOT_GRANTED", granted: false, canRequest: true };
+            }
+          },
+          requestMicrophonePermission: async () => {
+            try {
+              if (typeof directBridge.requestMicrophonePermission === "function") {
+                const res = directBridge.requestMicrophonePermission();
+                return parseJsonSafe(res);
+              }
+              return { success: true };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          checkCameraPermission: async () => {
+            try {
+              if (typeof directBridge.checkCameraPermission === "function") {
+                const res = directBridge.checkCameraPermission();
+                return parseJsonSafe(res);
+              }
+              return { status: "GRANTED", granted: true, canRequest: true };
+            } catch (e: any) {
+              return { status: "DENIED", granted: false, canRequest: true };
+            }
+          },
+          requestCameraPermission: async () => {
+            try {
+              if (typeof directBridge.requestCameraPermission === "function") {
+                const res = directBridge.requestCameraPermission();
+                return parseJsonSafe(res);
+              }
+              return { success: true };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          openAppSettings: async () => {
+            try {
+              if (typeof directBridge.openAppSettings === "function") {
+                const res = directBridge.openAppSettings();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "openAppSettings not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
         };
       }
       return this.wrappedNativeBridge;
@@ -227,6 +300,102 @@ export class AndroidControlService {
 
   public isBridgeAvailable(): boolean {
     return this.getNativeBridge() !== null;
+  }
+
+  /**
+   * Opens Android Application Settings page directly for Dora
+   */
+  public async openAppSettings(): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.openAppSettings === "function") {
+      try {
+        const res = await bridge.openAppSettings();
+        return Boolean(res?.success);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not open app settings:", e);
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Checks runtime microphone permission state truthfully
+   */
+  public async checkMicrophonePermission(): Promise<MicrophonePermissionResult> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.checkMicrophonePermission === "function") {
+      try {
+        const res = await bridge.checkMicrophonePermission();
+        const rawStatus = (res?.status || "").toUpperCase();
+        let status: MicrophonePermissionState = "MICROPHONE_NOT_GRANTED";
+
+        if (res?.granted || rawStatus === "GRANTED") {
+          status = "MICROPHONE_GRANTED";
+        } else if (rawStatus === "PERMANENTLY_DENIED") {
+          status = "MICROPHONE_PERMANENTLY_DENIED";
+        } else if (rawStatus === "DENIED") {
+          status = "MICROPHONE_DENIED";
+        } else {
+          status = "MICROPHONE_NOT_GRANTED";
+        }
+
+        return {
+          status,
+          granted: status === "MICROPHONE_GRANTED",
+          canRequest: status !== "MICROPHONE_PERMANENTLY_DENIED",
+        };
+      } catch (e) {
+        console.warn("[AndroidControlService] Check microphone permission failed:", e);
+      }
+    }
+
+    // Browser standard permissions check fallback
+    try {
+      if (typeof navigator !== "undefined" && navigator.permissions?.query) {
+        const permissionStatus = await navigator.permissions.query({ name: "microphone" as any });
+        if (permissionStatus.state === "granted") {
+          return { status: "MICROPHONE_GRANTED", granted: true, canRequest: true };
+        } else if (permissionStatus.state === "denied") {
+          return { status: "MICROPHONE_DENIED", granted: false, canRequest: false };
+        } else {
+          return { status: "MICROPHONE_NOT_GRANTED", granted: false, canRequest: true };
+        }
+      }
+    } catch {
+      // Fallback
+    }
+
+    return { status: "MICROPHONE_NOT_GRANTED", granted: false, canRequest: true };
+  }
+
+  /**
+   * Triggers the real Android / Browser microphone permission request
+   */
+  public async requestMicrophonePermission(): Promise<MicrophonePermissionResult> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.requestMicrophonePermission === "function") {
+      try {
+        await bridge.requestMicrophonePermission();
+      } catch (e) {
+        console.warn("[AndroidControlService] Request microphone permission error:", e);
+      }
+    }
+
+    // Also trigger getUserMedia in webview/browser which invokes WebChromeClient.onPermissionRequest
+    try {
+      if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Close immediately after obtaining permission verification
+        stream.getTracks().forEach((track) => track.stop());
+        return { status: "MICROPHONE_GRANTED", granted: true, canRequest: true };
+      }
+    } catch (err: any) {
+      console.warn("[AndroidControlService] getUserMedia error during permission request:", err);
+      // Re-check native status
+      return await this.checkMicrophonePermission();
+    }
+
+    return await this.checkMicrophonePermission();
   }
 
   /**

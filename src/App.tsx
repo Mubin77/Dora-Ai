@@ -50,7 +50,11 @@ import { ChatMessageItem } from "./components/ChatMessageItem";
 import { ImagesGalleryModal } from "./components/ImagesGalleryModal";
 import { LibraryModal } from "./components/LibraryModal";
 import { ModeSelector } from "./components/ModeSelector";
-import { androidControlService } from "./services/device/AndroidControlService";
+import { MicrophonePermissionModal } from "./components/MicrophonePermissionModal";
+import {
+  androidControlService,
+  MicrophonePermissionState,
+} from "./services/device/AndroidControlService";
 import { goalInterpreter } from "./services/device/autonomous/GoalInterpreter";
 import { autonomousAgent } from "./services/device/autonomous/AutonomousAgent";
 
@@ -73,6 +77,11 @@ export default function App() {
   const [isScreenVisionActive, setIsScreenVisionActive] = useState<boolean>(false);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+
+  // Microphone Permission States
+  const [isMicPermissionModalOpen, setIsMicPermissionModalOpen] = useState<boolean>(false);
+  const [micPermissionState, setMicPermissionState] =
+    useState<MicrophonePermissionState>("MICROPHONE_NOT_GRANTED");
 
   // Sessions and Active Conversation Messages
   const [sessions, setSessions] = useState<ConversationSession[]>(() => {
@@ -1037,7 +1046,73 @@ export default function App() {
 
   handleSendMessageRef.current = handleSendMessage;
 
-  // Toggle Live Conversational Voice Mode (NEVER clears messages)
+  // Core implementation to launch Live Voice session
+  const startVoiceSession = async () => {
+    try {
+      setState("requesting_permission");
+      if (!audioEngineRef.current) {
+        audioEngineRef.current = new AudioEngine();
+      }
+
+      // Request microphone permission and initialize audio analyzer for waveforms
+      await audioEngineRef.current.startMicrophone();
+
+      // Start continuous speech recognizer
+      await speechRecognizerRef.current?.start();
+
+      setIsCallActive(true);
+      setIsMuted(false);
+      setState("listening");
+      setActiveMode("voice");
+      console.log("[VOICE DEBUG] voice mode started");
+
+      // Start proactive companion monitoring for spontaneous, unprompted turns
+      proactiveCompanionEngine.start({
+        onProactiveTrigger: (payload) => {
+          if (!isCallActiveRef.current || isProcessingTurnRef.current || stateRef.current === "speaking") {
+            return;
+          }
+          console.log(`[PROACTIVE RUNTIME] Executing proactive companion initiation (${payload.triggerType})`);
+          if (doraService.isLiveReady()) {
+            doraService.sendProactiveTrigger(payload.promptInstruction, settingsRef.current.language);
+          } else {
+            handleSendMessageRef.current?.(payload.promptInstruction, undefined, true);
+          }
+        },
+        onStateChange: (engineState, reason) => {
+          console.log(`[Proactive Companion Engine] -> ${engineState} (${reason || ""})`);
+        },
+      });
+
+      // Pass recent conversation history context so Dora seamlessly continues from chat
+      const historyContext = getRecentHistoryContext();
+      const memoryContext = memoryManager.buildContext();
+      doraService.connectLiveStream(
+        setupLiveCallbacks(),
+        settings.voiceName,
+        memoryContext,
+        historyContext
+      );
+    } catch (err: any) {
+      console.error("Failed to start voice stream:", err);
+      proactiveCompanionEngine.stop();
+      speechRecognizerRef.current?.stop();
+      if (audioEngineRef.current) {
+        audioEngineRef.current.stopMicrophone();
+        audioEngineRef.current.interruptPlayback();
+      }
+      setIsCallActive(false);
+      
+      const checkRes = await androidControlService.checkMicrophonePermission();
+      setMicPermissionState(checkRes.status);
+      if (checkRes.status !== "MICROPHONE_GRANTED") {
+        setIsMicPermissionModalOpen(true);
+      }
+      setState("idle");
+    }
+  };
+
+  // Toggle Live Conversational Voice Mode (Truthful permission gate)
   const handleToggleCall = async () => {
     if (isCallActive) {
       proactiveCompanionEngine.stop();
@@ -1053,73 +1128,68 @@ export default function App() {
       currentUserVoiceMessageIdRef.current = null;
       currentDoraMessageIdRef.current = null;
     } else {
-      try {
-        setState("requesting_permission");
-        if (!audioEngineRef.current) {
-          audioEngineRef.current = new AudioEngine();
-        }
-
-        // Request microphone permission and initialize audio analyzer for waveforms
-        await audioEngineRef.current.startMicrophone();
-
-        // Start continuous speech recognizer
-        await speechRecognizerRef.current?.start();
-
-        setIsCallActive(true);
-        setIsMuted(false);
-        setState("listening");
-        setActiveMode("voice");
-        console.log("[VOICE DEBUG] voice mode started");
-
-        // Start proactive companion monitoring for spontaneous, unprompted turns
-        proactiveCompanionEngine.start({
-          onProactiveTrigger: (payload) => {
-            if (!isCallActiveRef.current || isProcessingTurnRef.current || stateRef.current === "speaking") {
-              return;
-            }
-            console.log(`[PROACTIVE RUNTIME] Executing proactive companion initiation (${payload.triggerType})`);
-            if (doraService.isLiveReady()) {
-              doraService.sendProactiveTrigger(payload.promptInstruction, settingsRef.current.language);
-            } else {
-              handleSendMessageRef.current?.(payload.promptInstruction, undefined, true);
-            }
-          },
-          onStateChange: (engineState, reason) => {
-            console.log(`[Proactive Companion Engine] -> ${engineState} (${reason || ""})`);
-          },
-        });
-
-        // Pass recent conversation history context so Dora seamlessly continues from chat
-        const historyContext = getRecentHistoryContext();
-        const memoryContext = memoryManager.buildContext();
-        doraService.connectLiveStream(
-          setupLiveCallbacks(),
-          settings.voiceName,
-          memoryContext,
-          historyContext
-        );
-      } catch (err: any) {
-        console.error("Failed to start voice stream:", err);
-        proactiveCompanionEngine.stop();
-        speechRecognizerRef.current?.stop();
-        if (audioEngineRef.current) {
-          audioEngineRef.current.stopMicrophone();
-          audioEngineRef.current.interruptPlayback();
-        }
-        setIsCallActive(false);
-        setState("error");
-        setScreenSharingNotice(
-          err?.name === "NotAllowedError" || err?.message?.includes("Permission")
-            ? "Microphone permission was denied. Please allow microphone access to talk with Dora."
-            : "Microphone unavailable. Please verify your audio input devices."
-        );
-        setTimeout(() => {
-          setState((curr) => (curr === "error" ? "idle" : curr));
-          setScreenSharingNotice((prev) => (prev?.includes("Microphone") ? null : prev));
-        }, 5000);
+      const permResult = await androidControlService.checkMicrophonePermission();
+      if (permResult.status === "MICROPHONE_GRANTED") {
+        await startVoiceSession();
+      } else {
+        setMicPermissionState(permResult.status);
+        setIsMicPermissionModalOpen(true);
       }
     }
   };
+
+  // Modal permission request triggers
+  const handleRequestMicPermissionFromModal = async () => {
+    setMicPermissionState("MICROPHONE_REQUESTING");
+    try {
+      const result = await androidControlService.requestMicrophonePermission();
+      setMicPermissionState(result.status);
+      if (result.granted) {
+        setIsMicPermissionModalOpen(false);
+        await startVoiceSession();
+      }
+    } catch (e) {
+      console.warn("Failed requesting permission:", e);
+      const recheck = await androidControlService.checkMicrophonePermission();
+      setMicPermissionState(recheck.status);
+    }
+  };
+
+  const handleOpenAppSettingsFromModal = async () => {
+    await androidControlService.openAppSettings();
+  };
+
+  // Listen for native Android permission changes & app resume focus
+  useEffect(() => {
+    const handlePermissionEvent = async (e: any) => {
+      const detail = e?.detail;
+      if (detail?.type === "microphone") {
+        const check = await androidControlService.checkMicrophonePermission();
+        setMicPermissionState(check.status);
+        if (check.granted) {
+          setIsMicPermissionModalOpen(false);
+        }
+      }
+    };
+
+    const handleWindowFocus = async () => {
+      const check = await androidControlService.checkMicrophonePermission();
+      setMicPermissionState(check.status);
+      if (check.granted) {
+        setIsMicPermissionModalOpen(false);
+      }
+    };
+
+    window.addEventListener("doraPermissionChanged" as any, handlePermissionEvent);
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleWindowFocus);
+
+    return () => {
+      window.removeEventListener("doraPermissionChanged" as any, handlePermissionEvent);
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleWindowFocus);
+    };
+  }, []);
 
   // Switch between Chat and Voice mode views seamlessly
   const handleSwitchMode = (mode: "chat" | "voice") => {
@@ -1872,6 +1942,15 @@ export default function App() {
         onClose={() => setIsLibraryOpen(false)}
         sessions={sessions}
         onSelectSession={handleSelectSession}
+      />
+
+      {/* Microphone Permission Modal */}
+      <MicrophonePermissionModal
+        isOpen={isMicPermissionModalOpen}
+        permissionState={micPermissionState}
+        onRequestPermission={handleRequestMicPermissionFromModal}
+        onOpenAppSettings={handleOpenAppSettingsFromModal}
+        onClose={() => setIsMicPermissionModalOpen(false)}
       />
 
       {/* Fullscreen Lightbox Preview */}

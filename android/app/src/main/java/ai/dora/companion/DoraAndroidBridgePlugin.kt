@@ -86,6 +86,112 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     }
 
     /**
+     * Checks runtime microphone permission status
+     * Returns: "GRANTED", "DENIED", "PERMANENTLY_DENIED", or "NOT_REQUESTED"
+     */
+    @JavascriptInterface
+    fun checkMicrophonePermission(): String {
+        val activity = context as? MainActivity
+        val status = activity?.checkAudioPermissionState() ?: run {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                "GRANTED"
+            } else {
+                "NOT_REQUESTED"
+            }
+        }
+        val isGranted = status == "GRANTED"
+        val response = JSONObject().apply {
+            put("status", status)
+            put("granted", isGranted)
+            put("canRequest", status != "PERMANENTLY_DENIED")
+        }
+        return response.toString()
+    }
+
+    /**
+     * Requests runtime microphone permission from the user
+     */
+    @JavascriptInterface
+    fun requestMicrophonePermission(): String {
+        val activity = context as? MainActivity
+        val result = JSONObject()
+        if (activity != null) {
+            activity.runOnUiThread {
+                activity.requestAudioPermission()
+            }
+            result.put("success", true)
+            result.put("message", "Microphone permission requested")
+        } else {
+            result.put("success", false)
+            result.put("error", "Activity not available")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Checks runtime camera permission status
+     */
+    @JavascriptInterface
+    fun checkCameraPermission(): String {
+        val activity = context as? MainActivity
+        val status = activity?.checkCameraPermissionState() ?: run {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                "GRANTED"
+            } else {
+                "NOT_REQUESTED"
+            }
+        }
+        val isGranted = status == "GRANTED"
+        val response = JSONObject().apply {
+            put("status", status)
+            put("granted", isGranted)
+            put("canRequest", status != "PERMANENTLY_DENIED")
+        }
+        return response.toString()
+    }
+
+    /**
+     * Requests runtime camera permission from the user
+     */
+    @JavascriptInterface
+    fun requestCameraPermission(): String {
+        val activity = context as? MainActivity
+        val result = JSONObject()
+        if (activity != null) {
+            activity.runOnUiThread {
+                activity.requestCameraPermission()
+            }
+            result.put("success", true)
+            result.put("message", "Camera permission requested")
+        } else {
+            result.put("success", false)
+            result.put("error", "Activity not available")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Opens Android Application Details Settings for Dora
+     */
+    @JavascriptInterface
+    fun openAppSettings(): String {
+        val result = JSONObject()
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", context.packageName, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            result.put("success", true)
+            result.put("message", "Opened App Settings")
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to open app settings")
+        }
+        return result.toString()
+    }
+
+    /**
      * Resolves app package from name or common package dictionary
      */
     fun resolvePackage(appName: String): String? {
