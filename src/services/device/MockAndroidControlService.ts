@@ -44,8 +44,10 @@ export class MockAndroidControlService {
     return {
       accessibilityEnabled: false,
       bridgeConnected: false,
+      deploymentStatus: "NOT_CONFIGURED",
       deviceModel: "Browser Sandbox (Mock Environment)",
       androidVersion: "N/A",
+      isRealDevice: false,
     };
   }
 

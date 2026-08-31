@@ -18,6 +18,10 @@ import { validateAndRankSearchResults } from "./server/core/searchFreshness";
 import { AIMessage, AIRequest, SearchRequest } from "./server/providers/types";
 import { deviceControlService } from "./src/services/device/DeviceControlService";
 import { deviceActionRegistry } from "./src/services/device/DeviceActionRegistry";
+import { devicePairingService } from "./src/services/device/DevicePairingService";
+import { autonomousAgent } from "./src/services/device/autonomous/AutonomousAgent";
+import { runAllAutonomousAgentTests } from "./server/core/autonomousAgent.test";
+import { runAllCompanionDeploymentTests } from "./server/core/companionDeployment.test";
 
 dotenv.config();
 
@@ -79,14 +83,137 @@ async function startServer() {
   app.get("/api/device/status", async (_req, res) => {
     try {
       const status = await deviceControlService.getStatus();
+      const deploymentStatus = devicePairingService.getDeploymentStatus();
       res.json({
         status: "ok",
         deviceStatus: status,
+        deploymentStatus,
         supportedActions: deviceActionRegistry.getAllowlistedActions(),
         timestamp: Date.now(),
       });
     } catch (err: any) {
       res.status(500).json({ error: "Failed to query device status", details: err?.message });
+    }
+  });
+
+  // Phase 4: Device Pairing Code Generation
+  app.post("/api/device/pairing/code", (req, res) => {
+    try {
+      const { serverUrl } = req.body || {};
+      const session = devicePairingService.generatePairingSession(serverUrl);
+      res.json({
+        status: "ok",
+        session,
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to generate pairing session", details: err?.message });
+    }
+  });
+
+  // Phase 4: Device Pairing Exchange (Android Companion -> Server)
+  app.post("/api/device/pairing/pair", (req, res) => {
+    try {
+      const { pairingCode, deviceId, deviceModel, androidVersion, accessibilityEnabled } = req.body || {};
+      if (!pairingCode) {
+        return res.status(400).json({ error: "pairingCode is required" });
+      }
+
+      const result = devicePairingService.verifyAndPairDevice(pairingCode, {
+        deviceId,
+        deviceModel,
+        androidVersion,
+        accessibilityEnabled,
+      });
+
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+
+      res.json({
+        status: "ok",
+        token: result.token,
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Pairing exchange failed", details: err?.message });
+    }
+  });
+
+  // Phase 4: Device Deployment Status
+  app.get("/api/device/pairing/status", (_req, res) => {
+    try {
+      const status = devicePairingService.getDeploymentStatus();
+      res.json({
+        status: "ok",
+        deploymentStatus: status,
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to get deployment status", details: err?.message });
+    }
+  });
+
+  // Phase 4: Device Heartbeat & Status Update
+  app.post("/api/device/pairing/heartbeat", (req, res) => {
+    try {
+      const { deviceId, token, accessibilityEnabled, deviceModel, androidVersion } = req.body || {};
+      if (!deviceId || !token) {
+        return res.status(401).json({ error: "deviceId and token are required for heartbeat" });
+      }
+
+      const isValid = devicePairingService.authenticateDevice(token, deviceId);
+      if (!isValid) {
+        return res.status(401).json({ error: "Authentication failed. Token invalid or expired." });
+      }
+
+      devicePairingService.recordHeartbeat(deviceId, {
+        accessibilityEnabled,
+        deviceModel,
+        androidVersion,
+      });
+
+      res.json({
+        status: "ok",
+        deploymentStatus: devicePairingService.getDeploymentStatus(),
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Heartbeat failed", details: err?.message });
+    }
+  });
+
+  // Phase 4: Unpair Device
+  app.post("/api/device/pairing/unpair", (req, res) => {
+    try {
+      const { deviceId } = req.body || {};
+      if (!deviceId) {
+        return res.status(400).json({ error: "deviceId is required" });
+      }
+      devicePairingService.unpairDevice(deviceId);
+      res.json({
+        status: "ok",
+        message: "Device successfully unpaired",
+        deploymentStatus: devicePairingService.getDeploymentStatus(),
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: "Failed to unpair device", details: err?.message });
+    }
+  });
+
+  // Diagnostic endpoint to run Phase 4 Companion Deployment test suite
+  app.get("/api/test-companion-deployment", async (_req, res) => {
+    try {
+      const result = await runAllCompanionDeploymentTests();
+      res.json({
+        status: "ok",
+        message: "All Dora Phase 4 Companion Deployment tests completed.",
+        result,
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: "error", error: err?.message || String(err) });
     }
   });
 
@@ -255,18 +382,70 @@ async function startServer() {
 
       if (isDeviceAction && detected.deviceAction) {
         try {
-          deviceActionResult = await deviceControlService.executeAction({
-            device: detected.deviceAction.device,
-            action: detected.deviceAction.action,
-            parameters: { appName: detected.deviceAction.appName },
-          });
+          if (detected.deviceAction.isAutonomous) {
+            // Autonomous multi-step task execution
+            const taskResult = await autonomousAgent.startTask(message, {
+              mockMode: !deviceControlService.getBridgeStatus().connected,
+              maxSteps: 15,
+            });
+            deviceActionResult = taskResult;
 
-          console.log(
-            `[DeviceActionExecution]\ndevice=${detected.deviceAction.device}\naction=${detected.deviceAction.action}\nappName=${detected.deviceAction.appName}\nsuccess=${deviceActionResult.success}\nstatus=${deviceActionResult.status}`
-          );
+            console.log(
+              `[AutonomousTaskExecution]\ngoal="${message}"\nsuccess=${taskResult.success}\nstatus=${taskResult.status}\nsteps=${taskResult.totalStepsExecuted}\nisMockVerified=${taskResult.isMockVerified}\nisDeviceVerified=${taskResult.isDeviceVerified}`
+            );
 
-          if (!deviceActionResult.success) {
-            deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION EXECUTION RESULT]
+            if (taskResult.success) {
+              if (taskResult.isMockVerified) {
+                deviceActionContext = `\n\n[AUTONOMOUS ANDROID AGENT EXECUTION RESULT (MOCK-VERIFIED)]
+Goal: "${message}"
+Execution Status: ${taskResult.status} (COMPLETED)
+Total Actions Executed: ${taskResult.totalStepsExecuted}
+Plan Summary: ${taskResult.summary}
+Mock-Verified: true
+Device-Verified: false
+
+HONESTY & CONVERSATIONAL DIRECTIVES FOR DORA:
+1. The autonomous engine successfully executed and mock-verified the multi-step journey in the simulated environment.
+2. Warmly tell the user what was performed (e.g., searched for the requested topic and started playback).
+3. If the user explicitly asks about hardware execution or device verification, honestly state: "Autonomous engine implemented and mock-verified; real Android execution not yet device-verified."`;
+              } else {
+                deviceActionContext = `\n\n[AUTONOMOUS ANDROID AGENT EXECUTION RESULT (DEVICE-VERIFIED)]
+Goal: "${message}"
+Execution Status: ${taskResult.status} (COMPLETED)
+Total Actions Executed: ${taskResult.totalStepsExecuted}
+Plan Summary: ${taskResult.summary}
+Device-Verified: true
+
+INSTRUCTIONS FOR DORA:
+1. The task was successfully executed and verified on the connected Android phone.
+2. Confirm warmly that the task was completed.`;
+              }
+            } else {
+              deviceActionContext = `\n\n[AUTONOMOUS ANDROID AGENT EXECUTION RESULT (FAILED / STOPPED)]
+Goal: "${message}"
+Execution Status: ${taskResult.status}
+Summary: ${taskResult.summary}
+Reason: ${taskResult.error?.details || "Action could not be verified or was stopped for security"}
+
+CRITICAL RULES FOR DORA:
+1. The autonomous task could not be completed.
+2. Do NOT claim the task succeeded.
+3. Warmly explain what happened to the user.`;
+            }
+          } else {
+            // Single-step application open action
+            deviceActionResult = await deviceControlService.executeAction({
+              device: detected.deviceAction.device,
+              action: detected.deviceAction.action,
+              parameters: { appName: detected.deviceAction.appName },
+            });
+
+            console.log(
+              `[DeviceActionExecution]\ndevice=${detected.deviceAction.device}\naction=${detected.deviceAction.action}\nappName=${detected.deviceAction.appName}\nsuccess=${deviceActionResult.success}\nstatus=${deviceActionResult.status}`
+            );
+
+            if (!deviceActionResult.success) {
+              deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION EXECUTION RESULT]
 Command: "${message}"
 Requested Action: ${detected.deviceAction.action}
 Target Application: ${detected.deviceAction.appName}
@@ -282,8 +461,8 @@ CRITICAL RULES FOR DORA:
    Example Banglish: "Tor Android phone-ta ekhono connect kora nai, tai YouTube open korte parlam na." (or in Tumi: "Tomar Android phone-ta connect kora nei, tai YouTube open korte parlam na.").
    Example English: "Your Android phone isn't connected yet, so I couldn't open ${detected.deviceAction.appName}."
 4. NEVER output raw technical error codes or stack traces to the user.`;
-          } else {
-            deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION EXECUTION RESULT]
+            } else {
+              deviceActionContext = `\n\n[ANDROID COMPANION PHONE ACTION EXECUTION RESULT]
 Command: "${message}"
 Requested Action: ${detected.deviceAction.action}
 Target Application: ${detected.deviceAction.appName}
@@ -294,6 +473,7 @@ Message: ${deviceActionResult.message}
 INSTRUCTIONS FOR DORA:
 1. The Android companion confirmed that ${detected.deviceAction.appName} was successfully launched.
 2. Confirm warmly to the user that ${detected.deviceAction.appName} is open / opening now on their phone (e.g., "YouTube open kore dilam!" or "YouTube is open!").`;
+            }
           }
         } catch (err: any) {
           console.warn("[Device Action Execution Error]:", err?.message);
@@ -864,6 +1044,106 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
   });
 
   // -------------------------------------------------------------
+  // Android Companion Device & Autonomous Agent API Endpoints
+  // -------------------------------------------------------------
+  // Device & Bridge Status Diagnostic
+  app.get("/api/device/status", (_req, res) => {
+    try {
+      const status = deviceControlService.getStatus();
+      const bridge = deviceControlService.getBridgeStatus();
+      res.json({
+        deviceStatus: status,
+        bridge,
+        timestamp: Date.now(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to retrieve device status" });
+    }
+  });
+
+  // Single Action Execution Endpoint
+  app.post("/api/device/action", async (req, res) => {
+    try {
+      const { device = "android", action = "open_application", parameters = {} } = req.body;
+      const result = await deviceControlService.executeAction({ device, action, parameters });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to execute device action" });
+    }
+  });
+
+  // Autonomous Task Creation Endpoint
+  app.post("/api/device/autonomous/task", async (req, res) => {
+    try {
+      const { goal, mockMode, maxSteps } = req.body;
+      if (!goal || typeof goal !== "string") {
+        return res.status(400).json({ error: "Goal is required" });
+      }
+      const taskResult = await autonomousAgent.startTask(goal, {
+        mockMode: mockMode !== undefined ? Boolean(mockMode) : !deviceControlService.getBridgeStatus().connected,
+        maxSteps: maxSteps ? Number(maxSteps) : 20,
+      });
+      res.json(taskResult);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to execute autonomous task" });
+    }
+  });
+
+  // Autonomous Task Status Lookup
+  app.get("/api/device/autonomous/task/:id", (req, res) => {
+    try {
+      const task = autonomousAgent.getTask(req.params.id);
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      res.json(task);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to look up task" });
+    }
+  });
+
+  // Autonomous Task Cancellation
+  app.post("/api/device/autonomous/task/:id/cancel", (req, res) => {
+    try {
+      const cancelled = autonomousAgent.cancelTask(req.params.id);
+      res.json({ cancelled, taskId: req.params.id });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to cancel task" });
+    }
+  });
+
+  // Autonomous Task Confirmation
+  app.post("/api/device/autonomous/task/:id/confirm", (req, res) => {
+    try {
+      const { approved = true } = req.body;
+      const confirmed = autonomousAgent.confirmAction(req.params.id, Boolean(approved));
+      res.json({ confirmed, approved: Boolean(approved), taskId: req.params.id });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to confirm action" });
+    }
+  });
+
+  // Phase 1 & 2 Device Control Test Suite Endpoint
+  app.get("/api/test-device-control", async (_req, res) => {
+    try {
+      await runAllDeviceControlTests();
+      res.json({ status: "success", message: "Phase 1 & Phase 2 device control tests completed successfully." });
+    } catch (err: any) {
+      res.status(500).json({ status: "failed", error: err?.message });
+    }
+  });
+
+  // Phase 3 Autonomous Agent Test Suite Endpoint
+  app.get("/api/test-autonomous-agent", async (_req, res) => {
+    try {
+      const testReport = await runAllAutonomousAgentTests();
+      res.json({ status: "success", report: testReport });
+    } catch (err: any) {
+      res.status(500).json({ status: "failed", error: err?.message });
+    }
+  });
+
+  // -------------------------------------------------------------
   // Real-Time WebSocket Voice Bridge (Gemini Live API)
   // -------------------------------------------------------------
   wss.on("connection", (clientWs: WebSocket) => {
@@ -1178,11 +1458,13 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
     });
   }
 
-  server.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, "0.0.0.0", async () => {
     console.log(`Dora Voice Assistant server running on http://localhost:${PORT}`);
     try {
       runAllProactiveEngineTests();
       runAllLanguageStyleAdapterTests();
+      await runAllDeviceControlTests();
+      await runAllAutonomousAgentTests();
     } catch (e) {
       console.warn("Startup tests warning:", e);
     }

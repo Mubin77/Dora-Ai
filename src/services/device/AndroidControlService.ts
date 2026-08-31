@@ -107,19 +107,25 @@ export class AndroidControlService {
 
     try {
       const res = await bridge.checkAccessibility();
+      const isEnabled = Boolean(res.enabled);
       return {
-        accessibilityEnabled: Boolean(res.enabled),
+        accessibilityEnabled: isEnabled,
         bridgeConnected: true,
+        deploymentStatus: isEnabled ? "CONNECTED" : "ACCESSIBILITY_DISABLED",
         deviceModel: res.model || "Android Device",
         androidVersion: res.version || "Android OS",
+        isRealDevice: true,
+        lastHeartbeat: Date.now(),
       };
     } catch (err: any) {
       console.warn("[AndroidControlService] Failed to query native accessibility status:", err);
       return {
         accessibilityEnabled: false,
-        bridgeConnected: true,
+        bridgeConnected: false,
+        deploymentStatus: "ERROR",
         deviceModel: "Android Device",
         androidVersion: "Unknown",
+        isRealDevice: true,
       };
     }
   }

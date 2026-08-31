@@ -11,6 +11,7 @@ export type DevicePlatform = "android" | "web" | "desktop";
 
 export type DeviceAction =
   | "open_application"   // Implemented in Phase 1
+  | "autonomous_task"    // Phase 3 Autonomous Task Execution
   | "tap"                // Phase 2
   | "type_text"          // Phase 2
   | "swipe"              // Phase 2
@@ -211,11 +212,39 @@ export interface Device {
   lastSeen?: number;
 }
 
+export type DeviceDeploymentStatus =
+  | "NOT_CONFIGURED"
+  | "ACCESSIBILITY_DISABLED"
+  | "READY"
+  | "CONNECTED"
+  | "ERROR";
+
+export interface DevicePairingSession {
+  pairingCode: string;
+  qrPayload: string;
+  expiresAt: number;
+  createdAt: number;
+  serverUrl: string;
+}
+
+export interface DeviceAuthToken {
+  deviceId: string;
+  token: string;
+  expiresAt: number;
+  issuedAt: number;
+  deviceModel?: string;
+  androidVersion?: string;
+}
+
 export interface DevicePermissionStatus {
   accessibilityEnabled: boolean;
   bridgeConnected: boolean;
+  deploymentStatus: DeviceDeploymentStatus;
   deviceModel?: string;
   androidVersion?: string;
+  pairedDeviceId?: string;
+  lastHeartbeat?: number;
+  isRealDevice: boolean;
 }
 
 export interface DeviceMemoryEvent {
@@ -227,3 +256,4 @@ export interface DeviceMemoryEvent {
   timestamp: number;
   details?: string;
 }
+

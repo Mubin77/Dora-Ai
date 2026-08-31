@@ -13,8 +13,10 @@ export interface TaskDetectionResult {
   temporal?: TemporalResolution;
   deviceAction?: {
     device: "android" | "pc";
-    action: "open_application";
+    action: "open_application" | "autonomous_task";
     appName: string;
+    isAutonomous?: boolean;
+    goal?: string;
   };
 }
 
@@ -159,13 +161,42 @@ export class TaskDetector {
   }
 
   /**
-   * Detects device control commands such as "open YouTube", "YouTube open koro", etc.
+   * Detects device control commands and multi-step autonomous goals.
    */
-  public detectDeviceAction(rawText: string): { device: "android" | "pc"; action: "open_application"; appName: string } | null {
+  public detectDeviceAction(rawText: string): {
+    device: "android" | "pc";
+    action: "open_application" | "autonomous_task";
+    appName: string;
+    isAutonomous?: boolean;
+    goal?: string;
+  } | null {
     const trimmed = rawText.trim();
     const lower = trimmed.toLowerCase();
 
-    // 1. English patterns: "open <app>", "launch <app>", "start <app>", "open the <app> app"
+    // 1. Multi-Step Autonomous Goal Patterns
+    // Examples: "Open YouTube and search for relaxing music", "YouTube e giye relaxing music search koro",
+    // "Open WhatsApp and message Ryan", "Search cat videos on YouTube"
+    const isMultiStepGoal =
+      /(?:open\s+[a-z0-9\s._\-]+?\s+and\s+(?:search|find|play|look|message|type|send)|(?:search|find|play)\s+.+?\s+(?:on|in)\s+[a-z0-9\s._\-]+|[a-z0-9\u0980-\u09FF\s._\-]+?\s+(?:giye|dhuke)\s+.+?\s*(?:search\s*koro|khujo|chalao|play|dekhao))/i.test(lower);
+
+    if (isMultiStepGoal) {
+      // Extract target app name if possible
+      let appName = "Android";
+      const appMatch = lower.match(/(?:open\s+([a-z0-9\s._\-]+?)\s+and|(?:on|in)\s+([a-z0-9\s._\-]+)|([a-z0-9\u0980-\u09FF\s._\-]+?)\s+(?:giye|dhuke))/i);
+      if (appMatch) {
+        appName = (appMatch[1] || appMatch[2] || appMatch[3] || "Android").trim();
+      }
+
+      return {
+        device: "android",
+        action: "autonomous_task",
+        appName: appName.charAt(0).toUpperCase() + appName.slice(1),
+        isAutonomous: true,
+        goal: trimmed,
+      };
+    }
+
+    // 2. English patterns: "open <app>", "launch <app>", "start <app>", "open the <app> app"
     const englishMatch = lower.match(
       /^(?:hey\s+dora[,\s]*|dora[,\s]*|please\s+|can\s+you\s+(?:please\s+)?|could\s+you\s+(?:please\s+)?)?(?:open|launch|start)\s+(?:the\s+)?([a-z0-9\s._\-]+?)(?:\s+app|\s+application)?$/i
     );
@@ -181,7 +212,7 @@ export class TaskDetector {
       }
     }
 
-    // 2. Bangla / Banglish patterns: "<app> open koro", "<app> kholo", "<app> chalau", "<app> app ta open koro"
+    // 3. Bangla / Banglish patterns: "<app> open koro", "<app> kholo", "<app> chalau", "<app> app ta open koro"
     const banglaMatch = lower.match(
       /^(?:hey\s+dora[,\s]*|dora[,\s]*)?([a-z0-9\u0980-\u09FF\s._\-]+?)\s*(?:app\s*ta\s*|app\s*)?(?:open\s*koro|open\s*kor|kholo|khule\s*dao|chalu\s*koro|chalau)$/i
     );

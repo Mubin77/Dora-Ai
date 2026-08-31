@@ -189,6 +189,7 @@ export interface ExecutiveAttentionItem {
   rawContent: string;
   isBlocking: boolean;
   isSuppressed: boolean;
+  isStale?: boolean;
   suppressionReason?: ExecutiveSuppressionReason;
   sortKey: string;
 }
@@ -228,6 +229,13 @@ export interface ExecutiveFocus {
     isBlocked: boolean;
     requiresPrerequisites: boolean;
   };
+  decisionFocus?: {
+    state: DecisionState;
+    recommendationType: DecisionRecommendationType;
+    selectedOptionTitle?: string;
+    isBlocked: boolean;
+    requiresPrerequisites: boolean;
+  };
   activeGoal?: {
     id: string;
     title: string;
@@ -260,6 +268,7 @@ export interface ExecutiveControlDirective {
  */
 export interface ExecutiveControlDiagnostics {
   totalAttentionCandidates: number;
+  totalCandidatesEvaluated?: number;
   activeAttentionCount: number;
   criticalCount: number;
   highPriorityCount: number;
@@ -273,6 +282,7 @@ export interface ExecutiveControlDiagnostics {
   dominantPriorityClass: ExecutivePriorityClass;
   escalationState: ExecutiveEscalationState;
   responseMode: ExecutiveResponseMode;
+  evaluationDurationMs?: number;
 }
 
 /**
@@ -295,6 +305,7 @@ export interface ExecutiveControlAnalysis {
   escalationState: ExecutiveEscalationState;
   responseMode: ExecutiveResponseMode;
   focus: ExecutiveFocus;
+  executiveFocus?: ExecutiveFocus;
   attentionSet: ExecutiveAttentionItem[];
   attentionItems?: ExecutiveAttentionItem[];
   suppressedItems: ExecutiveSuppressionRecord[];

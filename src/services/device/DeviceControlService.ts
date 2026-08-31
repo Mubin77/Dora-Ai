@@ -221,6 +221,30 @@ export class DeviceControlService {
   }
 
   /**
+   * Checks bridge connectivity status
+   */
+  public getBridgeStatus(): { connected: boolean; isNative: boolean } {
+    const isNative = androidControlService.isBridgeAvailable();
+    return {
+      connected: isNative,
+      isNative,
+    };
+  }
+
+  /**
+   * Directly reads the active screen observation
+   */
+  public async readScreen(params?: { forceFresh?: boolean; includeNonClickable?: boolean }): Promise<DeviceActionResult> {
+    return this.executeAction({
+      action: "read_screen",
+      parameters: {
+        forceFresh: params?.forceFresh,
+        includeNonClickable: params?.includeNonClickable,
+      },
+    });
+  }
+
+  /**
    * Retrieves overall device subsystem status
    */
   public async getStatus() {
