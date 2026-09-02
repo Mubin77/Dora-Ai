@@ -195,7 +195,7 @@ class DoraCompanionClient private constructor(private val context: Context) {
                         try {
                             val json = JSONObject(body)
                             doraStatus = json.optString("dora", json.optString("status", "online"))
-                        } catch (_: Exception) {}
+                        } catch (e: Exception) {}
 
                         mainHandler.post {
                             callback(HealthCheckResult(reachable = true, statusCode = response.code, doraStatus = doraStatus))
@@ -299,7 +299,7 @@ class DoraCompanionClient private constructor(private val context: Context) {
                                 if (json.has("error")) {
                                     errorMsg = json.getString("error")
                                 }
-                            } catch (_: Exception) {}
+                            } catch (e: Exception) {}
                             
                             notifyStateChanged(ConnectionState.ERROR, errorMsg)
                             mainHandler.post {

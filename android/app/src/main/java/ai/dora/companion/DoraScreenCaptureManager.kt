@@ -219,7 +219,7 @@ class DoraScreenCaptureManager private constructor() {
         } finally {
             try {
                 image?.close()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
     }
 

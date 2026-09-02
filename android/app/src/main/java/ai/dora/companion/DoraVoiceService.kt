@@ -701,25 +701,25 @@ class DoraVoiceService : Service(), TextToSpeech.OnInitListener {
         }
 
         // Navigation (Home, Back, Recents)
-        val accessibilityService = DoraAccessibilityService.instance
-        if (accessibilityService != null && accessibilityService.isServiceRunning()) {
+        val accessibilityService = DoraAccessibilityService.getInstance()
+        if (accessibilityService != null && DoraAccessibilityService.isServiceRunning()) {
             if (lower == "go home" || lower == "home screen" || lower == "home") {
-                accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
+                accessibilityService.performHome()
                 speakResponse("Going home.") { onTurnCompleted() }
                 return true
             }
             if (lower == "go back" || lower == "back") {
-                accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                accessibilityService.performBack()
                 speakResponse("Going back.") { onTurnCompleted() }
                 return true
             }
             if (lower.contains("recent apps") || lower.contains("recents")) {
-                accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS)
+                accessibilityService.performRecents()
                 speakResponse("Opening recent apps.") { onTurnCompleted() }
                 return true
             }
             if (lower.contains("notifications") || lower.contains("notification panel")) {
-                accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+                accessibilityService.performNotifications()
                 speakResponse("Opening notifications.") { onTurnCompleted() }
                 return true
             }
