@@ -1210,10 +1210,78 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
               systemInstruction: effectiveSystemInstruction,
               outputAudioTranscription: {},
               inputAudioTranscription: {},
+              tools: [
+                {
+                  functionDeclarations: [
+                    {
+                      name: "open_application",
+                      description: "Opens an application on the user's local Android phone (e.g. YouTube, WhatsApp, Chrome, Settings, Camera, Spotify).",
+                      parameters: {
+                        type: Type.OBJECT,
+                        properties: {
+                          app_name: {
+                            type: Type.STRING,
+                            description: "The name of the application to open on the Android phone",
+                          },
+                        },
+                        required: ["app_name"],
+                      },
+                    },
+                    {
+                      name: "press_home",
+                      description: "Navigates to the Android home screen.",
+                      parameters: {
+                        type: Type.OBJECT,
+                        properties: {},
+                      },
+                    },
+                    {
+                      name: "press_back",
+                      description: "Navigates back to the previous screen on the Android phone.",
+                      parameters: {
+                        type: Type.OBJECT,
+                        properties: {},
+                      },
+                    },
+                    {
+                      name: "scroll_screen",
+                      description: "Scrolls the Android screen up or down.",
+                      parameters: {
+                        type: Type.OBJECT,
+                        properties: {
+                          direction: {
+                            type: Type.STRING,
+                            enum: ["down", "up"],
+                            description: "The direction to scroll the screen ('down' or 'up')",
+                          },
+                        },
+                        required: ["direction"],
+                      },
+                    },
+                  ],
+                },
+              ],
             },
             callbacks: {
               onmessage: (message: any) => {
                 console.log("[VOICE DEBUG] Gemini Live message received from SDK:", Object.keys(message || {}).join(", "));
+
+                // Handle tool calls from Gemini Live (e.g. open_application, press_home, etc.)
+                if (message.toolCall?.functionCalls?.length) {
+                  for (const call of message.toolCall.functionCalls) {
+                    console.log(`[VOICE DEBUG] Tool call from Gemini Live: ${call.name} (id: ${call.id})`, call.args);
+                    clientWs.send(
+                      JSON.stringify({
+                        type: "execute_device_action",
+                        call: {
+                          id: call.id,
+                          name: call.name,
+                          args: call.args,
+                        },
+                      })
+                    );
+                  }
+                }
 
                 // User input audio transcription (from Gemini Live speech-to-text)
                 const userTranscriptText =
@@ -1427,6 +1495,22 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
             } catch (err: any) {
               console.warn("[PROACTIVE RUNTIME] Failed to send proactive trigger to Live API:", err?.message);
             }
+          }
+        } else if (data.type === "tool_response" && liveSession && data.callId) {
+          console.log(`[VOICE DEBUG] Received tool_response from client for call ${data.callId}:`, data.result);
+          try {
+            liveSession.send({
+              toolResponse: {
+                functionResponses: [
+                  {
+                    response: { output: data.result || { success: true } },
+                    id: data.callId,
+                  },
+                ],
+              },
+            });
+          } catch (err: any) {
+            console.warn("[VOICE DEBUG] Error sending toolResponse to Live API:", err?.message);
           }
         } else if (data.type === "interrupt") {
           if (liveSession) {

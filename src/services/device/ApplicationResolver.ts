@@ -46,7 +46,7 @@ export class ApplicationResolver {
     },
     whatsapp: {
       packageName: "com.whatsapp",
-      aliases: ["wa", "whats app", "হোয়াটসঅ্যাপ", "হুয়াটস্যাপ"],
+      aliases: ["wa", "whats app", "watsapp", "হোয়াটসঅ্যাপ", "হুয়াটস্যাপ", "হোয়াটসঅ্যাপ"],
     },
     spotify: {
       packageName: "com.spotify.music",
@@ -55,7 +55,7 @@ export class ApplicationResolver {
     },
     chrome: {
       packageName: "com.android.chrome",
-      aliases: ["google chrome", "browser", "ক্রোম"],
+      aliases: ["google chrome", "browser", "ক্রোম", "ব্রাউজার"],
     },
     maps: {
       packageName: "com.google.android.apps.maps",
@@ -71,7 +71,15 @@ export class ApplicationResolver {
     },
     settings: {
       packageName: "com.android.settings",
-      aliases: ["preferences", "সেটিংস", "ফোন সেটিংস"],
+      aliases: ["preferences", "setting", "সেটিংস", "ফোন সেটিংস", "সেটিং"],
+    },
+    phone: {
+      packageName: "com.google.android.dialer",
+      aliases: ["dialer", "call", "ফোন", "ডায়ালার"],
+    },
+    messages: {
+      packageName: "com.google.android.apps.messaging",
+      aliases: ["sms", "message", "মেসেজ"],
     },
     clock: {
       packageName: "com.google.android.deskclock",

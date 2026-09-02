@@ -38,7 +38,7 @@ export class ScreenObservationManager {
    * Generates a stable observation-scoped element ID
    */
   public generateElementId(observationId: string, index: number): string {
-    return `${observationId}_el_${index}`;
+    return `el_${observationId}_${index}`;
   }
 
   /**
@@ -136,8 +136,8 @@ export class ScreenObservationManager {
       return { element: null, isStale: true, reason: "Invalid elementId" };
     }
 
-    // Parse observationId from elementId prefix: "obs_<timestamp>_<rand>_el_<index>"
-    const match = elementId.match(/^(obs_\d+_[a-z0-9]+)_el_(\d+)$/);
+    // Parse observationId from elementId prefix: "el_obs_<timestamp>_<rand>_<index>" or "obs_<timestamp>_<rand>_el_<index>"
+    const match = elementId.match(/^el_(obs_\d+_[a-z0-9]+)_(\d+)$/) || elementId.match(/^(obs_\d+_[a-z0-9]+)_el_(\d+)$/);
     if (!match) {
       return { element: null, isStale: true, reason: "Malformed element identifier" };
     }

@@ -400,6 +400,26 @@ export default function App() {
             lastHandledMemoryCommandTurnRef.current = cleanText;
             console.log("[Dora Live Memory] Explicit memory command saved from voice:", cleanText);
           }
+
+          // Check if user spoke a direct device action (e.g., "YouTube kholo", "Open YouTube", "Home e jao", "Back jao", "Scroll down")
+          const goal = goalInterpreter.interpret(cleanText);
+          const isNav =
+            goal.subGoals[0]?.includes("Home") ||
+            goal.subGoals[0]?.includes("Back") ||
+            goal.subGoals[0]?.includes("Scroll");
+          const isDirectAction =
+            goal.intent === "open_app" ||
+            isNav ||
+            (goal.intent === "general_task" && goal.confidence >= 0.85);
+
+          if (isDirectAction && androidControlService.isBridgeAvailable()) {
+            console.log(`[Dora Live] Direct voice device action detected from speech: "${cleanText}"`);
+            doraService.sendInterruptSignal();
+            if (audioEngineRef.current) {
+              audioEngineRef.current.interruptPlayback();
+            }
+            handleSendMessageRef.current?.(cleanText, undefined, true);
+          }
         }
       },
 
@@ -549,6 +569,35 @@ export default function App() {
 
       onReady: () => {
         console.log("[Dora Live] Ready for instant voice and text interactions");
+      },
+
+      onDeviceAction: async (call: { id: string; name: string; args: any }) => {
+        console.log("[Dora Live] Executing device action tool call from model:", call);
+        try {
+          if (call.name === "open_application") {
+            const appName = call.args?.app_name || "YouTube";
+            const res = await androidControlService.openApplication({ appName });
+            doraService.sendToolResponse(call.id, {
+              success: res.success,
+              appName,
+              message: res.message || `Opened ${appName}`,
+            });
+          } else if (call.name === "press_home") {
+            await androidControlService.pressHome();
+            doraService.sendToolResponse(call.id, { success: true, message: "Navigated to home screen" });
+          } else if (call.name === "press_back") {
+            await androidControlService.pressBack();
+            doraService.sendToolResponse(call.id, { success: true, message: "Navigated back" });
+          } else if (call.name === "scroll_screen") {
+            const direction = call.args?.direction === "up" ? "up" : "down";
+            await androidControlService.scroll({ direction });
+            doraService.sendToolResponse(call.id, { success: true, message: `Scrolled screen ${direction}` });
+          } else {
+            doraService.sendToolResponse(call.id, { success: false, message: "Unknown action" });
+          }
+        } catch (err: any) {
+          doraService.sendToolResponse(call.id, { success: false, error: err?.message });
+        }
       },
     };
   }, []);
@@ -805,14 +854,20 @@ export default function App() {
         return;
       }
 
-      // Explicit device control action handler (e.g., "YouTube kholo", "Open WhatsApp", "Home e jao", "YouTube kholo, AI news search koro")
+      // Explicit device control action handler (e.g., "YouTube kholo", "Open WhatsApp", "Home e jao", "Back jao", "Scroll down")
       const interpretedGoal = goalInterpreter.interpret(cleanText);
+      const isNavigationAction =
+        interpretedGoal.subGoals[0]?.includes("Home") ||
+        interpretedGoal.subGoals[0]?.includes("Back") ||
+        interpretedGoal.subGoals[0]?.includes("Scroll");
+
       const isDeviceAction =
         interpretedGoal.intent === "open_app" ||
         interpretedGoal.intent === "search" ||
         interpretedGoal.intent === "play_media" ||
         interpretedGoal.intent === "send_message" ||
-        (interpretedGoal.intent === "general_task" && !interpretedGoal.rawGoal.includes(" "));
+        isNavigationAction ||
+        (interpretedGoal.intent === "general_task" && interpretedGoal.confidence >= 0.8);
 
       if (
         androidControlService.isBridgeAvailable() &&
@@ -820,6 +875,14 @@ export default function App() {
         !imageAttachment &&
         !fileAttachment
       ) {
+        // Interrupt live stream if active so audio does not collide
+        if (isCallActiveRef.current) {
+          doraService.sendInterruptSignal();
+          if (audioEngineRef.current) {
+            audioEngineRef.current.interruptPlayback();
+          }
+        }
+
         const doraMsgId = `dora-${Date.now()}`;
         let replyText = "";
 
@@ -845,10 +908,10 @@ export default function App() {
             replyText = settings.language === "bn-en" || /jao|back/i.test(cleanText) ? `Pechhone fire gelam.` : `Navigated back.`;
           } else if (interpretedGoal.subGoals[0]?.includes("Scroll Down")) {
             await androidControlService.scroll({ direction: "down" });
-            replyText = settings.language === "bn-en" ? `Screen niche scroll korlam.` : `Scrolled down.`;
+            replyText = settings.language === "bn-en" || /niche|scroll/i.test(cleanText) ? `Screen niche scroll korlam.` : `Scrolled down.`;
           } else if (interpretedGoal.subGoals[0]?.includes("Scroll Up")) {
             await androidControlService.scroll({ direction: "up" });
-            replyText = settings.language === "bn-en" ? `Screen upore scroll korlam.` : `Scrolled up.`;
+            replyText = settings.language === "bn-en" || /upore|scroll/i.test(cleanText) ? `Screen upore scroll korlam.` : `Scrolled up.`;
           } else {
             // Multi-step autonomous task (e.g. "YouTube kholo, AI news search koro, first result open koro")
             const taskResult = await autonomousAgent.startTask(cleanText, { mockMode: false });

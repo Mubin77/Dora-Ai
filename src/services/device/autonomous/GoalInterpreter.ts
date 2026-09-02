@@ -176,7 +176,7 @@ export class GoalInterpreter {
     }
 
     // 5. Navigation intents (Home, Back, Scroll)
-    if (/^(?:go\s+home|home\s*e\s*jao|home|press\s*home|হোম)$/i.test(lower)) {
+    if (/^(?:go\s+to\s+home|go\s+home|home\s*e\s*jao|home\s*e\s*niye\s*jao|home\s*e\s*cholo|home\s*jao|home|press\s*home|হোম(?:\s*এ\s*যাও)?)$/i.test(lower)) {
       return {
         rawGoal: trimmed,
         intent: "general_task",
@@ -187,7 +187,7 @@ export class GoalInterpreter {
       };
     }
 
-    if (/^(?:go\s+back|back\s*jao|back|press\s*back|পিছনে)$/i.test(lower)) {
+    if (/^(?:go\s+back|back\s*jao|back\s*e\s*jao|back|press\s*back|pichone\s*jao|pechhone\s*jao|pichone\s*phire\s*jao|পিছনে(?:\s*যাও)?|পেছনে(?:\s*যাও)?)$/i.test(lower)) {
       return {
         rawGoal: trimmed,
         intent: "general_task",
@@ -198,7 +198,7 @@ export class GoalInterpreter {
       };
     }
 
-    if (/^(?:scroll\s*down|niche\s*scroll(?:\s*koro)?|down|নিচে\s*স্ক্রল)$/i.test(lower)) {
+    if (/^(?:scroll\s*down(?:\s*koro)?|niche\s*scroll(?:\s*koro)?|down\s*scroll(?:\s*koro)?|scroll\s*niche|down|নিচে\s*স্ক্রল(?:\s*করো)?)$/i.test(lower)) {
       return {
         rawGoal: trimmed,
         intent: "general_task",
@@ -209,7 +209,7 @@ export class GoalInterpreter {
       };
     }
 
-    if (/^(?:scroll\s*up|upore\s*scroll(?:\s*koro)?|up|উপরে\s*স্ক্রল)$/i.test(lower)) {
+    if (/^(?:scroll\s*up(?:\s*koro)?|upore\s*scroll(?:\s*koro)?|up\s*scroll(?:\s*koro)?|scroll\s*upore|up|উপরে\s*স্ক্রল(?:\s*করো)?)$/i.test(lower)) {
       return {
         rawGoal: trimmed,
         intent: "general_task",
@@ -221,12 +221,12 @@ export class GoalInterpreter {
     }
 
     // 6. Simple Open App (English + Bangla/Banglish)
-    // Examples: "Open YouTube", "YouTube kholo", "Launch Camera", "WhatsApp open koro"
+    // Examples: "Open YouTube", "YouTube kholo", "Launch Camera", "WhatsApp open koro", "YouTube ta kholo", "Chrome kholo", "Settings kholo"
     const openMatch = lower.match(
-      /^(?:open|launch|start)\s+(?:the\s+)?([a-z0-9\s._\-]+?)(?:\s+app|\s+application)?$/i
+      /^(?:open|launch|start|chalu\s*koro|chalau)\s+(?:the\s+)?([a-z0-9\s._\-]+?)(?:\s+app|\s+application|\s+ta)?$/i
     );
     if (openMatch && openMatch[1]) {
-      const app = openMatch[1].trim();
+      const app = openMatch[1].replace(/-(?:ta|te|e)$/i, "").replace(/\s+ta$/i, "").trim();
       const resolution = applicationResolver.resolveApplication(app);
       return {
         rawGoal: trimmed,
@@ -240,10 +240,10 @@ export class GoalInterpreter {
     }
 
     const banglaOpenMatch = lower.match(
-      /^([a-z0-9\u0980-\u09FF\s._\-]+?)\s*(?:app\s*ta\s*|app\s*)?(?:open\s*koro|open\s*kor|kholo|khule\s*dao|chalu\s*koro|chalau)$/i
+      /^([a-z0-9\u0980-\u09FF\s._\-]+?)\s*(?:app\s*ta\s*|app\s*|-?ta\s*)?(?:open\s*koro|open\s*kor|open\s*koren|kholo|khulo|khule\s*dao|khule\s*den|chalu\s*koro|chalau)$/i
     );
     if (banglaOpenMatch && banglaOpenMatch[1]) {
-      const app = banglaOpenMatch[1].trim();
+      const app = banglaOpenMatch[1].replace(/-(?:ta|te|e)$/i, "").replace(/\s+ta$/i, "").trim();
       const resolution = applicationResolver.resolveApplication(app);
       return {
         rawGoal: trimmed,

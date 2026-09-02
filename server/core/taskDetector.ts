@@ -202,8 +202,8 @@ export class TaskDetector {
     );
     if (englishMatch && englishMatch[1]) {
       const appName = englishMatch[1].trim();
-      // Filter out non-app generic phrases like "the door", "your eyes"
-      if (!/^(?:door|window|eyes|mouth|link|website|file|tab|browser|settings\s+modal)$/i.test(appName)) {
+      // Filter out non-app generic physical phrases like "the door", "your eyes"
+      if (!/^(?:door|window|eyes|mouth|link|website|file|tab)$/i.test(appName)) {
         return {
           device: "android",
           action: "open_application",

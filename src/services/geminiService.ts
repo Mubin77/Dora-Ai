@@ -25,6 +25,7 @@ export interface LiveStreamCallbacks {
   onInterrupted?: () => void;
   onError?: (err: any) => void;
   onReady?: () => void;
+  onDeviceAction?: (call: { id: string; name: string; args: any }) => void;
 }
 
 export class DoraService {
@@ -265,6 +266,9 @@ export class DoraService {
             console.log("[VOICE DEBUG] Gemini Live response interrupted by user");
             this.activeMetrics = null;
             this.wsCallbacks.onInterrupted?.();
+          } else if (data.type === "execute_device_action" && data.call) {
+            console.log("[VOICE DEBUG] Received device action tool call from Gemini Live:", data.call);
+            this.wsCallbacks.onDeviceAction?.(data.call);
           } else if (data.type === "live_error" || data.type === "live_unavailable") {
             console.warn("[VOICE DEBUG] Gemini Live notice/error:", data.message || data.error);
             this.wsCallbacks.onError?.(data);
@@ -418,6 +422,16 @@ export class DoraService {
         this.ws.send(JSON.stringify({ type: "interrupt" }));
       } catch (err) {
         console.warn("[Dora Live] Error sending interrupt signal:", err);
+      }
+    }
+  }
+
+  public sendToolResponse(callId: string, result: any) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: "tool_response", callId, result }));
+      } catch (err) {
+        console.warn("[Dora Live] Error sending tool response:", err);
       }
     }
   }
