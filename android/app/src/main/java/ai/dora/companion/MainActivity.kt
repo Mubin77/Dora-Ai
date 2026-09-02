@@ -2,6 +2,7 @@ package ai.dora.companion
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
@@ -31,6 +32,7 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -275,6 +277,15 @@ class MainActivity : AppCompatActivity() {
             )
             setBackgroundColor(Color.parseColor("#090D16"))
             setPadding(dp(24), dp(24), dp(24), dp(24))
+
+            val logoView = ImageView(this@MainActivity).apply {
+                setImageResource(R.drawable.dora_logo)
+                val lp = LinearLayout.LayoutParams(dp(72), dp(72)).apply {
+                    bottomMargin = dp(16)
+                }
+                layoutParams = lp
+            }
+            addView(logoView)
 
             val brandTitle = TextView(this@MainActivity).apply {
                 text = "D O R A"
