@@ -109,7 +109,7 @@ export class GoalInterpreter {
         status: "pending",
         expectedOutcome: `WhatsApp chat opened for ${contact}`,
       });
-      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+      return { taskId: id, goal: trimmed, targetApp: "WhatsApp", steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
     }
 
     // System panels (Recents, Notifications, Quick settings, Settings)
