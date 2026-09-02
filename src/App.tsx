@@ -55,6 +55,7 @@ import {
   androidControlService,
   MicrophonePermissionState,
 } from "./services/device/AndroidControlService";
+import { conversationContextManager } from "./services/ConversationContextManager";
 import { goalInterpreter } from "./services/device/autonomous/GoalInterpreter";
 import { autonomousAgent } from "./services/device/autonomous/AutonomousAgent";
 
@@ -212,17 +213,55 @@ export default function App() {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
-  // Settings (Default aligned with authorized youthful reference voice)
-  const [settings, setSettings] = useState<VoiceSettings>({
-    voiceName: "Aoede",
-    speakingRate: 1.0,
-    pitch: 1.05,
-    continuousListening: true,
-    pauseThresholdMs: 1300,
-    interruptSensitivity: "high",
-    language: "auto",
-    engine: "gemini-live",
+  // Settings (Default aligned with authorized youthful reference voice and persistent voice architecture)
+  const [settings, setSettings] = useState<VoiceSettings>(() => {
+    const defaults: VoiceSettings = {
+      voiceName: "Aoede",
+      speakingRate: 1.0,
+      pitch: 1.05,
+      continuousListening: true,
+      pauseThresholdMs: 1300,
+      interruptSensitivity: "high",
+      language: "auto",
+      engine: "gemini-live",
+      liveSessionAutoStart: true,
+      alwaysRunInBackground: true,
+      wakeWordEnabled: true,
+      wakeWordPhrase: "Dora",
+      followUpListening: true,
+      followUpTimeoutSeconds: 5,
+    };
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("dora_voice_settings_v2");
+        if (saved) {
+          return { ...defaults, ...JSON.parse(saved) };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return defaults;
   });
+
+  const handleUpdateSettings = useCallback(async (newSettings: Partial<VoiceSettings>) => {
+    setSettings((prev) => {
+      const updated = { ...prev, ...newSettings };
+      try {
+        localStorage.setItem("dora_voice_settings_v2", JSON.stringify(updated));
+      } catch (e) {
+        console.warn("Failed saving settings to local storage", e);
+      }
+      return updated;
+    });
+
+    // Also sync to Android Native Bridge SharedPreferences
+    try {
+      await androidControlService.setVoiceSettings(newSettings);
+    } catch (e) {
+      console.warn("Failed syncing voice settings with Android native bridge:", e);
+    }
+  }, []);
 
   // Audio Engine & Turn Tracking Refs
   const audioEngineRef = useRef<AudioEngine | null>(null);
@@ -317,10 +356,14 @@ export default function App() {
   // Format recent chat history to provide immediate context when switching Chat -> Voice
   const getRecentHistoryContext = useCallback(() => {
     const recent = messagesRef.current.slice(-10);
-    if (recent.length === 0) return "";
-    return recent
-      .map((m) => `${m.sender === "user" ? "User" : "Dora"}: ${m.text}`)
-      .join("\n");
+    if (recent.length > 0) {
+      const msgLines = recent
+        .map((m) => `${m.sender === "user" ? "User" : "Dora"}: ${m.text}`)
+        .join("\n");
+      const compact = conversationContextManager.getCompactContextForNewSession();
+      return compact ? `${compact}\n\n[Immediate Messages]\n${msgLines}` : msgLines;
+    }
+    return conversationContextManager.getCompactContextForNewSession();
   }, []);
 
   // Stop / Interrupt Dora playback
@@ -1129,6 +1172,13 @@ export default function App() {
       setActiveMode("voice");
       console.log("[VOICE DEBUG] voice mode started");
 
+      // Notify native bridge that Live Session is active
+      try {
+        await androidControlService.setLiveSessionActive(true);
+      } catch (e) {
+        console.warn("Failed notifying native live session start:", e);
+      }
+
       // Start proactive companion monitoring for spontaneous, unprompted turns
       proactiveCompanionEngine.start({
         onProactiveTrigger: (payload) => {
@@ -1147,7 +1197,7 @@ export default function App() {
         },
       });
 
-      // Pass recent conversation history context so Dora seamlessly continues from chat
+      // Pass recent conversation history context so Dora seamlessly continues from chat or background
       const historyContext = getRecentHistoryContext();
       const memoryContext = memoryManager.buildContext();
       doraService.connectLiveStream(
@@ -1165,6 +1215,12 @@ export default function App() {
         audioEngineRef.current.interruptPlayback();
       }
       setIsCallActive(false);
+
+      try {
+        await androidControlService.setLiveSessionActive(false);
+      } catch {
+        // ignore
+      }
       
       const checkRes = await androidControlService.checkMicrophonePermission();
       setMicPermissionState(checkRes.status);
@@ -1190,6 +1246,12 @@ export default function App() {
       setCurrentSpokenText("");
       currentUserVoiceMessageIdRef.current = null;
       currentDoraMessageIdRef.current = null;
+
+      try {
+        await androidControlService.setLiveSessionActive(false);
+      } catch (e) {
+        console.warn("Failed notifying native live session stop:", e);
+      }
     } else {
       const permResult = await androidControlService.checkMicrophonePermission();
       if (permResult.status === "MICROPHONE_GRANTED") {
@@ -1222,7 +1284,7 @@ export default function App() {
     await androidControlService.openAppSettings();
   };
 
-  // Listen for native Android permission changes & app resume focus
+  // Listen for native Android permission changes, voice events & app auto-start
   useEffect(() => {
     const handlePermissionEvent = async (e: any) => {
       const detail = e?.detail;
@@ -1243,12 +1305,59 @@ export default function App() {
       }
     };
 
+    const handleVoiceStateEvent = (e: any) => {
+      const detail = e?.detail;
+      console.log("[NATIVE VOICE EVENT] doraVoiceStateChanged:", detail);
+      if (detail?.voiceState === "WAKE_WORD_DETECTED") {
+        if (!isCallActiveRef.current) {
+          startVoiceSession();
+        }
+      }
+    };
+
+    const handleAppResumed = async () => {
+      console.log("[NATIVE EVENT] doraAppResumed");
+      if (settingsRef.current.liveSessionAutoStart && !isCallActiveRef.current) {
+        const check = await androidControlService.checkMicrophonePermission();
+        if (check.granted) {
+          startVoiceSession();
+        }
+      }
+    };
+
     window.addEventListener("doraPermissionChanged" as any, handlePermissionEvent);
+    window.addEventListener("doraVoiceStateChanged" as any, handleVoiceStateEvent);
+    window.addEventListener("doraAppResumed" as any, handleAppResumed);
     window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleWindowFocus);
 
+    // Initial Auto-Start check on first load
+    const checkInitialAutoStart = async () => {
+      try {
+        const nativeSettings = await androidControlService.getVoiceSettings();
+        if (nativeSettings && nativeSettings.success && nativeSettings.settings) {
+          setSettings((prev) => ({ ...prev, ...nativeSettings.settings }));
+        }
+      } catch {
+        // ignore
+      }
+
+      if (settingsRef.current.liveSessionAutoStart && !isCallActiveRef.current) {
+        const check = await androidControlService.checkMicrophonePermission();
+        if (check.granted) {
+          startVoiceSession();
+        }
+      }
+    };
+
+    // Small delay to let audio graph initialize cleanly
+    const autoTimer = setTimeout(checkInitialAutoStart, 800);
+
     return () => {
+      clearTimeout(autoTimer);
       window.removeEventListener("doraPermissionChanged" as any, handlePermissionEvent);
+      window.removeEventListener("doraVoiceStateChanged" as any, handleVoiceStateEvent);
+      window.removeEventListener("doraAppResumed" as any, handleAppResumed);
       window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleWindowFocus);
     };
@@ -1955,9 +2064,7 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
-        onUpdateSettings={(newSettings) =>
-          setSettings((prev) => ({ ...prev, ...newSettings }))
-        }
+        onUpdateSettings={handleUpdateSettings}
         onOpenMemory={() => {
           setIsSettingsOpen(false);
           setIsMemoryOpen(true);

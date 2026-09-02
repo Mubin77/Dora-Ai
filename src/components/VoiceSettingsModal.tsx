@@ -33,6 +33,7 @@ import { VoiceSettings, UserProfile } from "../types";
 import { DoraSparkle } from "./DoraSparkle";
 import { memoryManager } from "../memory/MemoryManager";
 import { AndroidControlStatus } from "./device/AndroidControlStatus";
+import { androidControlService } from "../services/device/AndroidControlService";
 
 interface VoiceSettingsModalProps {
   isOpen: boolean;
@@ -764,20 +765,152 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   );
 
   // =========================================================================
-  // SUB-VIEW: SPEECH ENGINE
+  // SUB-VIEW: SPEECH ENGINE & WAKE WORD
   // =========================================================================
   const renderSpeechContent = () => (
     <div className="space-y-6 animate-fade-in text-[#E3E3E3] font-sans select-none">
       <div>
-        <h3 className="text-base font-semibold text-white mb-1">Speech Engine</h3>
+        <h3 className="text-base font-semibold text-white mb-1">Voice & Wake Word</h3>
         <p className="text-xs sm:text-sm text-white/50 leading-relaxed">
-          Configure real-time bidirectional streaming and audio protocol.
+          Configure real-time voice streaming, background wake-word detection, and conversational persistence.
         </p>
       </div>
 
+      {/* Wake Word & Background Service */}
       <div className="space-y-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
-          Audio Pipeline
+          Always-Available Assistant
+        </div>
+
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">
+          {/* Wake Word "Dora" Toggle */}
+          <div className="p-3.5 flex items-center justify-between">
+            <div className="space-y-0.5 pr-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-white block">Wake Word ("Dora")</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 font-mono">
+                  On-device
+                </span>
+              </div>
+              <p className="text-xs text-white/45">Say "Dora" to immediately wake up and speak</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.wakeWordEnabled}
+                onChange={(e) => onUpdateSettings({ wakeWordEnabled: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1D72FE]"></div>
+            </label>
+          </div>
+
+          {/* Always Run in Background */}
+          <div className="p-3.5 flex items-center justify-between">
+            <div className="space-y-0.5 pr-3">
+              <span className="text-sm font-medium text-white block">Background Availability</span>
+              <p className="text-xs text-white/45">Keep Dora accessible even when minimized or screen is locked</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.alwaysRunInBackground}
+                onChange={(e) => onUpdateSettings({ alwaysRunInBackground: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1D72FE]"></div>
+            </label>
+          </div>
+
+          {/* Auto-Start Live Session */}
+          <div className="p-3.5 flex items-center justify-between">
+            <div className="space-y-0.5 pr-3">
+              <span className="text-sm font-medium text-white block">Auto-Start Live Session</span>
+              <p className="text-xs text-white/45">Automatically activate microphone when opening the app</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.liveSessionAutoStart}
+                onChange={(e) => onUpdateSettings({ liveSessionAutoStart: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1D72FE]"></div>
+            </label>
+          </div>
+
+          {/* Follow-up Listening */}
+          <div className="p-3.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5 pr-3">
+                <span className="text-sm font-medium text-white block">Follow-up Listening</span>
+                <p className="text-xs text-white/45">Keep listening briefly after answering without repeating wake word</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.followUpListening}
+                  onChange={(e) => onUpdateSettings({ followUpListening: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#1D72FE]"></div>
+              </label>
+            </div>
+
+            {settings.followUpListening && (
+              <div className="pt-2 border-t border-white/[0.04] space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-white/60">Follow-up Timeout</span>
+                  <span className="font-mono text-[#38BDF8]">{settings.followUpTimeoutSeconds || 5}s</span>
+                </div>
+                <input
+                  type="range"
+                  min="3"
+                  max="15"
+                  step="1"
+                  value={settings.followUpTimeoutSeconds || 5}
+                  onChange={(e) => onUpdateSettings({ followUpTimeoutSeconds: parseInt(e.target.value, 10) })}
+                  className="w-full h-1.5 bg-white/15 rounded-lg appearance-none cursor-pointer accent-[#1D72FE]"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Battery Optimization Request */}
+      <div className="space-y-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
+          Android System Integration
+        </div>
+
+        <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] p-4 space-y-3">
+          <div className="space-y-1">
+            <span className="text-sm font-medium text-white block">Battery Optimization Exemption</span>
+            <p className="text-xs text-white/45 leading-relaxed">
+              Allows Dora's background voice service to respond reliably to "Dora" when your screen is locked.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await androidControlService.requestBatteryOptimizationExemption();
+              } catch (err) {
+                console.warn("Battery exemption request error:", err);
+              }
+            }}
+            className="w-full py-2.5 px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] active:scale-[0.99] text-xs font-medium text-white transition-all text-center border border-white/[0.06]"
+          >
+            Request Unrestricted Background Execution
+          </button>
+        </div>
+      </div>
+
+      {/* Audio Engine Selection */}
+      <div className="space-y-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-white/35">
+          Audio Streaming Protocol
         </div>
 
         <div className="bg-[#1c1c1e] rounded-2xl border border-white/[0.04] divide-y divide-white/[0.06] overflow-hidden">

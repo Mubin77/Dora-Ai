@@ -82,6 +82,8 @@ class MainActivity : AppCompatActivity() {
     private var pendingCameraCallback: ((Boolean) -> Unit)? = null
     private var pendingScreenCaptureCallback: ((Boolean, String?) -> Unit)? = null
 
+    private var voiceStateListener: DoraVoiceService.StateListener? = null
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,14 +95,33 @@ class MainActivity : AppCompatActivity() {
         setupWebView()
         setupBackNavigation()
 
-        // Start foreground companion service for persistent background readiness
+        // Start background voice service if alwaysRunInBackground is enabled
         try {
-            DoraCompanionService.startService(this)
+            if (DoraVoiceService.isAlwaysRunInBackgroundEnabled(this)) {
+                DoraVoiceService.start(this)
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Could not start DoraCompanionService: ${e.message}")
+            Log.w(TAG, "Could not start DoraVoiceService: ${e.message}")
         }
 
+        // Listen for native voice service state changes and forward to webView
+        voiceStateListener = object : DoraVoiceService.StateListener {
+            override fun onVoiceStateChanged(state: DoraVoiceService.VoiceState, message: String?) {
+                notifyVoiceStateChanged(state.name, message)
+            }
+        }
+        DoraVoiceService.addStateListener(voiceStateListener!!)
+
         loadDoraApp()
+    }
+
+    fun notifyVoiceStateChanged(state: String, message: String? = null) {
+        if (!::webView.isInitialized) return
+        webView.post {
+            val escapedMsg = (message ?: "").replace("'", "\\'").replace("\n", " ")
+            val js = "window.dispatchEvent(new CustomEvent('doraVoiceStateChanged', { detail: { state: '$state', message: '$escapedMsg' } }));"
+            webView.evaluateJavascript(js, null)
+        }
     }
 
     private fun dp(value: Int): Int {
@@ -566,6 +587,10 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        webView.post {
+            val js = "window.dispatchEvent(new CustomEvent('doraAppResumed', { detail: { timestamp: Date.now() } }));"
+            webView.evaluateJavascript(js, null)
+        }
     }
 
     override fun onPause() {
@@ -650,6 +675,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        voiceStateListener?.let { DoraVoiceService.removeStateListener(it) }
         DoraScreenCaptureManager.getInstance().stopCapture(this)
         webView.destroy()
         super.onDestroy()

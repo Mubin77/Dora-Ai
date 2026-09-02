@@ -1086,6 +1086,166 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     }
 
     /**
+     * Gets the full Voice Settings configuration from Android SharedPreferences
+     */
+    @JavascriptInterface
+    fun getVoiceSettings(): String {
+        val result = JSONObject().apply {
+            put("liveSessionAutoStart", DoraVoiceService.isLiveSessionAutoStartEnabled(context))
+            put("alwaysRunInBackground", DoraVoiceService.isAlwaysRunInBackgroundEnabled(context))
+            put("wakeWordEnabled", DoraVoiceService.isWakeWordEnabled(context))
+            put("wakeWordPhrase", DoraVoiceService.getWakeWordPhrase(context))
+            put("followUpListening", DoraVoiceService.isFollowUpListeningEnabled(context))
+            put("followUpTimeoutSeconds", DoraVoiceService.getFollowUpTimeoutSeconds(context))
+        }
+        return result.toString()
+    }
+
+    /**
+     * Updates Voice Settings in Android SharedPreferences
+     */
+    @JavascriptInterface
+    fun setVoiceSettings(settingsJson: String): String {
+        val result = JSONObject()
+        try {
+            val json = JSONObject(settingsJson)
+            if (json.has("liveSessionAutoStart")) {
+                DoraVoiceService.setLiveSessionAutoStart(context, json.getBoolean("liveSessionAutoStart"))
+            }
+            if (json.has("alwaysRunInBackground")) {
+                DoraVoiceService.setAlwaysRunInBackground(context, json.getBoolean("alwaysRunInBackground"))
+            }
+            if (json.has("wakeWordEnabled")) {
+                DoraVoiceService.setWakeWordEnabled(context, json.getBoolean("wakeWordEnabled"))
+            }
+            if (json.has("wakeWordPhrase")) {
+                DoraVoiceService.setWakeWordPhrase(context, json.getString("wakeWordPhrase"))
+            }
+            if (json.has("followUpListening")) {
+                DoraVoiceService.setFollowUpListening(context, json.getBoolean("followUpListening"))
+            }
+            if (json.has("followUpTimeoutSeconds")) {
+                DoraVoiceService.setFollowUpTimeoutSeconds(context, json.getInt("followUpTimeoutSeconds"))
+            }
+            result.put("success", true)
+            result.put("settings", JSONObject(getVoiceSettings()))
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to update voice settings")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Returns the real, authoritative runtime state of the native Dora Voice Service
+     */
+    @JavascriptInterface
+    fun getVoiceServiceState(): String {
+        val micGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val result = JSONObject().apply {
+            put("serviceRunning", DoraVoiceService.isServiceRunning())
+            put("voiceState", DoraVoiceService.getCurrentState().name)
+            put("liveSessionActive", DoraVoiceService.isLiveSessionActive())
+            put("wakeWordEnabled", DoraVoiceService.isWakeWordEnabled(context))
+            put("wakeWordPhrase", DoraVoiceService.getWakeWordPhrase(context))
+            put("alwaysRunInBackground", DoraVoiceService.isAlwaysRunInBackgroundEnabled(context))
+            put("followUpListening", DoraVoiceService.isFollowUpListeningEnabled(context))
+            put("followUpTimeoutSeconds", DoraVoiceService.getFollowUpTimeoutSeconds(context))
+            put("batteryOptimizationExempt", DoraVoiceService.isBatteryOptimizationExempt(context))
+            put("microphoneGranted", micGranted)
+        }
+        return result.toString()
+    }
+
+    /**
+     * Coordinates microphone ownership between the native background service and foreground Live Session
+     */
+    @JavascriptInterface
+    fun setLiveSessionActive(optionsJson: String): String {
+        val result = JSONObject()
+        try {
+            val options = JSONObject(optionsJson)
+            val active = options.optBoolean("active", false)
+            DoraVoiceService.setLiveSessionActiveState(context, active)
+            result.put("success", true)
+            result.put("liveSessionActive", active)
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to set live session state")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Checks whether battery optimization is disabled for this app
+     */
+    @JavascriptInterface
+    fun isBatteryOptimizationExempt(): String {
+        val exempt = DoraVoiceService.isBatteryOptimizationExempt(context)
+        val result = JSONObject().apply {
+            put("exempt", exempt)
+        }
+        return result.toString()
+    }
+
+    /**
+     * Launches the official system prompt to exempt Dora from battery optimization
+     */
+    @JavascriptInterface
+    fun requestBatteryOptimizationExemption(): String {
+        val result = JSONObject()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+                result.put("success", true)
+                result.put("message", "Battery optimization dialog opened")
+            } else {
+                result.put("success", true)
+                result.put("message", "Battery optimization not required on this Android version")
+            }
+        } catch (e: Exception) {
+            // Fallback to general settings
+            try {
+                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+                result.put("success", true)
+                result.put("message", "Battery optimization settings opened")
+            } catch (e2: Exception) {
+                result.put("success", false)
+                result.put("error", e2.message ?: "Failed to open battery settings")
+            }
+        }
+        return result.toString()
+    }
+
+    /**
+     * Persists short-term conversation context in Android SharedPreferences
+     */
+    @JavascriptInterface
+    fun saveConversationContext(contextJson: String): String {
+        DoraVoiceService.saveConversationContext(context, contextJson)
+        return JSONObject().apply { put("success", true) }.toString()
+    }
+
+    /**
+     * Retrieves stored short-term conversation context from Android SharedPreferences
+     */
+    @JavascriptInterface
+    fun getConversationContext(): String {
+        return DoraVoiceService.getConversationContext(context)
+    }
+
+    /**
      * Checks if native Android screen capture via MediaProjection is supported on this device
      */
     @JavascriptInterface

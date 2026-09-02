@@ -81,6 +81,14 @@ export interface NativeBridgeInterface {
   stopBackgroundVoiceService?(): Promise<{ success: boolean; message?: string; error?: string }>;
   isBackgroundVoiceServiceRunning?(): Promise<{ running: boolean; alwaysRunInBackground?: boolean }>;
   setAlwaysRunInBackground?(options: { enabled: boolean }): Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+  getVoiceSettings?(): Promise<any>;
+  setVoiceSettings?(options: any): Promise<any>;
+  getVoiceServiceState?(): Promise<any>;
+  setLiveSessionActive?(options: { active: boolean }): Promise<{ success: boolean; liveSessionActive?: boolean; error?: string }>;
+  isBatteryOptimizationExempt?(): Promise<{ exempt: boolean }>;
+  requestBatteryOptimizationExemption?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  saveConversationContext?(contextJson: string): Promise<{ success: boolean }>;
+  getConversationContext?(): Promise<string>;
   executeNaturalCommand?(command: string): Promise<{ success: boolean; message?: string; error?: string; [key: string]: any }>;
 }
 
@@ -517,6 +525,93 @@ export class AndroidControlService {
               return { success: false, error: "Setting not supported" };
             } catch (e: any) {
               return { success: false, error: e?.message };
+            }
+          },
+          getVoiceSettings: async () => {
+            try {
+              if (typeof directBridge.getVoiceSettings === "function") {
+                const res = directBridge.getVoiceSettings();
+                return parseJsonSafe(res);
+              }
+              return null;
+            } catch (e: any) {
+              return null;
+            }
+          },
+          setVoiceSettings: async (options) => {
+            try {
+              if (typeof directBridge.setVoiceSettings === "function") {
+                const res = directBridge.setVoiceSettings(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          getVoiceServiceState: async () => {
+            try {
+              if (typeof directBridge.getVoiceServiceState === "function") {
+                const res = directBridge.getVoiceServiceState();
+                return parseJsonSafe(res);
+              }
+              return null;
+            } catch (e: any) {
+              return null;
+            }
+          },
+          setLiveSessionActive: async (options) => {
+            try {
+              if (typeof directBridge.setLiveSessionActive === "function") {
+                const res = directBridge.setLiveSessionActive(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          isBatteryOptimizationExempt: async () => {
+            try {
+              if (typeof directBridge.isBatteryOptimizationExempt === "function") {
+                const res = directBridge.isBatteryOptimizationExempt();
+                return parseJsonSafe(res);
+              }
+              return { exempt: true };
+            } catch (e: any) {
+              return { exempt: true };
+            }
+          },
+          requestBatteryOptimizationExemption: async () => {
+            try {
+              if (typeof directBridge.requestBatteryOptimizationExemption === "function") {
+                const res = directBridge.requestBatteryOptimizationExemption();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          saveConversationContext: async (contextJson) => {
+            try {
+              if (typeof directBridge.saveConversationContext === "function") {
+                const res = directBridge.saveConversationContext(contextJson);
+                return parseJsonSafe(res);
+              }
+              return { success: true };
+            } catch (e: any) {
+              return { success: false };
+            }
+          },
+          getConversationContext: async () => {
+            try {
+              if (typeof directBridge.getConversationContext === "function") {
+                return directBridge.getConversationContext();
+              }
+              return "{}";
+            } catch (e: any) {
+              return "{}";
             }
           },
           executeNaturalCommand: async (cmd: string) => {
@@ -1999,6 +2094,110 @@ export class AndroidControlService {
       }
     }
     return false;
+  }
+
+  public async getVoiceSettings(): Promise<any> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.getVoiceSettings === "function") {
+      try {
+        return await bridge.getVoiceSettings();
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not get voice settings:", e);
+      }
+    }
+    return null;
+  }
+
+  public async setVoiceSettings(settings: any): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.setVoiceSettings === "function") {
+      try {
+        const res = await bridge.setVoiceSettings(settings);
+        return Boolean(res.success);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not set voice settings:", e);
+      }
+    }
+    return false;
+  }
+
+  public async getVoiceServiceState(): Promise<any> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.getVoiceServiceState === "function") {
+      try {
+        return await bridge.getVoiceServiceState();
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not get voice service state:", e);
+      }
+    }
+    return null;
+  }
+
+  public async setLiveSessionActive(active: boolean): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.setLiveSessionActive === "function") {
+      try {
+        const res = await bridge.setLiveSessionActive({ active });
+        return Boolean(res.success);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not set live session active:", e);
+      }
+    }
+    return false;
+  }
+
+  public async isBatteryOptimizationExempt(): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.isBatteryOptimizationExempt === "function") {
+      try {
+        const res = await bridge.isBatteryOptimizationExempt();
+        return Boolean(res.exempt);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not check battery optimization:", e);
+      }
+    }
+    return true;
+  }
+
+  public async requestBatteryOptimizationExemption(): Promise<{ success: boolean; message?: string }> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.requestBatteryOptimizationExemption === "function") {
+      try {
+        const res = await bridge.requestBatteryOptimizationExemption();
+        return {
+          success: Boolean(res.success),
+          message: res.message || res.error,
+        };
+      } catch (e: any) {
+        return { success: false, message: e?.message };
+      }
+    }
+    return { success: false, message: "Bridge unavailable" };
+  }
+
+  public async saveConversationContext(contextJson: string): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.saveConversationContext === "function") {
+      try {
+        const res = await bridge.saveConversationContext(contextJson);
+        return Boolean(res.success);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not save conversation context:", e);
+      }
+    }
+    return false;
+  }
+
+  public async getConversationContext(): Promise<string> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.getConversationContext === "function") {
+      try {
+        return await bridge.getConversationContext();
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not get conversation context:", e);
+      }
+    }
+    return "{}";
   }
 
   /**

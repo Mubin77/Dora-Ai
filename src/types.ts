@@ -76,6 +76,37 @@ export interface VoiceSettings {
   interruptSensitivity: 'high' | 'medium' | 'low';
   language: 'auto' | 'en' | 'bn-en'; // English, Banglish
   engine: 'gemini-live' | 'gemini-tts' | 'browser-speech';
+  liveSessionAutoStart: boolean; // Auto-start Live Session when app opens
+  alwaysRunInBackground: boolean; // Keep Dora available in background
+  wakeWordEnabled: boolean; // Say "Dora" to wake
+  wakeWordPhrase: string; // Wake phrase ("Dora")
+  followUpListening: boolean; // Listen for follow-up questions
+  followUpTimeoutSeconds: number; // Follow-up listening duration in seconds (5-15s)
+}
+
+export type NativeVoiceState =
+  | 'SERVICE_STOPPED'
+  | 'WAKE_WORD_LISTENING'
+  | 'WAKE_WORD_DETECTED'
+  | 'ACTIVE_LISTENING'
+  | 'PROCESSING'
+  | 'SPEAKING'
+  | 'ERROR';
+
+export interface VoiceServiceStatus {
+  serviceRunning: boolean;
+  voiceState: NativeVoiceState;
+  liveSessionActive: boolean;
+  wakeWordEnabled: boolean;
+  wakeWordPhrase: string;
+  alwaysRunInBackground: boolean;
+  followUpListening: boolean;
+  followUpTimeoutSeconds: number;
+  batteryOptimizationExempt: boolean;
+  microphoneGranted: boolean;
+  lastWakeTimestamp?: number;
+  lastCommand?: string;
+  errorMessage?: string;
 }
 
 export interface DoraMemoryItem {
