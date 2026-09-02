@@ -645,5 +645,69 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         if (success) result.put("message", "Navigated home") else result.put("error", "Home action failed")
         return result.toString()
     }
+
+    /**
+     * Checks if native Android screen capture via MediaProjection is supported on this device
+     */
+    @JavascriptInterface
+    fun isScreenShareSupported(): String {
+        val result = JSONObject().apply {
+            put("supported", true)
+            put("platform", "android_native")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Checks if native screen sharing is currently active
+     */
+    @JavascriptInterface
+    fun isScreenShareActive(): String {
+        val activity = context as? MainActivity
+        val active = activity?.isScreenCaptureActive() ?: DoraScreenCaptureManager.getInstance().isCapturing()
+        val result = JSONObject().apply {
+            put("active", active)
+        }
+        return result.toString()
+    }
+
+    /**
+     * Requests native Android screen share consent and starts MediaProjection capture
+     */
+    @JavascriptInterface
+    fun startScreenShare(): String {
+        val activity = context as? MainActivity
+        val result = JSONObject()
+        if (activity != null) {
+            activity.requestScreenCapture { success, errorMsg ->
+                Log.i("DoraBridge", "Screen capture request completed: success=$success error=$errorMsg")
+            }
+            result.put("success", true)
+            result.put("message", "Screen capture permission dialog launched")
+        } else {
+            result.put("success", false)
+            result.put("error", "Activity not available")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Stops native Android screen share and tears down MediaProjection / VirtualDisplay
+     */
+    @JavascriptInterface
+    fun stopScreenShare(): String {
+        val activity = context as? MainActivity
+        val result = JSONObject()
+        if (activity != null) {
+            activity.stopScreenCapture()
+            result.put("success", true)
+            result.put("message", "Screen capture stopped")
+        } else {
+            DoraScreenCaptureManager.getInstance().stopCapture(context)
+            result.put("success", true)
+            result.put("message", "Screen capture stopped via manager")
+        }
+        return result.toString()
+    }
 }
 

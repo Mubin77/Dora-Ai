@@ -11,6 +11,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -56,6 +57,7 @@ class MainActivity : AppCompatActivity() {
         const val REQUEST_CODE_AUDIO = 2001
         const val REQUEST_CODE_CAMERA = 2002
         const val REQUEST_CODE_AUDIO_AND_CAMERA = 2003
+        const val REQUEST_CODE_SCREEN_CAPTURE = 2004
         const val PREF_KEY_REQUESTED_MIC = "has_requested_mic_permission"
         const val PREF_KEY_REQUESTED_CAMERA = "has_requested_camera_permission"
     }
@@ -76,6 +78,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingPermissionRequest: PermissionRequest? = null
     private var pendingAudioCallback: ((Boolean) -> Unit)? = null
     private var pendingCameraCallback: ((Boolean) -> Unit)? = null
+    private var pendingScreenCaptureCallback: ((Boolean, String?) -> Unit)? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -559,7 +562,84 @@ class MainActivity : AppCompatActivity() {
         webView.onPause()
     }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_SCREEN_CAPTURE) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                DoraScreenCaptureManager.getInstance().startCapture(resultCode, data, this) { success, errorMsg ->
+                    pendingScreenCaptureCallback?.invoke(success, errorMsg)
+                    pendingScreenCaptureCallback = null
+                    if (success) {
+                        notifyScreenCaptureStarted()
+                    } else {
+                        notifyScreenCaptureStopped()
+                    }
+                }
+            } else {
+                Log.w(TAG, "Screen capture permission denied by user (resultCode=$resultCode)")
+                pendingScreenCaptureCallback?.invoke(false, "Screen sharing cancelled by user")
+                pendingScreenCaptureCallback = null
+                notifyScreenCaptureStopped()
+            }
+        }
+    }
+
+    fun requestScreenCapture(callback: (Boolean, String?) -> Unit) {
+        runOnUiThread {
+            if (DoraScreenCaptureManager.getInstance().isCapturing()) {
+                callback(true, null)
+                return@runOnUiThread
+            }
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+            if (projectionManager == null) {
+                callback(false, "MediaProjection service unavailable on this device")
+                return@runOnUiThread
+            }
+            pendingScreenCaptureCallback = callback
+            try {
+                startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_CODE_SCREEN_CAPTURE)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch screen capture intent", e)
+                pendingScreenCaptureCallback = null
+                callback(false, e.message ?: "Failed to launch screen capture dialog")
+            }
+        }
+    }
+
+    fun stopScreenCapture() {
+        runOnUiThread {
+            DoraScreenCaptureManager.getInstance().stopCapture(this)
+            notifyScreenCaptureStopped()
+        }
+    }
+
+    fun isScreenCaptureActive(): Boolean {
+        return DoraScreenCaptureManager.getInstance().isCapturing()
+    }
+
+    fun notifyScreenCaptureStarted() {
+        webView.post {
+            val js = "window.dispatchEvent(new CustomEvent('doraScreenCaptureStarted', { detail: { active: true } }));"
+            webView.evaluateJavascript(js, null)
+        }
+    }
+
+    fun notifyScreenCaptureStopped() {
+        webView.post {
+            val js = "window.dispatchEvent(new CustomEvent('doraScreenCaptureStopped', { detail: { active: false } }));"
+            webView.evaluateJavascript(js, null)
+        }
+    }
+
+    fun notifyScreenFrameCaptured(base64Jpeg: String) {
+        webView.post {
+            val js = "window.dispatchEvent(new CustomEvent('doraScreenFrameCaptured', { detail: { image: '$base64Jpeg' } }));"
+            webView.evaluateJavascript(js, null)
+        }
+    }
+
     override fun onDestroy() {
+        DoraScreenCaptureManager.getInstance().stopCapture(this)
         webView.destroy()
         super.onDestroy()
     }

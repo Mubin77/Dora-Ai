@@ -1,8 +1,11 @@
 /**
  * Dora Screen Vision Service
- * Captures screen frames efficiently via getDisplayMedia, performs adaptive change
- * detection, and feeds low-latency visual context to Dora's Live AI session.
+ * Captures screen frames efficiently via Android MediaProjection (native APK)
+ * or getDisplayMedia (browser), performs adaptive change detection,
+ * and feeds low-latency visual context to Dora's Live AI session.
  */
+
+import { androidControlService } from "./device/AndroidControlService";
 
 export interface ScreenVisionCallbacks {
   onFrame?: (base64Jpeg: string) => void;
@@ -18,9 +21,15 @@ export class ScreenVisionService {
   private canvasElement: HTMLCanvasElement | null = null;
   private captureIntervalId: any = null;
   private isCapturing: boolean = false;
+  private isNativeCapturing: boolean = false;
   private lastFrameData: Uint8ClampedArray | null = null;
   private lastSentTime: number = 0;
   private callbacks: ScreenVisionCallbacks = {};
+
+  // Native Android event handlers
+  private nativeFrameListener: ((e: any) => void) | null = null;
+  private nativeStartedListener: ((e: any) => void) | null = null;
+  private nativeStoppedListener: ((e: any) => void) | null = null;
 
   public static getInstance(): ScreenVisionService {
     if (!ScreenVisionService.instance) {
@@ -30,9 +39,13 @@ export class ScreenVisionService {
   }
 
   /**
-   * Feature check whether getDisplayMedia is supported on the current browser/device
+   * Feature check whether screen capture is supported on current platform
+   * (Native Android MediaProjection bridge or Web getDisplayMedia)
    */
   public isSupported(): boolean {
+    if (androidControlService.isNativeScreenShareSupported()) {
+      return true;
+    }
     try {
       return (
         typeof window !== "undefined" &&
@@ -46,11 +59,14 @@ export class ScreenVisionService {
   }
 
   public getIsActive(): boolean {
-    return this.isCapturing && this.stream !== null && this.stream.active;
+    return (
+      this.isNativeCapturing ||
+      (this.isCapturing && this.stream !== null && this.stream.active)
+    );
   }
 
   /**
-   * Requests user permission to share screen and begins adaptive frame extraction
+   * Requests user permission to share screen and begins frame extraction
    */
   public async startCapture(callbacks: ScreenVisionCallbacks): Promise<boolean> {
     this.callbacks = callbacks;
@@ -61,6 +77,68 @@ export class ScreenVisionService {
       return false;
     }
 
+    // 1. If running inside native Android APK, use MediaProjection bridge
+    if (androidControlService.isNativeScreenShareSupported()) {
+      return this.startNativeAndroidCapture();
+    }
+
+    // 2. Web Browser standard getDisplayMedia path
+    return this.startWebBrowserCapture();
+  }
+
+  /**
+   * Native Android MediaProjection screen capture workflow
+   */
+  private async startNativeAndroidCapture(): Promise<boolean> {
+    try {
+      this.cleanupNativeListeners();
+
+      this.nativeFrameListener = (e: any) => {
+        const base64Jpeg = e?.detail?.image;
+        if (base64Jpeg) {
+          this.callbacks.onFrame?.(base64Jpeg);
+        }
+      };
+
+      this.nativeStartedListener = () => {
+        this.isNativeCapturing = true;
+        this.callbacks.onStarted?.();
+      };
+
+      this.nativeStoppedListener = () => {
+        this.isNativeCapturing = false;
+        this.cleanupNativeListeners();
+        this.callbacks.onStopped?.();
+      };
+
+      window.addEventListener("doraScreenFrameCaptured" as any, this.nativeFrameListener);
+      window.addEventListener("doraScreenCaptureStarted" as any, this.nativeStartedListener);
+      window.addEventListener("doraScreenCaptureStopped" as any, this.nativeStoppedListener);
+
+      const result = await androidControlService.startNativeScreenShare();
+      if (!result.success) {
+        this.cleanupNativeListeners();
+        this.isNativeCapturing = false;
+        const err = new Error(result.error || "Screen sharing cancelled or failed");
+        this.callbacks.onError?.(err);
+        return false;
+      }
+
+      this.isNativeCapturing = true;
+      this.callbacks.onStarted?.();
+      return true;
+    } catch (err: any) {
+      this.cleanupNativeListeners();
+      this.isNativeCapturing = false;
+      this.callbacks.onError?.(err);
+      return false;
+    }
+  }
+
+  /**
+   * Web Browser getDisplayMedia capture workflow
+   */
+  private async startWebBrowserCapture(): Promise<boolean> {
     try {
       if (!navigator?.mediaDevices?.getDisplayMedia) {
         throw new Error("Screen sharing is not supported on this device or browser.");
@@ -201,9 +279,17 @@ export class ScreenVisionService {
   }
 
   /**
-   * Stops screen capture and cleans up all media tracks and timers
+   * Stops screen capture and cleans up all media tracks, bridge hooks, and timers
    */
   public stopCapture() {
+    if (this.isNativeCapturing) {
+      this.isNativeCapturing = false;
+      androidControlService.stopNativeScreenShare();
+      this.cleanupNativeListeners();
+      this.callbacks.onStopped?.();
+      return;
+    }
+
     if (!this.isCapturing && !this.stream) return;
     this.isCapturing = false;
     if (this.captureIntervalId) {
@@ -212,6 +298,21 @@ export class ScreenVisionService {
     }
     this.cleanupStream();
     this.callbacks.onStopped?.();
+  }
+
+  private cleanupNativeListeners() {
+    if (this.nativeFrameListener) {
+      window.removeEventListener("doraScreenFrameCaptured" as any, this.nativeFrameListener);
+      this.nativeFrameListener = null;
+    }
+    if (this.nativeStartedListener) {
+      window.removeEventListener("doraScreenCaptureStarted" as any, this.nativeStartedListener);
+      this.nativeStartedListener = null;
+    }
+    if (this.nativeStoppedListener) {
+      window.removeEventListener("doraScreenCaptureStopped" as any, this.nativeStoppedListener);
+      this.nativeStoppedListener = null;
+    }
   }
 
   private cleanupStream() {

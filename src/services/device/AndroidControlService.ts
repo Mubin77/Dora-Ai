@@ -62,6 +62,10 @@ export interface NativeBridgeInterface {
   checkCameraPermission?(): Promise<{ status: string; granted: boolean; canRequest: boolean }>;
   requestCameraPermission?(): Promise<{ success: boolean; message?: string; error?: string }>;
   openAppSettings?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  isScreenShareSupported?(): Promise<{ supported: boolean; platform: string }>;
+  isScreenShareActive?(): Promise<{ active: boolean }>;
+  startScreenShare?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  stopScreenShare?(): Promise<{ success: boolean; message?: string; error?: string }>;
 }
 
 export class AndroidControlService {
@@ -290,6 +294,50 @@ export class AndroidControlService {
               return { success: false, error: e?.message };
             }
           },
+          isScreenShareSupported: async () => {
+            try {
+              if (typeof directBridge.isScreenShareSupported === "function") {
+                const res = directBridge.isScreenShareSupported();
+                return parseJsonSafe(res);
+              }
+              return { supported: true, platform: "android_native" };
+            } catch (e: any) {
+              return { supported: true, platform: "android_native" };
+            }
+          },
+          isScreenShareActive: async () => {
+            try {
+              if (typeof directBridge.isScreenShareActive === "function") {
+                const res = directBridge.isScreenShareActive();
+                return parseJsonSafe(res);
+              }
+              return { active: false };
+            } catch (e: any) {
+              return { active: false };
+            }
+          },
+          startScreenShare: async () => {
+            try {
+              if (typeof directBridge.startScreenShare === "function") {
+                const res = directBridge.startScreenShare();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "startScreenShare not supported on this bridge" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          stopScreenShare: async () => {
+            try {
+              if (typeof directBridge.stopScreenShare === "function") {
+                const res = directBridge.stopScreenShare();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "stopScreenShare not supported on this bridge" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
         };
       }
       return this.wrappedNativeBridge;
@@ -300,6 +348,82 @@ export class AndroidControlService {
 
   public isBridgeAvailable(): boolean {
     return this.getNativeBridge() !== null;
+  }
+
+  /**
+   * Checks if native Android MediaProjection screen capture is supported
+   */
+  public isNativeScreenShareSupported(): boolean {
+    const bridge = this.getNativeBridge();
+    return bridge !== null;
+  }
+
+  /**
+   * Checks if native Android screen capture is currently running
+   */
+  public async isScreenShareActive(): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.isScreenShareActive === "function") {
+      try {
+        const res = await bridge.isScreenShareActive();
+        return Boolean(res?.active);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not check screen share active:", e);
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Requests Android MediaProjection screen capture and starts virtual display mirroring
+   */
+  public async startNativeScreenShare(): Promise<{ success: boolean; message?: string; error?: string }> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.startScreenShare === "function") {
+      try {
+        const res = await bridge.startScreenShare();
+        return {
+          success: Boolean(res?.success),
+          message: res?.message,
+          error: res?.error,
+        };
+      } catch (e: any) {
+        return {
+          success: false,
+          error: e?.message || "Failed to trigger native screen share",
+        };
+      }
+    }
+    return {
+      success: false,
+      error: "Native Android bridge is unavailable",
+    };
+  }
+
+  /**
+   * Stops native Android MediaProjection screen capture
+   */
+  public async stopNativeScreenShare(): Promise<{ success: boolean; message?: string; error?: string }> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.stopScreenShare === "function") {
+      try {
+        const res = await bridge.stopScreenShare();
+        return {
+          success: Boolean(res?.success),
+          message: res?.message,
+          error: res?.error,
+        };
+      } catch (e: any) {
+        return {
+          success: false,
+          error: e?.message || "Failed to stop native screen share",
+        };
+      }
+    }
+    return {
+      success: false,
+      error: "Native Android bridge is unavailable",
+    };
   }
 
   /**
