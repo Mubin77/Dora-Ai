@@ -1308,5 +1308,28 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         }
         return result.toString()
     }
+
+    /**
+     * Retrieves the configured Dora server URL
+     */
+    @JavascriptInterface
+    fun getServerUrl(): String {
+        val prefs = context.getSharedPreferences("dora_app_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("custom_server_url", "https://ais-dev-us6d4iivtwlkjr66rw4rhy-108268106407.asia-southeast1.run.app") 
+            ?: "https://ais-dev-us6d4iivtwlkjr66rw4rhy-108268106407.asia-southeast1.run.app"
+    }
+
+    /**
+     * Sets a custom Dora server URL
+     */
+    @JavascriptInterface
+    fun setServerUrl(url: String): String {
+        val prefs = context.getSharedPreferences("dora_app_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("custom_server_url", url).apply()
+        return JSONObject().apply {
+            put("success", true)
+            put("url", url)
+        }.toString()
+    }
 }
 

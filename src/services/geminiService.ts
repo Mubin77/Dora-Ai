@@ -1,5 +1,6 @@
 import { ChatMessage, DoraEmotion, VoiceSettings } from "../types";
 import { MemoryManager } from "../memory/MemoryManager";
+import { getApiUrl, getWebSocketUrl } from "../utils/apiConfig";
 
 export interface DoraChatResponse {
   reply: string;
@@ -190,8 +191,7 @@ export class DoraService {
       }
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/live-ws`;
+    const wsUrl = getWebSocketUrl("/live-ws");
 
     try {
       console.log(`[VOICE DEBUG] Creating authoritative Live WebSocket to ${wsUrl}`);
@@ -470,7 +470,7 @@ export class DoraService {
     const clientTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Dhaka";
     const clientTimestamp = Date.now();
 
-    const res = await fetch("/api/chat", {
+    const res = await fetch(getApiUrl("/api/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -512,7 +512,7 @@ export class DoraService {
    */
   public async generateSpeech(text: string, voiceName: string = "Aoede", language: string = "auto"): Promise<string | null> {
     try {
-      const res = await fetch("/api/tts", {
+      const res = await fetch(getApiUrl("/api/tts"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, voiceName, language }),

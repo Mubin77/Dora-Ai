@@ -22,6 +22,7 @@ import { DevicePermissionStatus, DevicePairingSession } from "../../types/device
 import { deviceControlService } from "../../services/device/DeviceControlService";
 import { devicePairingService } from "../../services/device/DevicePairingService";
 import { androidControlService } from "../../services/device/AndroidControlService";
+import { getApiUrl } from "../../utils/apiConfig";
 
 interface AndroidControlStatusProps {
   className?: string;
@@ -61,7 +62,7 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
       // 1. Check server pairing status API
       let deploymentStatus = devicePairingService.getDeploymentStatus();
       try {
-        const res = await fetch("/api/device/pairing/status");
+        const res = await fetch(getApiUrl("/api/device/pairing/status"));
         if (res.ok) {
           const data = await res.json();
           if (data.deploymentStatus) {
@@ -211,7 +212,7 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
       let session: DevicePairingSession | null = null;
       
       try {
-        const res = await fetch("/api/device/pairing/code", {
+        const res = await fetch(getApiUrl("/api/device/pairing/code"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ serverUrl }),
@@ -252,7 +253,7 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
     if (!simulatedPairingCode) return;
     setIsSimulatingPair(true);
     try {
-      const res = await fetch("/api/device/pairing/pair", {
+      const res = await fetch(getApiUrl("/api/device/pairing/pair"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -294,7 +295,7 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
       const deviceId = status.pairedDeviceId || active?.deviceId || "default";
       
       try {
-        await fetch("/api/device/pairing/unpair", {
+        await fetch(getApiUrl("/api/device/pairing/unpair"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ deviceId }),

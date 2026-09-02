@@ -1,5 +1,6 @@
 import { MemoryItem, MemoryCategory, MemorySource } from "./types";
 import { MemoryStore } from "./MemoryStore";
+import { getApiUrl } from "../utils/apiConfig";
 
 export interface ExplicitMemoryCandidate {
   category: MemoryCategory;
@@ -785,7 +786,7 @@ export class MemoryExtractor {
 
     // 2. Call server-side deep extraction endpoint asynchronously
     try {
-      const response = await fetch("/api/memory/extract", {
+      const response = await fetch(getApiUrl("/api/memory/extract"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

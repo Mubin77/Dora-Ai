@@ -16,6 +16,8 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.util.TypedValue
@@ -26,6 +28,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -41,21 +44,29 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewAssetLoader.AssetsPathHandler
 
 /**
  * Dora Main Android Activity
  * 
  * Primary entry point for the Dora Standalone Android Application.
- * Hosts the complete Dora frontend in an optimized WebView with native device-control
+ * Hosts the complete Dora frontend in an optimized, offline-ready WebView with native device-control
  * JavaScript bridge (window.DoraAndroidBridge) and DoraAccessibilityService integration.
  */
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        private const val TAG = "DoraMainActivity"
+        private const val TAG = "DoraStartup"
         private const val PREFS_NAME = "dora_app_prefs"
         private const val KEY_SERVER_URL = "custom_server_url"
-        private const val DEFAULT_PRODUCTION_URL = "https://ais-dev-4y3cwyeutkb4dkqz62jsrh-130845624199.asia-southeast1.run.app"
+        private const val KEY_USE_REMOTE = "use_remote_url"
+        
+        // Fast, reliable local asset URL served securely by WebViewAssetLoader
+        const val LOCAL_ASSET_URL = "https://appassets.androidplatform.net/assets/dist/index.html"
+        const val FALLBACK_FILE_URL = "file:///android_asset/dist/index.html"
+        const val DEFAULT_REMOTE_URL = "https://ais-dev-us6d4iivtwlkjr66rw4rhy-108268106407.asia-southeast1.run.app"
+
         const val REQUEST_CODE_AUDIO = 2001
         const val REQUEST_CODE_CAMERA = 2002
         const val REQUEST_CODE_AUDIO_AND_CAMERA = 2003
@@ -67,6 +78,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var bridgePlugin: DoraAndroidBridgePlugin
     private lateinit var prefs: SharedPreferences
+    private lateinit var assetLoader: WebViewAssetLoader
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     // UI overlays
     private lateinit var rootContainer: FrameLayout
@@ -83,36 +96,116 @@ class MainActivity : AppCompatActivity() {
     private var pendingScreenCaptureCallback: ((Boolean, String?) -> Unit)? = null
 
     private var voiceStateListener: DoraVoiceService.StateListener? = null
+    private var isAppFullyStarted = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.i(TAG, "[DoraStartup] MainActivity created")
         
-        prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        bridgePlugin = DoraAndroidBridgePlugin(this)
-
-        buildUi()
-        setupWebView()
-        setupBackNavigation()
-
-        // Start background voice service if alwaysRunInBackground is enabled
         try {
-            if (DoraVoiceService.isAlwaysRunInBackgroundEnabled(this)) {
+            prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            bridgePlugin = DoraAndroidBridgePlugin(this)
+
+            buildUi()
+            setupAssetLoader()
+            setupWebView()
+            setupBackNavigation()
+
+            Log.i(TAG, "[DoraStartup] Android bridge initialized")
+            Log.i(TAG, "[DoraStartup] Web app loading")
+            loadDoraApp()
+
+            // Non-blocking asynchronous checks after UI loading starts
+            mainHandler.post {
+                checkInitialPermissionsAsync()
+                checkInitialAccessibilityAsync()
+                initBackgroundVoiceServiceAsync()
+                initLiveSessionPreferenceAsync()
+                
+                isAppFullyStarted = true
+                Log.i(TAG, "[DoraStartup] Startup completed")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "[DoraStartup] Error during MainActivity onCreate initialization: ${e.message}", e)
+            // Ensure UI still displays even on unexpected catch
+            try {
+                if (!::webView.isInitialized) {
+                    setupWebView()
+                }
+                loadDoraApp()
+            } catch (fallbackEx: Exception) {
+                Log.e(TAG, "[DoraStartup] Fatal fallback error: ${fallbackEx.message}", fallbackEx)
+            }
+        }
+    }
+
+    private fun setupAssetLoader() {
+        try {
+            assetLoader = WebViewAssetLoader.Builder()
+                .addPathHandler("/assets/", AssetsPathHandler(this))
+                .build()
+        } catch (e: Exception) {
+            Log.w(TAG, "[DoraStartup] Error building WebViewAssetLoader: ${e.message}")
+        }
+    }
+
+    private fun checkInitialPermissionsAsync() {
+        try {
+            val micState = checkAudioPermissionState()
+            val camState = checkCameraPermissionState()
+            Log.i(TAG, "[DoraStartup] Permissions state checked: mic=$micState, camera=$camState")
+        } catch (e: Exception) {
+            Log.w(TAG, "[DoraStartup] Permissions state check error: ${e.message}")
+        }
+    }
+
+    private fun checkInitialAccessibilityAsync() {
+        try {
+            val isEnabled = DoraAccessibilityService.isAccessibilitySettingsEnabled(this)
+            val isRunning = DoraAccessibilityService.isServiceRunning()
+            Log.i(TAG, "[DoraStartup] Accessibility state checked: enabled=$isEnabled, running=$isRunning")
+        } catch (e: Exception) {
+            Log.w(TAG, "[DoraStartup] Accessibility check error: ${e.message}")
+        }
+    }
+
+    private fun initBackgroundVoiceServiceAsync() {
+        try {
+            Log.i(TAG, "[DoraStartup] Background voice initialization started")
+            
+            // Attach native voice service state changes listener safely
+            voiceStateListener = object : DoraVoiceService.StateListener {
+                override fun onVoiceStateChanged(state: DoraVoiceService.VoiceState, message: String?) {
+                    notifyVoiceStateChanged(state.name, message)
+                }
+            }
+            DoraVoiceService.addStateListener(voiceStateListener!!)
+
+            // Start background voice service if alwaysRunInBackground is enabled and permission is granted
+            val micGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (micGranted && DoraVoiceService.isAlwaysRunInBackgroundEnabled(this)) {
                 DoraVoiceService.start(this)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Could not start DoraVoiceService: ${e.message}")
+            Log.w(TAG, "[DoraStartup] Background voice service initialization notice: ${e.message}")
         }
+    }
 
-        // Listen for native voice service state changes and forward to webView
-        voiceStateListener = object : DoraVoiceService.StateListener {
-            override fun onVoiceStateChanged(state: DoraVoiceService.VoiceState, message: String?) {
-                notifyVoiceStateChanged(state.name, message)
+    private fun initLiveSessionPreferenceAsync() {
+        try {
+            Log.i(TAG, "[DoraStartup] Live session initialization started")
+            // Forward auto-start trigger if configured by the user in settings
+            val autoStart = prefs.getBoolean("dora_auto_start_live_session", false)
+            if (autoStart) {
+                webView.postDelayed({
+                    val js = "window.dispatchEvent(new CustomEvent('doraAutoStartLiveSession', { detail: { requested: true } }));"
+                    webView.evaluateJavascript(js, null)
+                }, 1200)
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "[DoraStartup] Live session initialization warning: ${e.message}")
         }
-        DoraVoiceService.addStateListener(voiceStateListener!!)
-
-        loadDoraApp()
     }
 
     fun notifyVoiceStateChanged(state: String, message: String? = null) {
@@ -288,7 +381,7 @@ class MainActivity : AppCompatActivity() {
         }
         rootContainer.addView(webView)
 
-        // 2. Loading Overlay
+        // 2. Loading Overlay (Fades out automatically upon page load)
         loadingOverlay = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -332,7 +425,7 @@ class MainActivity : AppCompatActivity() {
             addView(spinner)
 
             val status = TextView(this@MainActivity).apply {
-                text = "Connecting to Dora..."
+                text = "Starting Dora..."
                 textSize = 13f
                 setTextColor(Color.parseColor("#64748B"))
                 gravity = Gravity.CENTER
@@ -342,7 +435,7 @@ class MainActivity : AppCompatActivity() {
         }
         rootContainer.addView(loadingOverlay)
 
-        // 3. Error Overlay (Hidden by default)
+        // 3. Error Overlay (Hidden by default, used only if custom remote server is down)
         errorOverlay = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -355,7 +448,7 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
 
             val errorTitle = TextView(this@MainActivity).apply {
-                text = "Unable to Connect"
+                text = "Connection Issue"
                 textSize = 22f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.parseColor("#F87171"))
@@ -364,7 +457,7 @@ class MainActivity : AppCompatActivity() {
             addView(errorTitle)
 
             errorDetailText = TextView(this@MainActivity).apply {
-                text = "Could not connect to Dora. Please check your internet connection."
+                text = "Could not reach remote server. You can switch to offline bundled mode."
                 textSize = 14f
                 setTextColor(Color.parseColor("#94A3B8"))
                 gravity = Gravity.CENTER
@@ -373,7 +466,7 @@ class MainActivity : AppCompatActivity() {
             addView(errorDetailText)
 
             btnRetry = Button(this@MainActivity).apply {
-                text = "Retry Connection"
+                text = "Load Bundled App (Offline)"
                 setTextColor(Color.WHITE)
                 background = GradientDrawable().apply {
                     setColor(Color.parseColor("#2563EB"))
@@ -381,6 +474,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 setPadding(dp(24), dp(12), dp(24), dp(12))
                 setOnClickListener {
+                    prefs.edit().putBoolean(KEY_USE_REMOTE, false).apply()
                     errorOverlay.visibility = View.GONE
                     loadingOverlay.visibility = View.VISIBLE
                     loadDoraApp()
@@ -433,8 +527,23 @@ class MainActivity : AppCompatActivity() {
 
         // Attach native JavaScript bridge for device control
         webView.addJavascriptInterface(bridgePlugin, "DoraAndroidBridge")
+        webView.addJavascriptInterface(bridgePlugin, "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                val url = request?.url ?: return null
+                if (::assetLoader.isInitialized) {
+                    val response = assetLoader.shouldInterceptRequest(url)
+                    if (response != null) {
+                        return response
+                    }
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 loadingOverlay.visibility = View.VISIBLE
@@ -444,6 +553,7 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 loadingOverlay.visibility = View.GONE
                 errorOverlay.visibility = View.GONE
+                Log.i(TAG, "[DoraStartup] Page finished loading: $url")
             }
 
             override fun onReceivedError(
@@ -452,7 +562,27 @@ class MainActivity : AppCompatActivity() {
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
-                if (request?.isForMainFrame == true) {
+                val isMainFrame = request?.isForMainFrame == true
+                if (isMainFrame) {
+                    val failingUrl = request?.url?.toString() ?: ""
+                    Log.w(TAG, "[DoraStartup] WebView received error on main frame: ${error?.description} (url=$failingUrl)")
+                    
+                    // If a custom remote URL failed, gracefully fall back to local assets
+                    if (failingUrl.startsWith("http://") || failingUrl.startsWith("https://")) {
+                        if (!failingUrl.contains("appassets.androidplatform.net")) {
+                            Log.i(TAG, "[DoraStartup] Falling back from failing remote URL to local bundled assets")
+                            webView.loadUrl(LOCAL_ASSET_URL)
+                            return
+                        }
+                    }
+
+                    // If even local assets had an issue, fallback to direct file URL
+                    if (failingUrl.contains("appassets.androidplatform.net")) {
+                        Log.i(TAG, "[DoraStartup] Falling back to direct file:/// android asset URL")
+                        webView.loadUrl(FALLBACK_FILE_URL)
+                        return
+                    }
+
                     loadingOverlay.visibility = View.GONE
                     errorOverlay.visibility = View.VISIBLE
                     errorDetailText.text = "Failed to load Dora: ${error?.description ?: "Network error"}"
@@ -523,6 +653,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        Log.i(TAG, "[DoraStartup] WebView initialized")
     }
 
     private fun setupBackNavigation() {
@@ -539,17 +671,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getTargetUrl(): String {
-        return prefs.getString(KEY_SERVER_URL, DEFAULT_PRODUCTION_URL) ?: DEFAULT_PRODUCTION_URL
+        val useRemote = prefs.getBoolean(KEY_USE_REMOTE, false)
+        if (useRemote) {
+            val customUrl = prefs.getString(KEY_SERVER_URL, null)
+            if (!customUrl.isNullOrBlank()) {
+                return customUrl
+            }
+        }
+        // Default to instant bundled local assets
+        return LOCAL_ASSET_URL
     }
 
     private fun loadDoraApp() {
         val targetUrl = getTargetUrl()
-        Log.i(TAG, "Loading Dora app from: $targetUrl")
+        Log.i(TAG, "[DoraStartup] Loading Dora app from: $targetUrl")
         webView.loadUrl(targetUrl)
+
+        // Safety watchdog: ensure loading overlay disappears within 3.5s even if onPageFinished was delayed
+        mainHandler.postDelayed({
+            if (::loadingOverlay.isInitialized && loadingOverlay.visibility == View.VISIBLE) {
+                loadingOverlay.visibility = View.GONE
+            }
+        }, 3500)
     }
 
     private fun showServerUrlDialog() {
-        val currentUrl = getTargetUrl()
+        val currentUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_REMOTE_URL) ?: DEFAULT_REMOTE_URL
         val input = EditText(this).apply {
             setText(currentUrl)
             setSelection(currentUrl.length)
@@ -559,14 +706,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("Dora Server URL")
-            .setMessage("Configure the public HTTPS server URL for Dora:")
+            .setTitle("Dora Remote Server URL")
+            .setMessage("Configure a custom HTTPS server URL for Dora, or leave as default for local mode:")
             .setView(input)
-            .setPositiveButton("Save & Reload") { _, _ ->
+            .setPositiveButton("Use Remote") { _, _ ->
                 val newUrl = input.text.toString().trim()
                 if (newUrl.startsWith("http://") || newUrl.startsWith("https://")) {
-                    prefs.edit().putString(KEY_SERVER_URL, newUrl).apply()
-                    Toast.makeText(this, "Saved server URL", Toast.LENGTH_SHORT).show()
+                    prefs.edit()
+                        .putString(KEY_SERVER_URL, newUrl)
+                        .putBoolean(KEY_USE_REMOTE, true)
+                        .apply()
+                    Toast.makeText(this, "Saved remote URL", Toast.LENGTH_SHORT).show()
                     errorOverlay.visibility = View.GONE
                     loadingOverlay.visibility = View.VISIBLE
                     loadDoraApp()
@@ -574,8 +724,8 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, "URL must begin with https:// or http://", Toast.LENGTH_LONG).show()
                 }
             }
-            .setNegativeButton("Reset to Default") { _, _ ->
-                prefs.edit().putString(KEY_SERVER_URL, DEFAULT_PRODUCTION_URL).apply()
+            .setNegativeButton("Use Offline Assets") { _, _ ->
+                prefs.edit().putBoolean(KEY_USE_REMOTE, false).apply()
                 errorOverlay.visibility = View.GONE
                 loadingOverlay.visibility = View.VISIBLE
                 loadDoraApp()
@@ -586,16 +736,20 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        webView.onResume()
-        webView.post {
-            val js = "window.dispatchEvent(new CustomEvent('doraAppResumed', { detail: { timestamp: Date.now() } }));"
-            webView.evaluateJavascript(js, null)
+        if (::webView.isInitialized) {
+            webView.onResume()
+            webView.post {
+                val js = "window.dispatchEvent(new CustomEvent('doraAppResumed', { detail: { timestamp: Date.now() } }));"
+                webView.evaluateJavascript(js, null)
+            }
         }
     }
 
     override fun onPause() {
         super.onPause()
-        webView.onPause()
+        if (::webView.isInitialized) {
+            webView.onPause()
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -654,6 +808,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun notifyScreenCaptureStarted() {
+        if (!::webView.isInitialized) return
         webView.post {
             val js = "window.dispatchEvent(new CustomEvent('doraScreenCaptureStarted', { detail: { active: true } }));"
             webView.evaluateJavascript(js, null)
@@ -661,6 +816,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun notifyScreenCaptureStopped() {
+        if (!::webView.isInitialized) return
         webView.post {
             val js = "window.dispatchEvent(new CustomEvent('doraScreenCaptureStopped', { detail: { active: false } }));"
             webView.evaluateJavascript(js, null)
@@ -668,6 +824,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun notifyScreenFrameCaptured(base64Jpeg: String) {
+        if (!::webView.isInitialized) return
         webView.post {
             val js = "window.dispatchEvent(new CustomEvent('doraScreenFrameCaptured', { detail: { image: '$base64Jpeg' } }));"
             webView.evaluateJavascript(js, null)
@@ -676,8 +833,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         voiceStateListener?.let { DoraVoiceService.removeStateListener(it) }
-        DoraScreenCaptureManager.getInstance().stopCapture(this)
-        webView.destroy()
+        try {
+            DoraScreenCaptureManager.getInstance().stopCapture(this)
+        } catch (e: Exception) {
+            // ignore
+        }
+        if (::webView.isInitialized) {
+            webView.destroy()
+        }
         super.onDestroy()
     }
 }
