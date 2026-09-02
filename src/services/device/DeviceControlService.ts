@@ -164,6 +164,45 @@ export class DeviceControlService {
           result = await androidControlService.openUrl(String(request.parameters?.url || ""));
           break;
 
+        case "set_flashlight":
+          result = await androidControlService.setFlashlight(Boolean(request.parameters?.enabled));
+          break;
+
+        case "adjust_volume":
+          result = await androidControlService.adjustVolume(request.parameters?.direction || "up");
+          break;
+
+        case "control_media":
+          result = await androidControlService.controlMedia(request.parameters?.action || "play_pause");
+          break;
+
+        case "make_call":
+          result = await androidControlService.makePhoneCall(String(request.parameters?.recipient || ""));
+          break;
+
+        case "send_whatsapp":
+          result = await androidControlService.openWhatsApp(
+            String(request.parameters?.contact || ""),
+            request.parameters?.message ? String(request.parameters.message) : undefined
+          );
+          break;
+
+        case "open_system_settings":
+          result = await androidControlService.openSystemSettings(String(request.parameters?.settingType || "general"));
+          break;
+
+        case "press_recents":
+          result = await androidControlService.pressRecents();
+          break;
+
+        case "open_notifications":
+          result = await androidControlService.openNotificationPanel();
+          break;
+
+        case "open_quick_settings":
+          result = await androidControlService.openSystemSettings("general");
+          break;
+
         default:
           result = {
             requestId,

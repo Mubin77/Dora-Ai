@@ -3,9 +3,13 @@ package ai.dora.companion
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
 import android.webkit.JavascriptInterface
 import org.json.JSONArray
 import org.json.JSONObject
@@ -285,73 +289,100 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         val command = rawCommand.trim().lowercase()
         val result = JSONObject()
 
-        // 1. YouTube commands ("youtube kholo", "open youtube", "open youtube app")
-        if (command.contains("youtube") || command.contains("ইউটিউব")) {
-            val openRes = JSONObject(openApp(JSONObject().apply {
-                put("appName", "YouTube")
-                put("packageName", "com.google.android.youtube")
-            }.toString()))
-            return openRes
+        // 1. Flashlight ("flashlight on", "light jalao", "torch chalu koro", "flashlight off", "light nibhao")
+        if (command.contains("flashlight on") || command.contains("torch on") || command.contains("light jalao") ||
+            command.contains("torch jalao") || command.contains("torch chalu") || command.contains("ফ্ল্যাশলাইট জ্বালাও")) {
+            return JSONObject(setFlashlight(JSONObject().apply { put("enabled", true) }.toString()))
+        }
+        if (command.contains("flashlight off") || command.contains("torch off") || command.contains("light nibhao") ||
+            command.contains("torch nibhao") || command.contains("torch bondho") || command.contains("ফ্ল্যাশলাইট বন্ধ")) {
+            return JSONObject(setFlashlight(JSONObject().apply { put("enabled", false) }.toString()))
         }
 
-        // 2. WhatsApp commands ("whatsapp kholo", "open whatsapp", "হোয়াটসঅ্যাপ")
-        if (command.contains("whatsapp") || command.contains("হোয়াটসঅ্যাপ") || command.contains("watsapp")) {
-            val openRes = JSONObject(openApp(JSONObject().apply {
-                put("appName", "WhatsApp")
-                put("packageName", "com.whatsapp")
-            }.toString()))
-            return openRes
+        // 2. Volume controls ("volume baraw", "volume komaw", "volume up", "volume down", "mute", "unmute")
+        if (command.contains("volume up") || command.contains("volume baraw") || command.contains("sound baraw") ||
+            command.contains("ভলিউম বাড়াও") || command.contains("আওয়াজ বাড়াও")) {
+            return JSONObject(adjustVolume(JSONObject().apply { put("direction", "up") }.toString()))
+        }
+        if (command.contains("volume down") || command.contains("volume komaw") || command.contains("sound komaw") ||
+            command.contains("ভলিউম কমাও") || command.contains("আওয়াজ কমাও")) {
+            return JSONObject(adjustVolume(JSONObject().apply { put("direction", "down") }.toString()))
+        }
+        if (command.contains("mute") || command.contains("sound off") || command.contains("নিঃশব্দ")) {
+            return JSONObject(adjustVolume(JSONObject().apply { put("direction", "mute") }.toString()))
         }
 
-        // 3. Settings ("settings kholo", "open settings", "সেটিংস")
-        if (command.contains("settings") || command.contains("setting") || command.contains("সেটিংস")) {
-            val openRes = JSONObject(openApp(JSONObject().apply {
-                put("appName", "Settings")
-                put("packageName", "com.android.settings")
-            }.toString()))
-            return openRes
+        // 3. Media Controls ("play music", "pause music", "next song", "previous song", "gaan chalao", "gaan bondho")
+        if (command.contains("pause music") || command.contains("pause video") || command.contains("gaan bondho") || command.contains("থামাও")) {
+            return JSONObject(controlMedia(JSONObject().apply { put("action", "pause") }.toString()))
+        }
+        if (command.contains("play music") || command.contains("resume music") || command.contains("gaan chalao") || command.contains("গান চালাও")) {
+            return JSONObject(controlMedia(JSONObject().apply { put("action", "play") }.toString()))
+        }
+        if (command.contains("next song") || command.contains("next track") || command.contains("porer gaan")) {
+            return JSONObject(controlMedia(JSONObject().apply { put("action", "next") }.toString()))
+        }
+        if (command.contains("previous song") || command.contains("prev track") || command.contains("ager gaan")) {
+            return JSONObject(controlMedia(JSONObject().apply { put("action", "previous") }.toString()))
         }
 
-        // 4. Chrome / Browser ("chrome kholo", "open chrome", "browser kholo")
-        if (command.contains("chrome") || command.contains("browser") || command.contains("ক্রোম")) {
-            val openRes = JSONObject(openApp(JSONObject().apply {
-                put("appName", "Google Chrome")
-                put("packageName", "com.android.chrome")
-            }.toString()))
-            return openRes
+        // 4. Quick System Settings (Wi-Fi, Bluetooth, Do Not Disturb)
+        if (command.contains("wifi") || command.contains("wi-fi") || command.contains("ওয়াইফাই")) {
+            return JSONObject(openWifiSettings())
+        }
+        if (command.contains("bluetooth") || command.contains("ব্লুটুথ")) {
+            return JSONObject(openBluetoothSettings())
+        }
+        if (command.contains("dnd") || command.contains("do not disturb") || command.contains("disturb")) {
+            return JSONObject(openDndSettings())
         }
 
-        // 5. Navigation: Home ("go home", "home jao", "home", "হোম")
+        // 5. Phone Call ("call [Name/Number]", "[Name]-ke call dao", "call mom")
+        val callMatch = Regex("(?:call|phone|ring)\\s+([0-9a-zA-Z\\s]+)|([0-9a-zA-Z\\s]+?)(?:-?ke|-?e)?\\s+(?:call|phone)\\s*(?:dao|koro)?").find(command)
+        if (callMatch != null) {
+            val recipient = (callMatch.groupValues[1].takeIf { it.isNotBlank() } ?: callMatch.groupValues[2]).trim()
+            if (recipient.isNotBlank() && recipient != "me" && recipient != "back" && recipient != "dora") {
+                return JSONObject(makePhoneCall(JSONObject().apply { put("recipient", recipient) }.toString()))
+            }
+        }
+
+        // 6. Navigation: Recents, Notifications, Quick Settings
+        if (command.contains("recent apps") || command.contains("recents") || command.contains("app switcher")) {
+            return JSONObject(pressRecents())
+        }
+        if (command.contains("notifications") || command.contains("notification panel") || command.contains("নোটিফিকেশন")) {
+            return JSONObject(openNotificationPanel())
+        }
+        if (command.contains("quick settings") || command.contains("control center")) {
+            return JSONObject(openQuickSettings())
+        }
+
+        // 7. Navigation: Home ("go home", "home jao", "home", "হোম")
         if (command == "home" || command.contains("go home") || command.contains("home jao") || command.contains("হোম")) {
-            val homeRes = JSONObject(pressHome())
-            return homeRes
+            return JSONObject(pressHome())
         }
 
-        // 6. Navigation: Back ("go back", "back jao", "back", "পিছনে")
+        // 8. Navigation: Back ("go back", "back jao", "back", "পিছনে")
         if (command == "back" || command.contains("go back") || command.contains("back jao") || command.contains("পিছনে")) {
-            val backRes = JSONObject(pressBack())
-            return backRes
+            return JSONObject(pressBack())
         }
 
-        // 7. Scroll Down ("scroll down", "niche scroll", "নিচে স্ক্রল")
+        // 9. Scroll Down ("scroll down", "niche scroll", "নিচে স্ক্রল")
         if (command.contains("scroll down") || command.contains("niche scroll") || command.contains("down")) {
-            val scrollRes = JSONObject(scrollWindow(JSONObject().apply { put("direction", "down") }.toString()))
-            return scrollRes
+            return JSONObject(scrollWindow(JSONObject().apply { put("direction", "down") }.toString()))
         }
 
-        // 8. Scroll Up ("scroll up", "upore scroll", "উপরে স্ক্রল")
+        // 10. Scroll Up ("scroll up", "upore scroll", "উপরে স্ক্রল")
         if (command.contains("scroll up") || command.contains("upore scroll") || command.contains("up")) {
-            val scrollRes = JSONObject(scrollWindow(JSONObject().apply { put("direction", "up") }.toString()))
-            return scrollRes
+            return JSONObject(scrollWindow(JSONObject().apply { put("direction", "up") }.toString()))
         }
 
-        // 9. Inspect Screen ("read screen", "screen dekho", "স্ক্রিন")
+        // 11. Inspect Screen ("read screen", "screen dekho", "স্ক্রিন")
         if (command.contains("read screen") || command.contains("inspect") || command.contains("screen dekho")) {
-            val readRes = JSONObject(readScreen(null))
-            return readRes
+            return JSONObject(readScreen(null))
         }
 
-        // 10. General "open [App]" / "[App] kholo"
+        // 12. App Launching ("youtube kholo", "open whatsapp", "settings kholo", etc.)
         val openPrefixes = listOf("open ", "launch ", "start ", "kholo ", "chalu koro ")
         var targetAppName = command
         for (prefix in openPrefixes) {
@@ -375,7 +406,7 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         }
 
         result.put("success", false)
-        result.put("error", "Could not interpret command: '$rawCommand'. Try 'YouTube kholo', 'Open WhatsApp', 'Go Home', or 'Scroll Down'.")
+        result.put("error", "Could not interpret command: '$rawCommand'. Try 'YouTube kholo', 'Flashlight on', 'Volume up', 'Go Home', or 'Scroll Down'.")
         return result
     }
 
@@ -643,6 +674,414 @@ class DoraAndroidBridgePlugin(private val context: Context) {
         val success = service.performHome()
         result.put("success", success)
         if (success) result.put("message", "Navigated home") else result.put("error", "Home action failed")
+        return result.toString()
+    }
+
+    /**
+     * Toggles flashlight on or off
+     */
+    @JavascriptInterface
+    fun setFlashlight(optionsJson: String): String {
+        val result = JSONObject()
+        try {
+            val options = JSONObject(optionsJson)
+            val enabled = options.optBoolean("enabled", true)
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+            if (cameraManager != null) {
+                val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                    val characteristics = cameraManager.getCameraCharacteristics(id)
+                    characteristics.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                }
+                if (cameraId != null) {
+                    cameraManager.setTorchMode(cameraId, enabled)
+                    result.put("success", true)
+                    result.put("message", if (enabled) "Flashlight turned on" else "Flashlight turned off")
+                    return result.toString()
+                }
+            }
+            result.put("success", false)
+            result.put("error", "No flashlight hardware detected on this device")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error toggling flashlight", e)
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to adjust flashlight")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Adjusts system stream volume (up, down, mute, unmute, max)
+     */
+    @JavascriptInterface
+    fun adjustVolume(optionsJson: String): String {
+        val result = JSONObject()
+        try {
+            val options = JSONObject(optionsJson)
+            val direction = options.optString("direction", "up").lowercase()
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (audioManager == null) {
+                result.put("success", false)
+                result.put("error", "AudioManager service not available")
+                return result.toString()
+            }
+
+            when (direction) {
+                "up" -> {
+                    audioManager.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_RAISE,
+                        AudioManager.FLAG_SHOW_UI
+                    )
+                    result.put("message", "Volume increased")
+                }
+                "down" -> {
+                    audioManager.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_LOWER,
+                        AudioManager.FLAG_SHOW_UI
+                    )
+                    result.put("message", "Volume decreased")
+                }
+                "mute" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        audioManager.adjustStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            AudioManager.ADJUST_MUTE,
+                            AudioManager.FLAG_SHOW_UI
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        audioManager.setStreamMute(AudioManager.STREAM_MUSIC, true)
+                    }
+                    result.put("message", "Audio muted")
+                }
+                "unmute" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        audioManager.adjustStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            AudioManager.ADJUST_UNMUTE,
+                            AudioManager.FLAG_SHOW_UI
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        audioManager.setStreamMute(AudioManager.STREAM_MUSIC, false)
+                    }
+                    result.put("message", "Audio unmuted")
+                }
+                "max" -> {
+                    val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, AudioManager.FLAG_SHOW_UI)
+                    result.put("message", "Volume set to maximum")
+                }
+                else -> {
+                    audioManager.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_SAME,
+                        AudioManager.FLAG_SHOW_UI
+                    )
+                    result.put("message", "Volume unchanged")
+                }
+            }
+            result.put("success", true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adjusting volume", e)
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to adjust volume")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Controls global media playback (play, pause, next, previous)
+     */
+    @JavascriptInterface
+    fun controlMedia(optionsJson: String): String {
+        val result = JSONObject()
+        try {
+            val options = JSONObject(optionsJson)
+            val action = options.optString("action", "play_pause").lowercase()
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (audioManager == null) {
+                result.put("success", false)
+                result.put("error", "AudioManager not available")
+                return result.toString()
+            }
+
+            val keyCode = when (action) {
+                "play" -> KeyEvent.KEYCODE_MEDIA_PLAY
+                "pause" -> KeyEvent.KEYCODE_MEDIA_PAUSE
+                "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
+                "previous", "prev" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                else -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+            }
+
+            audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+            audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+
+            result.put("success", true)
+            result.put("message", "Media action '$action' dispatched")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error dispatching media control", e)
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to control media playback")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Launches direct phone call or phone dialer
+     */
+    @JavascriptInterface
+    fun makePhoneCall(optionsJson: String): String {
+        val result = JSONObject()
+        try {
+            val options = JSONObject(optionsJson)
+            val recipient = options.optString("recipient", options.optString("phoneNumber", "")).trim()
+            if (recipient.isBlank()) {
+                val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(dialIntent)
+                result.put("success", true)
+                result.put("message", "Phone dialer opened")
+                return result.toString()
+            }
+
+            val isNumber = recipient.replace("[+\\-()\\s]".toRegex(), "").all { it.isDigit() }
+            val intent = if (isNumber) {
+                Intent(Intent.ACTION_DIAL, Uri.parse("tel:$recipient")).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+            } else {
+                Intent(Intent.ACTION_VIEW, Uri.parse("tel:")).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+            }
+            context.startActivity(intent)
+            result.put("success", true)
+            result.put("message", "Calling $recipient")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error making phone call", e)
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to initiate phone call")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Opens WhatsApp chat or contact message
+     */
+    @JavascriptInterface
+    fun openWhatsApp(optionsJson: String): String {
+        val result = JSONObject()
+        try {
+            val options = JSONObject(optionsJson)
+            val contact = options.optString("contact", options.optString("phoneNumber", "")).trim()
+            val message = options.optString("message", "")
+
+            val cleanPhone = contact.replace("[+\\-()\\s]".toRegex(), "")
+            val uri = if (cleanPhone.isNotBlank() && cleanPhone.all { it.isDigit() }) {
+                Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(message)}")
+            } else {
+                Uri.parse("https://api.whatsapp.com/send?text=${Uri.encode(message)}")
+            }
+
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage("com.whatsapp")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+
+            val packageManager = context.packageManager
+            if (intent.resolveActivity(packageManager) != null) {
+                context.startActivity(intent)
+                result.put("success", true)
+                result.put("message", "WhatsApp opened")
+            } else {
+                // Fallback to standard openApp
+                return openApp(JSONObject().apply {
+                    put("appName", "WhatsApp")
+                    put("packageName", "com.whatsapp")
+                }.toString())
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error launching WhatsApp", e)
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to launch WhatsApp")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Opens Android Wi-Fi settings page
+     */
+    @JavascriptInterface
+    fun openWifiSettings(): String {
+        val result = JSONObject()
+        try {
+            val intent = Intent(Settings.ACTION_WIFI_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            result.put("success", true)
+            result.put("message", "Wi-Fi settings opened")
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to open Wi-Fi settings")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Opens Android Bluetooth settings page
+     */
+    @JavascriptInterface
+    fun openBluetoothSettings(): String {
+        val result = JSONObject()
+        try {
+            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            result.put("success", true)
+            result.put("message", "Bluetooth settings opened")
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to open Bluetooth settings")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Opens Android Do Not Disturb settings page
+     */
+    @JavascriptInterface
+    fun openDndSettings(): String {
+        val result = JSONObject()
+        try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Intent(Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS)
+            } else {
+                Intent(Settings.ACTION_SOUND_SETTINGS)
+            }.apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            result.put("success", true)
+            result.put("message", "Do Not Disturb settings opened")
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to open DND settings")
+        }
+        return result.toString()
+    }
+
+    /**
+     * Opens Recent Applications overview
+     */
+    @JavascriptInterface
+    fun pressRecents(): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active")
+            return result.toString()
+        }
+        val success = service.performRecents()
+        result.put("success", success)
+        result.put("message", if (success) "Opened Recent Applications" else "Failed to open Recents")
+        return result.toString()
+    }
+
+    /**
+     * Opens Notifications shade
+     */
+    @JavascriptInterface
+    fun openNotificationPanel(): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active")
+            return result.toString()
+        }
+        val success = service.performNotifications()
+        result.put("success", success)
+        result.put("message", if (success) "Notifications shade opened" else "Failed to open Notifications")
+        return result.toString()
+    }
+
+    /**
+     * Opens Quick Settings panel
+     */
+    @JavascriptInterface
+    fun openQuickSettings(): String {
+        val result = JSONObject()
+        val service = DoraAccessibilityService.getInstance()
+        if (service == null) {
+            result.put("success", false)
+            result.put("error", "Dora Accessibility Service is not active")
+            return result.toString()
+        }
+        val success = service.performQuickSettings()
+        result.put("success", success)
+        result.put("message", if (success) "Quick Settings opened" else "Failed to open Quick Settings")
+        return result.toString()
+    }
+
+    /**
+     * Controls Background Voice Foreground Service
+     */
+    @JavascriptInterface
+    fun startBackgroundVoiceService(): String {
+        val result = JSONObject()
+        try {
+            DoraVoiceService.start(context)
+            result.put("success", true)
+            result.put("message", "Background Voice Service started")
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to start background voice")
+        }
+        return result.toString()
+    }
+
+    @JavascriptInterface
+    fun stopBackgroundVoiceService(): String {
+        val result = JSONObject()
+        try {
+            DoraVoiceService.stop(context)
+            result.put("success", true)
+            result.put("message", "Background Voice Service stopped")
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to stop background voice")
+        }
+        return result.toString()
+    }
+
+    @JavascriptInterface
+    fun isBackgroundVoiceServiceRunning(): String {
+        val result = JSONObject().apply {
+            put("running", DoraVoiceService.isServiceRunning())
+            put("alwaysRunInBackground", DoraVoiceService.isAlwaysRunInBackgroundEnabled(context))
+        }
+        return result.toString()
+    }
+
+    @JavascriptInterface
+    fun setAlwaysRunInBackground(optionsJson: String): String {
+        val result = JSONObject()
+        try {
+            val options = JSONObject(optionsJson)
+            val enabled = options.optBoolean("enabled", true)
+            DoraVoiceService.setAlwaysRunInBackground(context, enabled)
+            result.put("success", true)
+            result.put("enabled", enabled)
+        } catch (e: Exception) {
+            result.put("success", false)
+            result.put("error", e.message ?: "Failed to update always run setting")
+        }
         return result.toString()
     }
 

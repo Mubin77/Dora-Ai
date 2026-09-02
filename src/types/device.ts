@@ -10,7 +10,7 @@ export type DeviceType = "android" | "pc";
 export type DevicePlatform = "android" | "web" | "desktop";
 
 export type DeviceAction =
-  | "open_application"   // Implemented in Phase 1
+  | "open_application"   // Phase 1
   | "autonomous_task"    // Phase 3 Autonomous Task Execution
   | "tap"                // Phase 2
   | "type_text"          // Phase 2
@@ -18,10 +18,19 @@ export type DeviceAction =
   | "scroll"             // Phase 2
   | "press_back"         // Phase 2
   | "press_home"         // Phase 2
+  | "press_recents"      // System navigation
+  | "open_notifications" // System panel
+  | "open_quick_settings"// System panel
   | "take_screenshot"    // Phase 2
   | "read_screen"        // Phase 2
   | "find_ui_element"    // Phase 2
   | "open_url"           // Allowed auxiliary action
+  | "set_flashlight"     // System Hardware Control
+  | "adjust_volume"      // System Audio Control
+  | "control_media"      // Media Playback Control
+  | "make_call"          // Phone call
+  | "send_whatsapp"      // WhatsApp messaging
+  | "open_system_settings" // Direct settings pages
   | "execute_android_task"; // Phase 3 Autonomous Task Execution
 
 export type DeviceSafetyLevel = "SAFE" | "CONFIRMATION_REQUIRED" | "HIGH_RISK";
@@ -176,6 +185,31 @@ export interface ExecuteAndroidTaskParams {
   goal: string;
   maxSteps?: number;
   isMockMode?: boolean;
+}
+
+export interface SetFlashlightParams {
+  enabled: boolean;
+}
+
+export interface AdjustVolumeParams {
+  direction: "up" | "down" | "mute" | "unmute" | "max";
+}
+
+export interface ControlMediaParams {
+  action: "play" | "pause" | "play_pause" | "next" | "previous";
+}
+
+export interface MakeCallParams {
+  recipient: string;
+}
+
+export interface SendWhatsAppParams {
+  contact: string;
+  message?: string;
+}
+
+export interface OpenSystemSettingsParams {
+  settingType: "wifi" | "bluetooth" | "dnd" | "display" | "accessibility" | "general";
 }
 
 export interface ActionVerificationResult {

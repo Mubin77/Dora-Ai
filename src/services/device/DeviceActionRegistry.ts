@@ -189,6 +189,119 @@ export class DeviceActionRegistry {
         return { isValid: true };
       },
     });
+
+    // 13. set_flashlight (System hardware)
+    this.registerAction({
+      action: "set_flashlight",
+      description: "Turns device camera torch / flashlight on or off.",
+      isImplemented: true,
+      requiredParameters: ["enabled"],
+      validateParameters: (params) => {
+        if (params?.enabled === undefined || typeof params.enabled !== "boolean") {
+          return { isValid: false, error: "Missing or invalid required boolean parameter: enabled" };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 14. adjust_volume (Audio)
+    this.registerAction({
+      action: "adjust_volume",
+      description: "Controls device media and system volume.",
+      isImplemented: true,
+      requiredParameters: ["direction"],
+      validateParameters: (params) => {
+        const valid = ["up", "down", "mute", "unmute", "max"];
+        if (!params?.direction || !valid.includes(params.direction)) {
+          return { isValid: false, error: `Invalid direction. Must be one of: ${valid.join(", ")}` };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 15. control_media (Playback)
+    this.registerAction({
+      action: "control_media",
+      description: "Controls audio and video playback state.",
+      isImplemented: true,
+      requiredParameters: ["action"],
+      validateParameters: (params) => {
+        const valid = ["play", "pause", "play_pause", "next", "previous"];
+        if (!params?.action || !valid.includes(params.action)) {
+          return { isValid: false, error: `Invalid media action. Must be one of: ${valid.join(", ")}` };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 16. make_call (Phone)
+    this.registerAction({
+      action: "make_call",
+      description: "Dials a phone number or contact.",
+      isImplemented: true,
+      requiredParameters: ["recipient"],
+      validateParameters: (params) => {
+        if (!params?.recipient || typeof params.recipient !== "string" || params.recipient.trim().length === 0) {
+          return { isValid: false, error: "Missing required parameter: recipient" };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 17. send_whatsapp (WhatsApp)
+    this.registerAction({
+      action: "send_whatsapp",
+      description: "Opens WhatsApp to message a specific contact.",
+      isImplemented: true,
+      requiredParameters: ["contact"],
+      validateParameters: (params) => {
+        if (!params?.contact || typeof params.contact !== "string" || params.contact.trim().length === 0) {
+          return { isValid: false, error: "Missing required parameter: contact" };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 18. open_system_settings (Settings)
+    this.registerAction({
+      action: "open_system_settings",
+      description: "Navigates directly to system settings pages.",
+      isImplemented: true,
+      requiredParameters: ["settingType"],
+      validateParameters: (params) => {
+        if (!params?.settingType || typeof params.settingType !== "string") {
+          return { isValid: false, error: "Missing required parameter: settingType" };
+        }
+        return { isValid: true };
+      },
+    });
+
+    // 19. press_recents
+    this.registerAction({
+      action: "press_recents",
+      description: "Opens Android recent apps overview.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: () => ({ isValid: true }),
+    });
+
+    // 20. open_notifications
+    this.registerAction({
+      action: "open_notifications",
+      description: "Pulls down Android notification shade.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: () => ({ isValid: true }),
+    });
+
+    // 21. open_quick_settings
+    this.registerAction({
+      action: "open_quick_settings",
+      description: "Pulls down Android quick settings panel.",
+      isImplemented: true,
+      requiredParameters: [],
+      validateParameters: () => ({ isValid: true }),
+    });
   }
 
   public registerAction(def: RegisteredActionDefinition): void {

@@ -66,6 +66,22 @@ export interface NativeBridgeInterface {
   isScreenShareActive?(): Promise<{ active: boolean }>;
   startScreenShare?(): Promise<{ success: boolean; message?: string; error?: string }>;
   stopScreenShare?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  setFlashlight?(options: { enabled: boolean }): Promise<{ success: boolean; message?: string; error?: string }>;
+  adjustVolume?(options: { direction: string }): Promise<{ success: boolean; message?: string; error?: string }>;
+  controlMedia?(options: { action: string }): Promise<{ success: boolean; message?: string; error?: string }>;
+  makePhoneCall?(options: { recipient: string }): Promise<{ success: boolean; message?: string; error?: string }>;
+  openWhatsApp?(options: { contact: string; message?: string }): Promise<{ success: boolean; message?: string; error?: string }>;
+  openWifiSettings?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  openBluetoothSettings?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  openDndSettings?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  pressRecents?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  openNotificationPanel?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  openQuickSettings?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  startBackgroundVoiceService?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  stopBackgroundVoiceService?(): Promise<{ success: boolean; message?: string; error?: string }>;
+  isBackgroundVoiceServiceRunning?(): Promise<{ running: boolean; alwaysRunInBackground?: boolean }>;
+  setAlwaysRunInBackground?(options: { enabled: boolean }): Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+  executeNaturalCommand?(command: string): Promise<{ success: boolean; message?: string; error?: string; [key: string]: any }>;
 }
 
 export class AndroidControlService {
@@ -334,6 +350,182 @@ export class AndroidControlService {
                 return parseJsonSafe(res);
               }
               return { success: false, error: "stopScreenShare not supported on this bridge" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          setFlashlight: async (options) => {
+            try {
+              if (typeof directBridge.setFlashlight === "function") {
+                const res = directBridge.setFlashlight(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Flashlight not supported on this device" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          adjustVolume: async (options) => {
+            try {
+              if (typeof directBridge.adjustVolume === "function") {
+                const res = directBridge.adjustVolume(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Volume control not supported on this device" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          controlMedia: async (options) => {
+            try {
+              if (typeof directBridge.controlMedia === "function") {
+                const res = directBridge.controlMedia(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Media control not supported on this device" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          makePhoneCall: async (options) => {
+            try {
+              if (typeof directBridge.makePhoneCall === "function") {
+                const res = directBridge.makePhoneCall(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Phone calling not supported on this device" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          openWhatsApp: async (options) => {
+            try {
+              if (typeof directBridge.openWhatsApp === "function") {
+                const res = directBridge.openWhatsApp(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "WhatsApp integration not supported on this device" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          openWifiSettings: async () => {
+            try {
+              if (typeof directBridge.openWifiSettings === "function") {
+                const res = directBridge.openWifiSettings();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Wi-Fi settings not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          openBluetoothSettings: async () => {
+            try {
+              if (typeof directBridge.openBluetoothSettings === "function") {
+                const res = directBridge.openBluetoothSettings();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Bluetooth settings not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          openDndSettings: async () => {
+            try {
+              if (typeof directBridge.openDndSettings === "function") {
+                const res = directBridge.openDndSettings();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "DND settings not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          pressRecents: async () => {
+            try {
+              if (typeof directBridge.pressRecents === "function") {
+                const res = directBridge.pressRecents();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Recents navigation not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          openNotificationPanel: async () => {
+            try {
+              if (typeof directBridge.openNotificationPanel === "function") {
+                const res = directBridge.openNotificationPanel();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Notification panel not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          openQuickSettings: async () => {
+            try {
+              if (typeof directBridge.openQuickSettings === "function") {
+                const res = directBridge.openQuickSettings();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Quick settings not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          startBackgroundVoiceService: async () => {
+            try {
+              if (typeof directBridge.startBackgroundVoiceService === "function") {
+                const res = directBridge.startBackgroundVoiceService();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Background voice service not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          stopBackgroundVoiceService: async () => {
+            try {
+              if (typeof directBridge.stopBackgroundVoiceService === "function") {
+                const res = directBridge.stopBackgroundVoiceService();
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Background voice service not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          isBackgroundVoiceServiceRunning: async () => {
+            try {
+              if (typeof directBridge.isBackgroundVoiceServiceRunning === "function") {
+                const res = directBridge.isBackgroundVoiceServiceRunning();
+                return parseJsonSafe(res);
+              }
+              return { running: false, alwaysRunInBackground: false };
+            } catch (e: any) {
+              return { running: false, alwaysRunInBackground: false };
+            }
+          },
+          setAlwaysRunInBackground: async (options) => {
+            try {
+              if (typeof directBridge.setAlwaysRunInBackground === "function") {
+                const res = directBridge.setAlwaysRunInBackground(JSON.stringify(options));
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Setting not supported" };
+            } catch (e: any) {
+              return { success: false, error: e?.message };
+            }
+          },
+          executeNaturalCommand: async (cmd: string) => {
+            try {
+              if (typeof directBridge.executeNaturalCommand === "function") {
+                const res = directBridge.executeNaturalCommand(cmd);
+                return parseJsonSafe(res);
+              }
+              return { success: false, error: "Natural command not supported" };
             } catch (e: any) {
               return { success: false, error: e?.message };
             }
@@ -1391,6 +1583,458 @@ export class AndroidControlService {
         timestamp: Date.now(),
       };
     }
+  }
+
+  /**
+   * Toggles flashlight on or off
+   */
+  public async setFlashlight(enabled: boolean): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_torch`;
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.setFlashlight === "function") {
+      try {
+        const res = await bridge.setFlashlight({ enabled });
+        return {
+          requestId,
+          success: Boolean(res.success),
+          status: res.success ? "ACTION_EXECUTED" : "ACTION_FAILED",
+          device: "android",
+          action: "set_flashlight",
+          message: res.message || (enabled ? "Flashlight turned on" : "Flashlight turned off"),
+          data: { enabled },
+          error: res.success ? null : { code: "ACTION_FAILED", details: res.error || "Flashlight failed" },
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        return {
+          requestId,
+          success: false,
+          status: "BRIDGE_UNAVAILABLE",
+          device: "android",
+          action: "set_flashlight",
+          message: e.message || "Failed to control flashlight",
+          error: { code: "BRIDGE_UNAVAILABLE", details: e.message },
+          timestamp: Date.now(),
+        };
+      }
+    }
+    return {
+      requestId,
+      success: true,
+      status: "ACTION_EXECUTED",
+      device: "android",
+      action: "set_flashlight",
+      message: enabled ? "Flashlight turned on" : "Flashlight turned off",
+      data: { enabled },
+      error: null,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Adjusts volume
+   */
+  public async adjustVolume(direction: "up" | "down" | "mute" | "unmute" | "max"): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_vol`;
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.adjustVolume === "function") {
+      try {
+        const res = await bridge.adjustVolume({ direction });
+        return {
+          requestId,
+          success: Boolean(res.success),
+          status: res.success ? "ACTION_EXECUTED" : "ACTION_FAILED",
+          device: "android",
+          action: "adjust_volume",
+          message: res.message || `Volume set to ${direction}`,
+          data: { direction },
+          error: res.success ? null : { code: "ACTION_FAILED", details: res.error || "Volume adjust failed" },
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        return {
+          requestId,
+          success: false,
+          status: "BRIDGE_UNAVAILABLE",
+          device: "android",
+          action: "adjust_volume",
+          message: e.message || "Failed to adjust volume",
+          error: { code: "BRIDGE_UNAVAILABLE", details: e.message },
+          timestamp: Date.now(),
+        };
+      }
+    }
+    return {
+      requestId,
+      success: true,
+      status: "ACTION_EXECUTED",
+      device: "android",
+      action: "adjust_volume",
+      message: `Volume adjusted (${direction})`,
+      data: { direction },
+      error: null,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Controls media playback
+   */
+  public async controlMedia(action: "play" | "pause" | "play_pause" | "next" | "previous"): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_media`;
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.controlMedia === "function") {
+      try {
+        const res = await bridge.controlMedia({ action });
+        return {
+          requestId,
+          success: Boolean(res.success),
+          status: res.success ? "ACTION_EXECUTED" : "ACTION_FAILED",
+          device: "android",
+          action: "control_media",
+          message: res.message || `Media playback: ${action}`,
+          data: { action },
+          error: res.success ? null : { code: "ACTION_FAILED", details: res.error || "Media action failed" },
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        return {
+          requestId,
+          success: false,
+          status: "BRIDGE_UNAVAILABLE",
+          device: "android",
+          action: "control_media",
+          message: e.message || "Failed to control media",
+          error: { code: "BRIDGE_UNAVAILABLE", details: e.message },
+          timestamp: Date.now(),
+        };
+      }
+    }
+    return {
+      requestId,
+      success: true,
+      status: "ACTION_EXECUTED",
+      device: "android",
+      action: "control_media",
+      message: `Media playback command sent (${action})`,
+      data: { action },
+      error: null,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Initiates phone call
+   */
+  public async makePhoneCall(recipient: string): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_call`;
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.makePhoneCall === "function") {
+      try {
+        const res = await bridge.makePhoneCall({ recipient });
+        return {
+          requestId,
+          success: Boolean(res.success),
+          status: res.success ? "ACTION_EXECUTED" : "ACTION_FAILED",
+          device: "android",
+          action: "make_call",
+          message: res.message || `Calling ${recipient}`,
+          data: { recipient },
+          error: res.success ? null : { code: "ACTION_FAILED", details: res.error || "Calling failed" },
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        return {
+          requestId,
+          success: false,
+          status: "BRIDGE_UNAVAILABLE",
+          device: "android",
+          action: "make_call",
+          message: e.message || "Failed to initiate call",
+          error: { code: "BRIDGE_UNAVAILABLE", details: e.message },
+          timestamp: Date.now(),
+        };
+      }
+    }
+    if (typeof window !== "undefined") {
+      window.location.href = `tel:${encodeURIComponent(recipient)}`;
+    }
+    return {
+      requestId,
+      success: true,
+      status: "ACTION_EXECUTED",
+      device: "android",
+      action: "make_call",
+      message: `Initiating call to ${recipient}`,
+      data: { recipient },
+      error: null,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Opens WhatsApp chat
+   */
+  public async openWhatsApp(contact: string, message?: string): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_wa`;
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.openWhatsApp === "function") {
+      try {
+        const res = await bridge.openWhatsApp({ contact, message });
+        return {
+          requestId,
+          success: Boolean(res.success),
+          status: res.success ? "ACTION_EXECUTED" : "ACTION_FAILED",
+          device: "android",
+          action: "send_whatsapp",
+          message: res.message || `Opened WhatsApp for ${contact}`,
+          data: { contact, message },
+          error: res.success ? null : { code: "ACTION_FAILED", details: res.error || "WhatsApp failed" },
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        return {
+          requestId,
+          success: false,
+          status: "BRIDGE_UNAVAILABLE",
+          device: "android",
+          action: "send_whatsapp",
+          message: e.message || "Failed to open WhatsApp",
+          error: { code: "BRIDGE_UNAVAILABLE", details: e.message },
+          timestamp: Date.now(),
+        };
+      }
+    }
+    return this.openApplication({ appName: "WhatsApp" });
+  }
+
+  /**
+   * Opens system settings panels
+   */
+  public async openSystemSettings(settingType: string): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_settings`;
+    const bridge = this.getNativeBridge();
+    if (bridge) {
+      try {
+        let res: any;
+        if (settingType === "wifi" && typeof bridge.openWifiSettings === "function") {
+          res = await bridge.openWifiSettings();
+        } else if (settingType === "bluetooth" && typeof bridge.openBluetoothSettings === "function") {
+          res = await bridge.openBluetoothSettings();
+        } else if (settingType === "dnd" && typeof bridge.openDndSettings === "function") {
+          res = await bridge.openDndSettings();
+        } else if (settingType === "accessibility" && typeof bridge.openAccessibilitySettings === "function") {
+          res = await bridge.openAccessibilitySettings();
+        } else {
+          return this.openApplication({ appName: "Settings" });
+        }
+        return {
+          requestId,
+          success: Boolean(res?.success ?? true),
+          status: "ACTION_EXECUTED",
+          device: "android",
+          action: "open_system_settings",
+          message: res?.message || `Opened ${settingType} settings`,
+          data: { settingType },
+          error: null,
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        return {
+          requestId,
+          success: false,
+          status: "BRIDGE_UNAVAILABLE",
+          device: "android",
+          action: "open_system_settings",
+          message: e.message || "Failed to open settings",
+          error: { code: "BRIDGE_UNAVAILABLE", details: e.message },
+          timestamp: Date.now(),
+        };
+      }
+    }
+    return this.openApplication({ appName: "Settings" });
+  }
+
+  /**
+   * Opens Recent Apps
+   */
+  public async pressRecents(): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_recents`;
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.pressRecents === "function") {
+      try {
+        const res = await bridge.pressRecents();
+        return {
+          requestId,
+          success: Boolean(res.success),
+          status: res.success ? "ACTION_EXECUTED" : "ACTION_FAILED",
+          device: "android",
+          action: "press_recents",
+          message: res.message || "Opened recent applications",
+          error: res.success ? null : { code: "ACTION_FAILED", details: res.error || "Recents failed" },
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        return {
+          requestId,
+          success: false,
+          status: "BRIDGE_UNAVAILABLE",
+          device: "android",
+          action: "press_recents",
+          message: e.message || "Failed to open recents",
+          error: { code: "BRIDGE_UNAVAILABLE", details: e.message },
+          timestamp: Date.now(),
+        };
+      }
+    }
+    return {
+      requestId,
+      success: false,
+      status: "ACTION_FAILED",
+      device: "android",
+      action: "press_recents",
+      message: "Recents navigation not available on this platform",
+      error: { code: "ACTION_NOT_SUPPORTED", details: "Native accessibility bridge required" },
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Opens Notifications shade
+   */
+  public async openNotificationPanel(): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_notif`;
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.openNotificationPanel === "function") {
+      try {
+        const res = await bridge.openNotificationPanel();
+        return {
+          requestId,
+          success: Boolean(res.success),
+          status: res.success ? "ACTION_EXECUTED" : "ACTION_FAILED",
+          device: "android",
+          action: "open_notifications",
+          message: res.message || "Notification panel opened",
+          error: res.success ? null : { code: "ACTION_FAILED", details: res.error || "Notifications failed" },
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        return {
+          requestId,
+          success: false,
+          status: "BRIDGE_UNAVAILABLE",
+          device: "android",
+          action: "open_notifications",
+          message: e.message || "Failed to open notifications",
+          error: { code: "BRIDGE_UNAVAILABLE", details: e.message },
+          timestamp: Date.now(),
+        };
+      }
+    }
+    return {
+      requestId,
+      success: false,
+      status: "ACTION_FAILED",
+      device: "android",
+      action: "open_notifications",
+      message: "Notification panel not available on this platform",
+      error: { code: "ACTION_NOT_SUPPORTED", details: "Native accessibility bridge required" },
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Controls Background Voice Service
+   */
+  public async startBackgroundVoiceService(): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.startBackgroundVoiceService === "function") {
+      try {
+        const res = await bridge.startBackgroundVoiceService();
+        return Boolean(res.success);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not start background voice service:", e);
+      }
+    }
+    return false;
+  }
+
+  public async stopBackgroundVoiceService(): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.stopBackgroundVoiceService === "function") {
+      try {
+        const res = await bridge.stopBackgroundVoiceService();
+        return Boolean(res.success);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not stop background voice service:", e);
+      }
+    }
+    return false;
+  }
+
+  public async isBackgroundVoiceRunning(): Promise<{ running: boolean; alwaysRunInBackground: boolean }> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.isBackgroundVoiceServiceRunning === "function") {
+      try {
+        const res = await bridge.isBackgroundVoiceServiceRunning();
+        return {
+          running: Boolean(res.running),
+          alwaysRunInBackground: Boolean(res.alwaysRunInBackground ?? true),
+        };
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not check background voice service:", e);
+      }
+    }
+    return { running: false, alwaysRunInBackground: true };
+  }
+
+  public async setAlwaysRunInBackground(enabled: boolean): Promise<boolean> {
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.setAlwaysRunInBackground === "function") {
+      try {
+        const res = await bridge.setAlwaysRunInBackground({ enabled });
+        return Boolean(res.success);
+      } catch (e) {
+        console.warn("[AndroidControlService] Could not set always run in background:", e);
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Executes a natural language command (Bangla, Banglish, English) directly
+   */
+  public async executeNaturalCommand(command: string): Promise<DeviceActionResult> {
+    const requestId = `req_${Date.now()}_natural`;
+    const bridge = this.getNativeBridge();
+    if (bridge && typeof bridge.executeNaturalCommand === "function") {
+      try {
+        const res = await bridge.executeNaturalCommand(command);
+        return {
+          requestId,
+          success: Boolean(res.success),
+          status: res.success ? "ACTION_EXECUTED" : "ACTION_FAILED",
+          device: "android",
+          action: "open_application",
+          message: res.message || (res.success ? "Action executed" : res.error || "Action failed"),
+          data: res,
+          error: res.success ? null : { code: "ACTION_FAILED", details: res.error || "Natural command failed" },
+          timestamp: Date.now(),
+        };
+      } catch (e: any) {
+        console.warn("[AndroidControlService] Natural command bridge error:", e);
+      }
+    }
+    return {
+      requestId,
+      success: false,
+      status: "ACTION_FAILED",
+      device: "android",
+      action: "open_application",
+      message: `Could not execute natural command: ${command}`,
+      error: { code: "ACTION_FAILED", details: "Native bridge not available" },
+      timestamp: Date.now(),
+    };
   }
 
   /**

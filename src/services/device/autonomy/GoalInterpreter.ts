@@ -27,10 +27,128 @@ export class GoalInterpreter {
     const id = taskId || `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const trimmed = goal.trim();
     const lower = trimmed.toLowerCase();
-
-    // 1. Identify Target App
-    const targetApp = this.extractTargetApp(trimmed);
     const steps: TaskPlanStep[] = [];
+
+    // 1. Check Hardware & System Controls first
+    // Flashlight
+    if (/\b(?:flashlight|torch|light)\b/i.test(lower)) {
+      const isOff = /\b(?:off|bondho|nibhao|nibhiye|stop)\b/i.test(lower);
+      const isOn = /\b(?:on|chalu|jalao|jalo|start)\b/i.test(lower) || !isOff;
+      steps.push({
+        stepId: "step_1_torch",
+        description: isOn ? "Turn on flashlight" : "Turn off flashlight",
+        targetAction: "set_flashlight",
+        status: "pending",
+        expectedOutcome: isOn ? "Flashlight is on" : "Flashlight is off",
+      });
+      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+
+    // Volume
+    if (/\b(?:volume|sound|awaj|shobdo)\b/i.test(lower)) {
+      let dir: "up" | "down" | "mute" | "unmute" | "max" = "up";
+      if (/\b(?:mute|bondho|thamao|chup|silent)\b/i.test(lower)) dir = "mute";
+      else if (/\b(?:unmute|chalu)\b/i.test(lower)) dir = "unmute";
+      else if (/\b(?:max|full|puro)\b/i.test(lower)) dir = "max";
+      else if (/\b(?:down|low|komao|koma|kom)\b/i.test(lower)) dir = "down";
+      else dir = "up";
+
+      steps.push({
+        stepId: "step_1_volume",
+        description: `Adjust volume to ${dir}`,
+        targetAction: "adjust_volume",
+        status: "pending",
+        expectedOutcome: `Volume adjusted (${dir})`,
+      });
+      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+
+    // Media
+    if (/\b(?:music|song|gaan|video)\b/i.test(lower) && /\b(?:pause|play|stop|resume|next|previous|thamao|chalu|lagao|porer)\b/i.test(lower)) {
+      let action: "play" | "pause" | "play_pause" | "next" | "previous" = "play_pause";
+      if (/\b(?:pause|stop|thamao|bondho)\b/i.test(lower)) action = "pause";
+      else if (/\b(?:next|porer|porerta)\b/i.test(lower)) action = "next";
+      else if (/\b(?:prev|previous|ager|agerta)\b/i.test(lower)) action = "previous";
+      else if (/\b(?:play|resume|chalu|lagao)\b/i.test(lower)) action = "play";
+
+      steps.push({
+        stepId: "step_1_media",
+        description: `Media playback: ${action}`,
+        targetAction: "control_media",
+        status: "pending",
+        expectedOutcome: `Media command ${action} executed`,
+      });
+      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+
+    // Phone Call (e.g., "Rahim-ke call dao", "call John", "01712345678 e phone koro")
+    const callMatch = trimmed.match(/(?:call\s+(?:to\s+)?|phone\s+(?:to\s+)?)([a-z0-9\s._\-+]+)/i) ||
+      trimmed.match(/([a-z0-9\s._\-+]+?)(?:-ke|-re|\s+ke|\s+re)?\s*(?:call\s*(?:dao|koro|lagao)|phone\s*(?:dao|koro|lagao))/i);
+    if (callMatch && callMatch[1] && !/^(?:the|an|a|phone)$/i.test(callMatch[1].trim()) && !lower.includes("whatsapp")) {
+      const recipient = callMatch[1].trim();
+      steps.push({
+        stepId: "step_1_call",
+        description: `Initiate phone call to ${recipient}`,
+        targetAction: "make_call",
+        status: "pending",
+        expectedOutcome: `Call dialer initiated for ${recipient}`,
+      });
+      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+
+    // WhatsApp Message / Chat
+    if (/\b(?:whatsapp)\b/i.test(lower)) {
+      const waMatch = trimmed.match(/whatsapp(?:\s+e)?\s+([a-z0-9\s._\-]+?)(?:-ke|-re|\s+ke)?\s*(?:bolo|message\s+dao|message\s+koro|send\s+message)?(?:\s+(.+))?$/i) ||
+        trimmed.match(/(?:send\s+whatsapp\s+(?:message\s+)?to\s+)([a-z0-9\s._\-]+)/i);
+      const contact = waMatch && waMatch[1] ? waMatch[1].trim() : "contact";
+      const message = waMatch && waMatch[2] ? waMatch[2].trim() : undefined;
+      steps.push({
+        stepId: "step_1_whatsapp",
+        description: `Open WhatsApp chat for ${contact}`,
+        targetAction: "send_whatsapp",
+        status: "pending",
+        expectedOutcome: `WhatsApp chat opened for ${contact}`,
+      });
+      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+
+    // System panels (Recents, Notifications, Quick settings, Settings)
+    if (/\b(?:recent\s*apps?|recents|recent\s+kholo|recent\s+dekhao)\b/i.test(lower)) {
+      steps.push({
+        stepId: "step_1_recents",
+        description: "Open Recent Applications",
+        targetAction: "press_recents",
+        status: "pending",
+        expectedOutcome: "Recent applications overview is open",
+      });
+      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+
+    if (/\b(?:notifications?|notification\s+panel|notification\s+dekhao|notif\s+namo)\b/i.test(lower)) {
+      steps.push({
+        stepId: "step_1_notif",
+        description: "Open Notification Shade",
+        targetAction: "open_notifications",
+        status: "pending",
+        expectedOutcome: "Notification shade is pulled down",
+      });
+      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+
+    if (/\b(?:wifi\s+settings?|wifi\s+kholo|bluetooth\s+settings?|bluetooth\s+kholo)\b/i.test(lower)) {
+      const isWifi = /\bwifi\b/i.test(lower);
+      steps.push({
+        stepId: "step_1_sys_settings",
+        description: `Open ${isWifi ? "Wi-Fi" : "Bluetooth"} Settings`,
+        targetAction: "open_system_settings",
+        status: "pending",
+        expectedOutcome: `${isWifi ? "Wi-Fi" : "Bluetooth"} settings page is opened`,
+      });
+      return { taskId: id, goal: trimmed, steps, isAdaptive: false, version: 1, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+
+    // 2. Identify Target App
+    const targetApp = this.extractTargetApp(trimmed);
 
     // Case A: App Launch + Search / Play (e.g. "Open YouTube and search for relaxing music", "YouTube e gaan bajao")
     const searchQuery = this.extractSearchQuery(trimmed);

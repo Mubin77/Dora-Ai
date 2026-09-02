@@ -13,10 +13,15 @@ import {
   ExternalLink,
   ShieldCheck,
   Radio,
+  Flashlight,
+  Volume2,
+  Mic,
+  Settings,
 } from "lucide-react";
 import { DevicePermissionStatus, DevicePairingSession } from "../../types/device";
 import { deviceControlService } from "../../services/device/DeviceControlService";
 import { devicePairingService } from "../../services/device/DevicePairingService";
+import { androidControlService } from "../../services/device/AndroidControlService";
 
 interface AndroidControlStatusProps {
   className?: string;
@@ -43,6 +48,9 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [simulatedPairingCode, setSimulatedPairingCode] = useState<string>("");
   const [isSimulatingPair, setIsSimulatingPair] = useState<boolean>(false);
+  const [bgVoiceRunning, setBgVoiceRunning] = useState<boolean>(false);
+  const [alwaysRunBg, setAlwaysRunBg] = useState<boolean>(false);
+  const [flashlightOn, setFlashlightOn] = useState<boolean>(false);
 
   const pollIntervalRef = useRef<any>(null);
 
@@ -76,10 +84,100 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
         pairedDeviceId: deploymentStatus.pairedDeviceId,
         lastHeartbeat: deploymentStatus.lastHeartbeat,
       });
+
+      // 3. Check background voice service status
+      const bgStatus = await androidControlService.isBackgroundVoiceRunning();
+      setBgVoiceRunning(bgStatus.running);
+      if (bgStatus.alwaysRunInBackground !== undefined) {
+        setAlwaysRunBg(bgStatus.alwaysRunInBackground);
+      }
     } catch (err: any) {
       console.warn("[AndroidControlStatus] Error fetching status:", err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleToggleBgVoice = async () => {
+    setIsLoading(true);
+    try {
+      if (bgVoiceRunning) {
+        const ok = await androidControlService.stopBackgroundVoiceService();
+        if (ok) {
+          setBgVoiceRunning(false);
+          setActionFeedback("✓ Background Voice Service stopped");
+        } else {
+          setActionFeedback("Failed to stop service");
+        }
+      } else {
+        const ok = await androidControlService.startBackgroundVoiceService();
+        if (ok) {
+          setBgVoiceRunning(true);
+          setActionFeedback("✓ Background Voice Service running (Foreground Notification active)");
+        } else {
+          setActionFeedback("Failed to start service");
+        }
+      }
+    } catch (err: any) {
+      setActionFeedback(`Error: ${err.message || String(err)}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleToggleAlwaysRunBg = async () => {
+    const nextVal = !alwaysRunBg;
+    setIsLoading(true);
+    try {
+      const ok = await androidControlService.setAlwaysRunInBackground(nextVal);
+      if (ok) {
+        setAlwaysRunBg(nextVal);
+        setActionFeedback(nextVal ? "✓ Dora will maintain voice session across app switches" : "Always Run in Background disabled");
+      } else {
+        setActionFeedback("Failed to update background persistence");
+      }
+    } catch (err: any) {
+      setActionFeedback(`Error: ${err.message || String(err)}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleToggleFlashlight = async () => {
+    const nextState = !flashlightOn;
+    setIsLoading(true);
+    try {
+      const res = await androidControlService.setFlashlight(nextState);
+      if (res.success) {
+        setFlashlightOn(nextState);
+        setActionFeedback(`✓ Flashlight turned ${nextState ? "ON" : "OFF"}`);
+      } else {
+        setActionFeedback(`Flashlight: ${res.error?.details || res.message}`);
+      }
+    } catch (err: any) {
+      setActionFeedback(`Error: ${err.message || String(err)}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAdjustVolume = async (dir: "up" | "down") => {
+    try {
+      const res = await androidControlService.adjustVolume(dir);
+      setActionFeedback(res.success ? `✓ Volume ${dir}` : `Volume: ${res.error?.details || res.message}`);
+    } catch (err: any) {
+      setActionFeedback(`Error: ${err.message || String(err)}`);
+    }
+  };
+
+  const handleOpenAccessibilitySettings = async () => {
+    try {
+      const ok = await androidControlService.openAccessibilitySettings();
+      if (!ok) {
+        setActionFeedback("Could not open Accessibility Settings directly");
+      }
+    } catch (err: any) {
+      setActionFeedback(`Error: ${err.message || String(err)}`);
     }
   };
 
@@ -353,24 +451,116 @@ export const AndroidControlStatus: React.FC<AndroidControlStatusProps> = ({
           <div className="flex-1">
             <span className="font-semibold text-amber-300">Accessibility Required:</span>
             <p className="mt-0.5 text-amber-200/80 leading-relaxed">
-              Open Android Settings &rarr; Accessibility &rarr; Enable <strong>Dora</strong> to allow UI interaction.
+              Open Android Settings &rarr; Accessibility &rarr; Enable <strong>Dora</strong> to allow autonomous UI control.
             </p>
+            <button
+              type="button"
+              onClick={handleOpenAccessibilitySettings}
+              className="mt-2 px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[11px] font-medium transition-colors inline-flex items-center gap-1"
+            >
+              <span>Open Accessibility Settings</span>
+              <ExternalLink className="w-3 h-3" />
+            </button>
           </div>
         </div>
       )}
 
-      {/* Quick Test Actions */}
-      <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between gap-2">
-        <span className="text-[11px] text-white/40">Verified Action Test:</span>
-        <div className="flex items-center gap-1.5">
+      {/* Background Voice Mode Controls */}
+      <div className="mt-3.5 p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Mic className={`w-4 h-4 ${bgVoiceRunning ? "text-emerald-400 animate-pulse" : "text-white/50"}`} />
+            <div>
+              <span className="text-xs font-medium text-white block">Background Voice Service</span>
+              <span className="text-[10px] text-white/45 block">
+                {bgVoiceRunning ? "Active (Listening in background with persistent notification)" : "Inactive"}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleBgVoice}
+            disabled={isLoading}
+            className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+              bgVoiceRunning
+                ? "bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/30"
+                : "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30"
+            }`}
+          >
+            {bgVoiceRunning ? "Stop Service" : "Start Service"}
+          </button>
+        </div>
+
+        <div className="pt-2 border-t border-white/[0.04] flex items-center justify-between">
+          <div>
+            <span className="text-xs text-white/80 block">Always Run in Background</span>
+            <span className="text-[10px] text-white/40 block">Maintain voice session when switching apps</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleAlwaysRunBg}
+            disabled={isLoading}
+            className={`w-9 h-5 rounded-full transition-colors relative p-0.5 ${
+              alwaysRunBg ? "bg-[#1D72FE]" : "bg-white/20"
+            }`}
+          >
+            <div
+              className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                alwaysRunBg ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {/* Quick Hardware & System Controls */}
+      <div className="mt-3.5 space-y-2">
+        <div className="text-[11px] font-semibold text-white/40 uppercase tracking-wider">
+          Direct Hardware & System Actions
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <button
+            type="button"
+            onClick={handleToggleFlashlight}
+            disabled={isLoading}
+            className={`p-2 rounded-xl border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+              flashlightOn
+                ? "bg-amber-500/20 border-amber-500/30 text-amber-300"
+                : "bg-white/[0.03] border-white/[0.06] text-white/80 hover:bg-white/[0.06]"
+            }`}
+          >
+            <Flashlight className="w-3.5 h-3.5" />
+            <span>Torch: {flashlightOn ? "ON" : "OFF"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAdjustVolume("up")}
+            disabled={isLoading}
+            className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] text-white/80 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
+          >
+            <Volume2 className="w-3.5 h-3.5 text-sky-400" />
+            <span>Volume +</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleAdjustVolume("down")}
+            disabled={isLoading}
+            className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] text-white/80 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
+          >
+            <Volume2 className="w-3.5 h-3.5 text-sky-400" />
+            <span>Volume -</span>
+          </button>
+
           <button
             type="button"
             onClick={() => handleTestOpen("YouTube")}
             disabled={isLoading}
-            className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-white/80 text-[11px] font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            className="p-2 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] text-white/80 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
           >
-            <Zap className="w-3 h-3 text-[#38BDF8]" />
-            Test "Open YouTube"
+            <Zap className="w-3.5 h-3.5 text-[#38BDF8]" />
+            <span>Open YouTube</span>
           </button>
         </div>
       </div>

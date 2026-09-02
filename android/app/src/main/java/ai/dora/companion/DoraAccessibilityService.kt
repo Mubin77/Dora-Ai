@@ -442,6 +442,64 @@ class DoraAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Opens Recent Applications overview
+     */
+    fun performRecents(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_RECENTS)
+    }
+
+    /**
+     * Opens Notifications shade
+     */
+    fun performNotifications(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+    }
+
+    /**
+     * Opens Quick Settings panel
+     */
+    fun performQuickSettings(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+    }
+
+    /**
+     * Locks screen if supported (Android 9+)
+     */
+    fun performLockScreen(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+        } else {
+            false
+        }
+    }
+
+    /**
+     * Dispatches a long-press gesture at coordinate (x, y)
+     */
+    fun performLongPress(x: Float, y: Float, durationMs: Long = 750L, callback: ((Boolean) -> Unit)? = null): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            callback?.invoke(false)
+            return false
+        }
+
+        val path = Path().apply {
+            moveTo(x, y)
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+
+        return dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                callback?.invoke(true)
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                callback?.invoke(false)
+            }
+        }, null)
+    }
+
+    /**
      * Dispatches a tap gesture at coordinate (x, y)
      */
     fun performTap(x: Float, y: Float, callback: ((Boolean) -> Unit)? = null): Boolean {
