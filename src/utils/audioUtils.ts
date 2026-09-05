@@ -78,6 +78,10 @@ export class AudioEngine {
       if (this.isListening) return true;
 
       // 1. Request microphone access
+      console.log("[APK][VOICE] 1. Android microphone permission checking");
+      console.log("[APK][VOICE] 2. WebView microphone permission requesting");
+      console.log("[APK][VOICE] 3. navigator.mediaDevices available: " + Boolean(navigator?.mediaDevices));
+      console.log("[APK][VOICE] 4. getUserMedia() calling...");
       console.log("[VOICE DEBUG] microphone permission: requesting...");
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -86,6 +90,7 @@ export class AudioEngine {
           autoGainControl: true,
         },
       });
+      console.log("[APK][VOICE] 5. Audio stream acquired successfully");
       console.log("[VOICE DEBUG] microphone permission: granted");
       console.log("[VOICE DEBUG] microphone stream: active");
 
@@ -311,6 +316,7 @@ export class AudioEngine {
       // Lookahead of 15ms ensures browser audio thread has room to start without underrun
       this.nextPlayTime = Math.max(ctx.currentTime + 0.015, this.nextPlayTime);
       console.log("[VOICE DEBUG] Audio playback queue ignited, first start");
+      console.log("[APK][VOICE] 8. Audio playback started");
       if (this.onPlaybackStarted) {
         this.onPlaybackStarted();
       }
@@ -399,6 +405,8 @@ export class AudioEngine {
 
       const float32 = this.decodeAndSmoothPcm(base64Pcm);
       if (!float32 || float32.length === 0) return;
+
+      console.log(`[APK][VOICE] 7. Incoming voice response chunk received (${float32.length} samples)`);
 
       const chunkDuration = float32.length / sampleRate;
 

@@ -31,12 +31,11 @@ export class GoogleGeminiProvider implements AIProvider {
     "extraction",
     "json-mode",
   ];
-  public readonly defaultModel = "gemini-2.5-flash";
+  public readonly defaultModel = "gemini-3.6-flash";
   public readonly supportedModels = [
-    "gemini-2.5-flash",
+    "gemini-3.6-flash",
     "gemini-3.7-flash",
     "gemini-3.1-flash-lite",
-    "gemini-2.5-pro",
     "gemini-flash-latest",
   ];
 
@@ -79,9 +78,8 @@ export class GoogleGeminiProvider implements AIProvider {
 
     if (request.deepThink) {
       const reasoningModels = [
-        "gemini-2.5-pro",
         "gemini-3.7-flash",
-        "gemini-2.5-flash",
+        "gemini-3.6-flash",
         "gemini-flash-latest",
       ];
       for (const m of reasoningModels) {
@@ -89,9 +87,8 @@ export class GoogleGeminiProvider implements AIProvider {
       }
     } else if (hasImage) {
       const visionModels = [
-        "gemini-2.5-flash",
+        "gemini-3.6-flash",
         "gemini-3.7-flash",
-        "gemini-2.5-pro",
         "gemini-flash-latest",
       ];
       for (const m of visionModels) {
@@ -99,7 +96,7 @@ export class GoogleGeminiProvider implements AIProvider {
       }
     } else {
       const standardModels = [
-        "gemini-2.5-flash",
+        "gemini-3.6-flash",
         "gemini-3.7-flash",
         "gemini-3.1-flash-lite",
         "gemini-flash-latest",
@@ -155,7 +152,7 @@ export class GoogleGeminiProvider implements AIProvider {
             config.responseMimeType = "application/json";
           }
 
-          if (request.deepThink && (model.includes("2.5") || model.includes("3.7"))) {
+          if (request.deepThink && (model.includes("3.7") || model.includes("3.6") || model.includes("2.5"))) {
             config.thinkingConfig = { thinkingBudget: 2048 };
           }
 

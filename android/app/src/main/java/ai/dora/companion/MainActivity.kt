@@ -23,6 +23,7 @@ import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.webkit.ConsoleMessage
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -517,6 +518,9 @@ class MainActivity : AppCompatActivity() {
         settings.mediaPlaybackRequiresUserGesture = false
         settings.allowFileAccess = true
         settings.allowContentAccess = true
+        settings.allowFileAccessFromFileURLs = true
+        settings.allowUniversalAccessFromFileURLs = true
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.loadWithOverviewMode = true
         settings.useWideViewPort = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
@@ -547,6 +551,8 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 loadingOverlay.visibility = View.VISIBLE
+                webView.addJavascriptInterface(bridgePlugin, "DoraAndroidBridge")
+                webView.addJavascriptInterface(bridgePlugin, "AndroidBridge")
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -591,6 +597,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                val msg = consoleMessage?.message() ?: ""
+                val source = consoleMessage?.sourceId() ?: ""
+                val line = consoleMessage?.lineNumber() ?: 0
+                when (consoleMessage?.messageLevel()) {
+                    ConsoleMessage.MessageLevel.ERROR -> Log.e(TAG, "[APK][WebView] $msg ($source:$line)")
+                    ConsoleMessage.MessageLevel.WARNING -> Log.w(TAG, "[APK][WebView] $msg ($source:$line)")
+                    else -> Log.i(TAG, "[APK][WebView] $msg ($source:$line)")
+                }
+                return true
+            }
+
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
                 val requestedResources = request.resources

@@ -195,6 +195,7 @@ export class DoraService {
 
     try {
       console.log(`[VOICE DEBUG] Creating authoritative Live WebSocket to ${wsUrl}`);
+      console.log(`[APK][VOICE] 6. Gemini Live session connection initialized at ${wsUrl}`);
       const socket = new WebSocket(wsUrl);
       this.ws = socket;
 
@@ -469,32 +470,50 @@ export class DoraService {
   ): Promise<DoraChatResponse> {
     const clientTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Dhaka";
     const clientTimestamp = Date.now();
+    const apiUrl = getApiUrl("/api/chat");
 
-    const res = await fetch(getApiUrl("/api/chat"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        history,
-        language: settings.language,
-        memoryContext,
-        cameraFrame: this.latestCameraFrame || undefined,
-        screenFrame: this.latestScreenFrame || undefined,
-        imageAttachment: imageAttachment || undefined,
-        deepThink,
-        clientTimeZone,
-        clientTimestamp,
-        sessionId: this.sessionId,
-        existingContext: this.activeContext || undefined,
-      }),
-    });
+    console.log(`[APK] Chat submit: "${message.slice(0, 80)}"`);
+    console.log(`[APK] API request started`);
+    console.log(`[APK] API URL: ${apiUrl}`);
+
+    let res: Response;
+    try {
+      res = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          history,
+          language: settings.language,
+          memoryContext,
+          cameraFrame: this.latestCameraFrame || undefined,
+          screenFrame: this.latestScreenFrame || undefined,
+          imageAttachment: imageAttachment || undefined,
+          deepThink,
+          clientTimeZone,
+          clientTimestamp,
+          sessionId: this.sessionId,
+          existingContext: this.activeContext || undefined,
+        }),
+      });
+    } catch (networkErr: any) {
+      console.error(`[APK] Network fetch error to ${apiUrl}:`, networkErr);
+      throw new Error(`Connection error: Could not reach Dora server at ${apiUrl}. Please ensure device is connected to the internet and backend is online.`);
+    }
+
+    console.log(`[APK] API response status: ${res.status}`);
 
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.error || "Failed to communicate with Dora");
+      console.error(`[APK] API error ${res.status}:`, errorData);
+      throw new Error(errorData.error || `Server responded with status ${res.status}`);
     }
 
     const data = await res.json();
+    console.log(`[APK] Response received (${(data.reply || "").length} chars)`);
+    console.log(`[APK] Response parsed`);
+    console.log(`[APK] UI updated`);
+
     if (data.context) {
       this.activeContext = data.context;
     }

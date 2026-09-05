@@ -1310,11 +1310,45 @@ class DoraAndroidBridgePlugin(private val context: Context) {
     }
 
     /**
+     * Diagnostic ping method to verify bridge readiness from JavaScript
+     */
+    @JavascriptInterface
+    fun ping(): String {
+        return JSONObject().apply {
+            put("ready", true)
+            put("version", "1.0")
+            put("platform", "android")
+            put("timestamp", System.currentTimeMillis())
+        }.toString()
+    }
+
+    /**
+     * Retrieves custom Gemini API key if configured
+     */
+    @JavascriptInterface
+    fun getApiKey(): String {
+        val prefs = context.getSharedPreferences("dora_main_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("custom_api_key", "") ?: ""
+    }
+
+    /**
+     * Sets custom Gemini API key
+     */
+    @JavascriptInterface
+    fun setApiKey(key: String): String {
+        val prefs = context.getSharedPreferences("dora_main_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("custom_api_key", key).apply()
+        return JSONObject().apply {
+            put("success", true)
+        }.toString()
+    }
+
+    /**
      * Retrieves the configured Dora server URL
      */
     @JavascriptInterface
     fun getServerUrl(): String {
-        val prefs = context.getSharedPreferences("dora_app_prefs", Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences("dora_main_prefs", Context.MODE_PRIVATE)
         return prefs.getString("custom_server_url", "https://ais-dev-us6d4iivtwlkjr66rw4rhy-108268106407.asia-southeast1.run.app") 
             ?: "https://ais-dev-us6d4iivtwlkjr66rw4rhy-108268106407.asia-southeast1.run.app"
     }
@@ -1324,7 +1358,7 @@ class DoraAndroidBridgePlugin(private val context: Context) {
      */
     @JavascriptInterface
     fun setServerUrl(url: String): String {
-        val prefs = context.getSharedPreferences("dora_app_prefs", Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences("dora_main_prefs", Context.MODE_PRIVATE)
         prefs.edit().putString("custom_server_url", url).apply()
         return JSONObject().apply {
             put("success", true)

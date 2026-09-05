@@ -918,6 +918,9 @@ export default function App() {
         !imageAttachment &&
         !fileAttachment
       ) {
+        console.log(`[APK] Device action detected: intent=${interpretedGoal.intent}, target=${interpretedGoal.targetApp}`);
+        console.log(`[APK] Checking DoraAndroidBridge: exists=true`);
+
         // Interrupt live stream if active so audio does not collide
         if (isCallActiveRef.current) {
           doraService.sendInterruptSignal();
@@ -931,33 +934,51 @@ export default function App() {
 
         try {
           if (interpretedGoal.intent === "open_app") {
+            console.log(`[APK] Calling DoraAndroidBridge.openApplication("${interpretedGoal.targetApp}")`);
             const res = await androidControlService.openApplication({ appName: interpretedGoal.targetApp });
+            console.log(`[APK] Bridge response: ${JSON.stringify(res)}`);
             if (res.success) {
+              console.log(`[APK] Action completed successfully`);
               replyText =
                 settings.language === "bn-en" || /kholo|open\s*koro|chalau/i.test(cleanText)
                   ? `Done, ${interpretedGoal.targetApp} খুলে দিয়েছি.`
                   : `Opened ${interpretedGoal.targetApp} on your phone!`;
             } else {
+              console.warn(`[APK] Action returned failure: ${res.message}`);
               replyText =
                 settings.language === "bn-en" || /kholo|open\s*koro|chalau/i.test(cleanText)
                   ? `${interpretedGoal.targetApp} open করতে পারিনি: ${res.message || "App not found"}`
                   : `Could not open ${interpretedGoal.targetApp}: ${res.message || "App not found"}`;
             }
           } else if (interpretedGoal.subGoals[0]?.includes("Home")) {
-            await androidControlService.pressHome();
+            console.log(`[APK] Calling DoraAndroidBridge.pressHome()`);
+            const res = await androidControlService.pressHome();
+            console.log(`[APK] Bridge response: ${JSON.stringify(res)}`);
+            console.log(`[APK] Action completed successfully`);
             replyText = settings.language === "bn-en" || /jao|home/i.test(cleanText) ? `Home screen-e fire gelam.` : `Went to home screen.`;
           } else if (interpretedGoal.subGoals[0]?.includes("Back")) {
-            await androidControlService.pressBack();
+            console.log(`[APK] Calling DoraAndroidBridge.pressBack()`);
+            const res = await androidControlService.pressBack();
+            console.log(`[APK] Bridge response: ${JSON.stringify(res)}`);
+            console.log(`[APK] Action completed successfully`);
             replyText = settings.language === "bn-en" || /jao|back/i.test(cleanText) ? `Pechhone fire gelam.` : `Navigated back.`;
           } else if (interpretedGoal.subGoals[0]?.includes("Scroll Down")) {
-            await androidControlService.scroll({ direction: "down" });
+            console.log(`[APK] Calling DoraAndroidBridge.scroll("down")`);
+            const res = await androidControlService.scroll({ direction: "down" });
+            console.log(`[APK] Bridge response: ${JSON.stringify(res)}`);
+            console.log(`[APK] Action completed successfully`);
             replyText = settings.language === "bn-en" || /niche|scroll/i.test(cleanText) ? `Screen niche scroll korlam.` : `Scrolled down.`;
           } else if (interpretedGoal.subGoals[0]?.includes("Scroll Up")) {
-            await androidControlService.scroll({ direction: "up" });
+            console.log(`[APK] Calling DoraAndroidBridge.scroll("up")`);
+            const res = await androidControlService.scroll({ direction: "up" });
+            console.log(`[APK] Bridge response: ${JSON.stringify(res)}`);
+            console.log(`[APK] Action completed successfully`);
             replyText = settings.language === "bn-en" || /upore|scroll/i.test(cleanText) ? `Screen upore scroll korlam.` : `Scrolled up.`;
           } else {
             // Multi-step autonomous task (e.g. "YouTube kholo, AI news search koro, first result open koro")
+            console.log(`[APK] Starting autonomous task for: "${cleanText}"`);
             const taskResult = await autonomousAgent.startTask(cleanText, { mockMode: false });
+            console.log(`[APK] Task completed: success=${taskResult.success}`);
             if (taskResult.success) {
               replyText =
                 settings.language === "bn-en" || /kholo|search|koro/i.test(cleanText)
@@ -971,8 +992,10 @@ export default function App() {
             }
           }
         } catch (err: any) {
+          console.error(`[APK] Bridge execution exception:`, err);
           replyText = `Device action error: ${err?.message || "Could not complete action"}`;
         }
+        console.log(`[APK] UI updated`);
 
         const doraMessage: ChatMessage = {
           id: doraMsgId,

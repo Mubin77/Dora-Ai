@@ -1499,16 +1499,30 @@ Output ONLY a JSON array of candidates (or empty array [] if no lasting facts):
         } else if (data.type === "tool_response" && liveSession && data.callId) {
           console.log(`[VOICE DEBUG] Received tool_response from client for call ${data.callId}:`, data.result);
           try {
-            liveSession.send({
-              toolResponse: {
+            if (typeof liveSession.sendToolResponse === "function") {
+              liveSession.sendToolResponse({
                 functionResponses: [
                   {
                     response: { output: data.result || { success: true } },
                     id: data.callId,
                   },
                 ],
-              },
-            });
+              });
+              console.log("[VOICE DEBUG] sendToolResponse dispatched successfully");
+            } else if (typeof liveSession.send === "function") {
+              liveSession.send({
+                toolResponse: {
+                  functionResponses: [
+                    {
+                      response: { output: data.result || { success: true } },
+                      id: data.callId,
+                    },
+                  ],
+                },
+              });
+            } else {
+              console.warn("[VOICE DEBUG] liveSession does not support sendToolResponse or send");
+            }
           } catch (err: any) {
             console.warn("[VOICE DEBUG] Error sending toolResponse to Live API:", err?.message);
           }

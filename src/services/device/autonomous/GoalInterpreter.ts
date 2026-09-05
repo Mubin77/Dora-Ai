@@ -69,7 +69,7 @@ export class GoalInterpreter {
       }
 
       const resolution = applicationResolver.resolveApplication(app);
-      const isPlay = /play|gaan|music|video/i.test(lower);
+      const isPlay = (/\bplay\b|\bchalao\b/i.test(lower) || /gaan\s+chalao/i.test(lower)) && !/\bsearch\b|\bkhujo\b/i.test(lower);
 
       return {
         rawGoal: trimmed,
@@ -91,7 +91,7 @@ export class GoalInterpreter {
     // 2. Bangla / Banglish Search & Play Patterns
     // Examples: "YouTube e giye relaxing music search koro", "Spotify te Arijit Singh er gaan chalao", "YouTube e cats khujo"
     const banglaSearchMatch = lower.match(
-      /(?:([a-z0-9\u0980-\u09FF\s._]+?)\s*(?:-?e|-?te|\s+e|\s+te)?\s+(?:giye|dhuke)?\s*(.+?)\s*(?:search\s*koro|khujo|chalao|play\s*koro|dekhao))/i
+      /(?:([a-z0-9\u0980-\u09FF._\-]+(?:\s+(?:music|browser|app))?)\s*(?:-e|-te|\s+e|\s+te)?\s+(?:giye|dhuke)?\s*(.+?)\s*(?:search\s*koro|khujo|chalao|play\s*koro|dekhao))/i
     );
 
     if (banglaSearchMatch && banglaSearchMatch[1] && banglaSearchMatch[2]) {
@@ -121,7 +121,7 @@ export class GoalInterpreter {
 
     // 3. Messaging Patterns
     // Examples: "Open WhatsApp and message Ryan saying hello", "WhatsApp e Ryan ke message dao 'ki khobor'"
-    const msgMatch = lower.match(
+    const msgMatch = trimmed.match(
       /(?:open\s+([a-z0-9\s._]+?)\s+and\s+(?:message|send\s+message\s+to|text)\s+([a-z0-9\s._]+?)(?:\s+(?:saying|with\s+text)\s+(.+))?$)/i
     );
     if (msgMatch) {
