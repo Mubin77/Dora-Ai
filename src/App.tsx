@@ -38,6 +38,7 @@ import { memoryManager } from "./memory/MemoryManager";
 import { screenVisionService } from "./services/screenVisionService";
 import { cameraVisionService } from "./services/cameraVisionService";
 import { proactiveCompanionEngine } from "./services/proactiveCompanionEngine";
+import { checkBackendHealth } from "./utils/apiConfig";
 
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
@@ -159,6 +160,8 @@ export default function App() {
       };
 
       window.addEventListener("popstate", handlePopState);
+      // Run diagnostic backend health check on initial APK/Web load
+      checkBackendHealth();
       return () => window.removeEventListener("popstate", handlePopState);
     }
   }, []);
@@ -1112,6 +1115,7 @@ export default function App() {
               : m
           )
         );
+        console.log("[APK-CHAT] Reply rendered");
 
         // Memory extraction in background
         memoryManager.processTurnBackground(cleanText, replyText);

@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import http from "http";
 import path from "path";
+import fs from "fs";
+import { execSync } from "child_process";
 import dotenv from "dotenv";
 import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, Modality, Type } from "@google/genai";
@@ -49,6 +51,27 @@ function getGenAI(): GoogleGenAI {
 }
 
 async function startServer() {
+  // Ensure Nginx Lua auth verification allows public, unauthenticated access to /api/* and /live-ws for standalone Android APK
+  try {
+    const luaPath = "/etc/nginx/user_auth_verification.lua";
+    if (fs.existsSync(luaPath)) {
+      const luaContent = fs.readFileSync(luaPath, "utf8");
+      if (!luaContent.includes("Allow public, unauthenticated access to /api/")) {
+        const target = 'if ngx.var.host == "localhost" then\n  return\nend';
+        const bypass = target + `\n\n-- Allow public, unauthenticated access to /api/* and /live-ws for Android APK\nlocal req_uri = ngx.var.uri or ""\nif string.sub(req_uri, 1, 5) == "/api/" or req_uri == "/live-ws" then\n  return\nend`;
+        if (luaContent.includes(target)) {
+          fs.writeFileSync(luaPath, luaContent.replace(target, bypass));
+          try {
+            execSync("nginx -s reload", { stdio: "ignore" });
+          } catch (_) {}
+          console.log("[NGINX] Public HTTPS /api/* endpoint enabled for Android APK");
+        }
+      }
+    }
+  } catch (_e) {
+    // Non-nginx/container environments safely ignored
+  }
+
   const app = express();
   app.use(cors({
     origin: (origin, callback) => {

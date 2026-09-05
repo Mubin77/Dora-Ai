@@ -67,7 +67,7 @@ class DoraCompanionClient private constructor(private val context: Context) {
         private const val KEY_LAST_PAIRED_CODE = "last_paired_code"
         
         // Public production Cloud Run HTTPS endpoint for Dora
-        const val DEFAULT_SERVER_URL = "https://ais-dev-4y3cwyeutkb4dkqz62jsrh-130845624199.asia-southeast1.run.app"
+        const val DEFAULT_SERVER_URL = "https://ais-dev-us6d4iivtwlkjr66rw4rhy-108268106407.asia-southeast1.run.app"
         private const val HEARTBEAT_INTERVAL_SECONDS = 15L
 
         @Volatile

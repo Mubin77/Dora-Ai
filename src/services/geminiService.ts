@@ -1,6 +1,6 @@
 import { ChatMessage, DoraEmotion, VoiceSettings } from "../types";
 import { MemoryManager } from "../memory/MemoryManager";
-import { getApiUrl, getWebSocketUrl } from "../utils/apiConfig";
+import { getApiUrl, getWebSocketUrl, getBackendBaseUrl } from "../utils/apiConfig";
 
 export interface DoraChatResponse {
   reply: string;
@@ -471,10 +471,11 @@ export class DoraService {
     const clientTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Dhaka";
     const clientTimestamp = Date.now();
     const apiUrl = getApiUrl("/api/chat");
+    const backendBase = getBackendBaseUrl();
 
+    console.log(`[APK-NET] Production API URL: ${backendBase}`);
+    console.log(`[APK-CHAT] Request started: ${apiUrl}`);
     console.log(`[APK] Chat submit: "${message.slice(0, 80)}"`);
-    console.log(`[APK] API request started`);
-    console.log(`[APK] API URL: ${apiUrl}`);
 
     let res: Response;
     try {
@@ -501,7 +502,9 @@ export class DoraService {
       throw new Error(`Connection error: Could not reach Dora server at ${apiUrl}. Please ensure device is connected to the internet and backend is online.`);
     }
 
-    console.log(`[APK] API response status: ${res.status}`);
+    const contentType = res.headers.get("content-type") || "";
+    console.log(`[APK-CHAT] Response status: ${res.status}`);
+    console.log(`[APK-CHAT] Response content-type: ${contentType}`);
 
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
@@ -510,9 +513,8 @@ export class DoraService {
     }
 
     const data = await res.json();
+    console.log(`[APK-CHAT] JSON parsed: true (reply length: ${(data.reply || "").length})`);
     console.log(`[APK] Response received (${(data.reply || "").length} chars)`);
-    console.log(`[APK] Response parsed`);
-    console.log(`[APK] UI updated`);
 
     if (data.context) {
       this.activeContext = data.context;
